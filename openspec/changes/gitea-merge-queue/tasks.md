@@ -39,18 +39,18 @@ NOTE: Covered by section 2 — queue.Service operates directly on PostgreSQL via
 
 ## 4. Gitea API Client
 
-- [ ] 4.1 Define `GiteaClient` interface per design (all methods)
-- [ ] 4.2 Implement mock `GiteaClient` for tests (records calls, returns configurable responses)
-- [ ] 4.3 Implement HTTP `GiteaClient`: `ListOpenPRs`, `GetPR`
-- [ ] 4.4 Implement HTTP `GiteaClient`: `GetPRTimeline` (parse comment types for automerge detection)
-- [ ] 4.5 Implement HTTP `GiteaClient`: `CreateCommitStatus`
-- [ ] 4.6 Implement HTTP `GiteaClient`: `CreateComment`
-- [ ] 4.7 Implement HTTP `GiteaClient`: `CancelAutoMerge` (`DELETE /repos/{owner}/{repo}/pulls/{index}/merge`)
-- [ ] 4.8 Implement HTTP `GiteaClient`: `GetBranchProtection` (extract `status_check_contexts`, filter out `gitea-mq`)
-- [ ] 4.9 Implement HTTP `GiteaClient`: `CreateBranch`, `DeleteBranch`
-- [ ] 4.10 Spike: determine how to create merge branch via Gitea API (merge two refs → push as `mq/<pr>`) and implement `MergeBranches`
-- [ ] 4.11 Implement HTTP `GiteaClient`: `ListBranchProtections`, `EditBranchProtection` (for auto-setup)
-- [ ] 4.12 Implement HTTP `GiteaClient`: `ListWebhooks`, `CreateWebhook` (for auto-setup)
+- [x] 4.1 Define `GiteaClient` interface per design (all methods)
+- [x] 4.2 Implement mock `GiteaClient` for tests (records calls, returns configurable responses)
+- [x] 4.3 Implement HTTP `GiteaClient`: `ListOpenPRs`, `GetPR`
+- [x] 4.4 Implement HTTP `GiteaClient`: `GetPRTimeline` (parse comment types for automerge detection)
+- [x] 4.5 Implement HTTP `GiteaClient`: `CreateCommitStatus`
+- [x] 4.6 Implement HTTP `GiteaClient`: `CreateComment`
+- [x] 4.7 Implement HTTP `GiteaClient`: `CancelAutoMerge` (`DELETE /repos/{owner}/{repo}/pulls/{index}/merge`)
+- [x] 4.8 Implement HTTP `GiteaClient`: `GetBranchProtection` (extract `status_check_contexts`, filter out `gitea-mq`)
+- [x] 4.9 Implement HTTP `GiteaClient`: `CreateBranch`, `DeleteBranch`
+- [x] 4.10 Spike: determine how to create merge branch via Gitea API (merge two refs → push as `mq/<pr>`) and implement `MergeBranches`
+- [x] 4.11 Implement HTTP `GiteaClient`: `ListBranchProtections`, `EditBranchProtection` (for auto-setup)
+- [x] 4.12 Implement HTTP `GiteaClient`: `ListWebhooks`, `CreateWebhook` (for auto-setup)
 
 ## 5. Automerge Poller (TDD)
 
