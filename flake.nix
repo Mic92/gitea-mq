@@ -47,7 +47,10 @@
 
           devShells.default = pkgs.mkShell {
             inputsFrom = [ self'.packages.gitea-mq ];
-            packages = with pkgs; [ sqlc ];
+            packages = with pkgs; [
+              sqlc
+              golangci-lint
+            ];
           };
         };
     };

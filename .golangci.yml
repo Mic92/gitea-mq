@@ -1,0 +1,24 @@
+version: "2"
+
+linters:
+  enable-all: true
+  disable:
+    # Deprecated
+    - wsl
+
+    # Not applicable to this project
+    - ginkgolinter  # not using ginkgo
+    - testifylint   # not using testify
+    - zerologlint   # not using zerolog
+    - protogetter   # not using protobuf
+    - spancheck     # not using OpenTelemetry
+    - gosmopolitan  # not doing i18n
+    - arangolint    # not using arangodb
+
+formatters:
+  enable:
+    - gofmt
+
+issues:
+  exclude-dirs:
+    - internal/store/pg  # sqlc-generated code

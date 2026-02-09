@@ -1,9 +1,9 @@
 ## 1. Project Scaffold
 
-- [ ] 1.1 Initialize Go module (`go mod init`), create directory structure per design (`cmd/gitea-mq/`, `internal/{queue,gitea,poller,webhook,monitor,store,web}/`)
-- [ ] 1.2 Set up Nix flake with Go build, devShell, and `flake-fmt`
-- [ ] 1.3 Add PostgreSQL embedded migration infrastructure (embed SQL files, run on startup)
-- [ ] 1.4 Write `001_initial.sql` migration: `repos`, `queue_entries`, `check_statuses` tables per design schema
+- [x] 1.1 Initialize Go module (`go mod init`), create directory structure per design (`cmd/gitea-mq/`, `internal/{queue,gitea,poller,webhook,monitor,store,web}/`)
+- [x] 1.2 Set up Nix flake with Go build, devShell, and `flake-fmt`
+- [x] 1.3 Add PostgreSQL embedded migration infrastructure (embed SQL files, run on startup)
+- [x] 1.4 Write `001_initial.sql` migration: `repos`, `queue_entries`, `check_statuses` tables per design schema
 - [ ] 1.5 Implement env var config parsing (`cmd/gitea-mq/main.go`): all variables from design table, validation, defaults
 
 ## 2. Core Queue Logic (TDD)
