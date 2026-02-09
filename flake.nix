@@ -33,18 +33,21 @@
           packages.gitea-mq = pkgs.buildGoModule {
             pname = "gitea-mq";
             version = "0.1.0";
-            src = ./.;
-            vendorHash = null;
+            src = pkgs.lib.fileset.toSource {
+              root = ./.;
+              fileset = pkgs.lib.fileset.unions [
+                ./go.mod
+                ./go.sum
+                ./cmd
+                ./internal
+              ];
+            };
+            vendorHash = "sha256-Wsbaom3zPpZuyh5gG0DMvZ9Oo5nyIUSGa75E9qmZOC4=";
           };
 
           devShells.default = pkgs.mkShell {
             inputsFrom = [ self'.packages.gitea-mq ];
-            packages = with pkgs; [
-              go
-              gopls
-              gotools
-              go-tools
-            ];
+            packages = with pkgs; [ sqlc ];
           };
         };
     };
