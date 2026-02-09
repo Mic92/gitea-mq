@@ -50,6 +50,7 @@
             packages = with pkgs; [
               sqlc
               golangci-lint
+              postgresql
             ];
           };
         };

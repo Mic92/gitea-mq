@@ -11,6 +11,25 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countQueuePosition = `-- name: CountQueuePosition :one
+SELECT COUNT(*) FROM queue_entries qe
+WHERE qe.repo_id = $1 AND qe.target_branch = $2
+  AND qe.enqueued_at <= (SELECT qe2.enqueued_at FROM queue_entries qe2 WHERE qe2.repo_id = $1 AND qe2.pr_number = $3)
+`
+
+type CountQueuePositionParams struct {
+	RepoID       int64  `json:"repo_id"`
+	TargetBranch string `json:"target_branch"`
+	PrNumber     int64  `json:"pr_number"`
+}
+
+func (q *Queries) CountQueuePosition(ctx context.Context, arg CountQueuePositionParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countQueuePosition, arg.RepoID, arg.TargetBranch, arg.PrNumber)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deleteCheckStatusesByEntry = `-- name: DeleteCheckStatusesByEntry :exec
 DELETE FROM check_statuses
 WHERE queue_entry_id = $1
@@ -104,6 +123,38 @@ func (q *Queries) GetCheckStatuses(ctx context.Context, queueEntryID int64) ([]C
 		return nil, err
 	}
 	return items, nil
+}
+
+const getHeadOfQueue = `-- name: GetHeadOfQueue :one
+SELECT id, repo_id, pr_number, pr_head_sha, target_branch, state, enqueued_at, testing_started_at, completed_at, merge_branch_name, merge_branch_sha, error_message FROM queue_entries
+WHERE repo_id = $1 AND target_branch = $2
+ORDER BY enqueued_at ASC
+LIMIT 1
+`
+
+type GetHeadOfQueueParams struct {
+	RepoID       int64  `json:"repo_id"`
+	TargetBranch string `json:"target_branch"`
+}
+
+func (q *Queries) GetHeadOfQueue(ctx context.Context, arg GetHeadOfQueueParams) (QueueEntry, error) {
+	row := q.db.QueryRow(ctx, getHeadOfQueue, arg.RepoID, arg.TargetBranch)
+	var i QueueEntry
+	err := row.Scan(
+		&i.ID,
+		&i.RepoID,
+		&i.PrNumber,
+		&i.PrHeadSha,
+		&i.TargetBranch,
+		&i.State,
+		&i.EnqueuedAt,
+		&i.TestingStartedAt,
+		&i.CompletedAt,
+		&i.MergeBranchName,
+		&i.MergeBranchSha,
+		&i.ErrorMessage,
+	)
+	return i, err
 }
 
 const getOrCreateRepo = `-- name: GetOrCreateRepo :one
@@ -210,6 +261,65 @@ func (q *Queries) ListActiveEntriesByRepo(ctx context.Context, repoID int64) ([]
 			&i.MergeBranchName,
 			&i.MergeBranchSha,
 			&i.ErrorMessage,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllQueues = `-- name: ListAllQueues :many
+SELECT qe.id, qe.repo_id, qe.pr_number, qe.pr_head_sha, qe.target_branch, qe.state, qe.enqueued_at, qe.testing_started_at, qe.completed_at, qe.merge_branch_name, qe.merge_branch_sha, qe.error_message, r.owner, r.name AS repo_name
+FROM queue_entries qe
+JOIN repos r ON r.id = qe.repo_id
+ORDER BY r.owner, r.name, qe.target_branch, qe.enqueued_at ASC
+`
+
+type ListAllQueuesRow struct {
+	ID               int64              `json:"id"`
+	RepoID           int64              `json:"repo_id"`
+	PrNumber         int64              `json:"pr_number"`
+	PrHeadSha        string             `json:"pr_head_sha"`
+	TargetBranch     string             `json:"target_branch"`
+	State            EntryState         `json:"state"`
+	EnqueuedAt       pgtype.Timestamptz `json:"enqueued_at"`
+	TestingStartedAt pgtype.Timestamptz `json:"testing_started_at"`
+	CompletedAt      pgtype.Timestamptz `json:"completed_at"`
+	MergeBranchName  pgtype.Text        `json:"merge_branch_name"`
+	MergeBranchSha   pgtype.Text        `json:"merge_branch_sha"`
+	ErrorMessage     pgtype.Text        `json:"error_message"`
+	Owner            string             `json:"owner"`
+	RepoName         string             `json:"repo_name"`
+}
+
+func (q *Queries) ListAllQueues(ctx context.Context) ([]ListAllQueuesRow, error) {
+	rows, err := q.db.Query(ctx, listAllQueues)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAllQueuesRow
+	for rows.Next() {
+		var i ListAllQueuesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.RepoID,
+			&i.PrNumber,
+			&i.PrHeadSha,
+			&i.TargetBranch,
+			&i.State,
+			&i.EnqueuedAt,
+			&i.TestingStartedAt,
+			&i.CompletedAt,
+			&i.MergeBranchName,
+			&i.MergeBranchSha,
+			&i.ErrorMessage,
+			&i.Owner,
+			&i.RepoName,
 		); err != nil {
 			return nil, err
 		}
@@ -385,19 +495,19 @@ func (q *Queries) UpdateEntryMergeBranch(ctx context.Context, arg UpdateEntryMer
 
 const updateEntryState = `-- name: UpdateEntryState :exec
 UPDATE queue_entries
-SET state = $3,
-    testing_started_at = CASE WHEN $3 = 'testing' THEN NOW() ELSE testing_started_at END,
-    completed_at = CASE WHEN $3 IN ('success', 'failed', 'cancelled') THEN NOW() ELSE completed_at END
-WHERE repo_id = $1 AND pr_number = $2
+SET state = $1,
+    testing_started_at = CASE WHEN $1::entry_state = 'testing' THEN NOW() ELSE testing_started_at END,
+    completed_at = CASE WHEN $1::entry_state IN ('success', 'failed', 'cancelled') THEN NOW() ELSE completed_at END
+WHERE repo_id = $2 AND pr_number = $3
 `
 
 type UpdateEntryStateParams struct {
+	State    EntryState `json:"state"`
 	RepoID   int64      `json:"repo_id"`
 	PrNumber int64      `json:"pr_number"`
-	State    EntryState `json:"state"`
 }
 
 func (q *Queries) UpdateEntryState(ctx context.Context, arg UpdateEntryStateParams) error {
-	_, err := q.db.Exec(ctx, updateEntryState, arg.RepoID, arg.PrNumber, arg.State)
+	_, err := q.db.Exec(ctx, updateEntryState, arg.State, arg.RepoID, arg.PrNumber)
 	return err
 }

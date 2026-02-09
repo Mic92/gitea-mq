@@ -4,34 +4,38 @@
 - [x] 1.2 Set up Nix flake with Go build, devShell, and `flake-fmt`
 - [x] 1.3 Add PostgreSQL embedded migration infrastructure (embed SQL files, run on startup)
 - [x] 1.4 Write `001_initial.sql` migration: `repos`, `queue_entries`, `check_statuses` tables per design schema
-- [ ] 1.5 Implement env var config parsing (`cmd/gitea-mq/main.go`): all variables from design table, validation, defaults
+- [x] 1.5 Implement env var config parsing (`cmd/gitea-mq/main.go`): all variables from design table, validation, defaults
 
 ## 2. Core Queue Logic (TDD)
 
-- [ ] 2.1 Write tests for `queue.Enqueue`: new PR appended to tail, duplicate is no-op, returns position
-- [ ] 2.2 Implement `queue.Enqueue`
-- [ ] 2.3 Write tests for `queue.Dequeue`: remove by PR number, head-of-queue returns cleanup flag, not-found is no-op
-- [ ] 2.4 Implement `queue.Dequeue`
-- [ ] 2.5 Write tests for FIFO ordering: multiple enqueues produce correct order, `Head()` returns first-enqueued
-- [ ] 2.6 Implement `queue.Head` and ordering guarantees
-- [ ] 2.7 Write tests for `queue.Advance`: removes head, returns new head (or nil if empty)
-- [ ] 2.8 Implement `queue.Advance`
-- [ ] 2.9 Write tests for per-repo per-branch queue isolation: operations on repo A / `main` don't affect repo A / `release` or repo B / `main`
-- [ ] 2.10 Implement `QueueManager` that holds per-repo-per-branch queues
+NOTE: Queue logic and store merged into one `queue.Service` backed directly by PostgreSQL (no in-memory copy). Tests use a real PostgreSQL instance via `TestMain`.
+
+- [x] 2.1 Write tests for `queue.Enqueue`: new PR appended to tail, duplicate is no-op, returns position
+- [x] 2.2 Implement `queue.Enqueue`
+- [x] 2.3 Write tests for `queue.Dequeue`: remove by PR number, head-of-queue returns cleanup flag, not-found is no-op
+- [x] 2.4 Implement `queue.Dequeue`
+- [x] 2.5 Write tests for FIFO ordering: multiple enqueues produce correct order, `Head()` returns first-enqueued
+- [x] 2.6 Implement `queue.Head` and ordering guarantees
+- [x] 2.7 Write tests for `queue.Advance`: removes head, returns new head (or nil if empty)
+- [x] 2.8 Implement `queue.Advance`
+- [x] 2.9 Write tests for per-repo per-branch queue isolation: operations on repo A / `main` don't affect repo A / `release` or repo B / `main`
+- [x] 2.10 Implement `QueueManager` that holds per-repo-per-branch queues
 
 ## 3. PostgreSQL Store (TDD)
 
-- [ ] 3.1 Set up test harness with real PostgreSQL (testcontainers or test DB)
-- [ ] 3.2 Write tests for `store.EnqueuePR` / `store.DequeuePR` persistence round-trip
-- [ ] 3.3 Implement `store.EnqueuePR` and `store.DequeuePR`
-- [ ] 3.4 Write tests for `store.ListQueue`: returns entries ordered by `enqueued_at`
-- [ ] 3.5 Implement `store.ListQueue`
-- [ ] 3.6 Write tests for `store.UpdateEntryState`: state transitions (queued→testing→success/failed)
-- [ ] 3.7 Implement `store.UpdateEntryState`
-- [ ] 3.8 Write tests for `store.SaveCheckStatus` / `store.GetCheckStatuses`
-- [ ] 3.9 Implement check status persistence
-- [ ] 3.10 Write tests for state recovery on startup: load all non-terminal entries, reconstruct queue order
-- [ ] 3.11 Implement `store.LoadActiveQueues`
+NOTE: Covered by section 2 — queue.Service operates directly on PostgreSQL via sqlc-generated queries with serializable transactions.
+
+- [x] 3.1 Set up test harness with real PostgreSQL (testcontainers or test DB)
+- [x] 3.2 Write tests for `store.EnqueuePR` / `store.DequeuePR` persistence round-trip
+- [x] 3.3 Implement `store.EnqueuePR` and `store.DequeuePR`
+- [x] 3.4 Write tests for `store.ListQueue`: returns entries ordered by `enqueued_at`
+- [x] 3.5 Implement `store.ListQueue`
+- [x] 3.6 Write tests for `store.UpdateEntryState`: state transitions (queued→testing→success/failed)
+- [x] 3.7 Implement `store.UpdateEntryState`
+- [x] 3.8 Write tests for `store.SaveCheckStatus` / `store.GetCheckStatuses`
+- [x] 3.9 Implement check status persistence
+- [x] 3.10 Write tests for state recovery on startup: load all non-terminal entries, reconstruct queue order
+- [x] 3.11 Implement `store.LoadActiveQueues`
 
 ## 4. Gitea API Client
 
