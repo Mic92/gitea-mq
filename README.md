@@ -37,7 +37,7 @@ All configuration is via environment variables:
 | `GITEA_MQ_EXTERNAL_URL` | no | — | URL where Gitea can reach this service (for webhook auto-setup; without it, you must create webhooks manually) |
 | `GITEA_MQ_POLL_INTERVAL` | no | `30s` | Automerge discovery poll interval |
 | `GITEA_MQ_CHECK_TIMEOUT` | no | `1h` | Timeout for required checks |
-| `GITEA_MQ_REQUIRED_CHECKS` | no | — | Fallback required check contexts (comma-separated) |
+| `GITEA_MQ_REQUIRED_CHECKS` | no | — | Fallback required CI contexts when branch protection has none (comma-separated) |
 | `GITEA_MQ_REFRESH_INTERVAL` | no | `10s` | Dashboard auto-refresh interval |
 | `GITEA_MQ_LOG_LEVEL` | no | `info` | Log level: debug, info, warn, error |
 
@@ -48,7 +48,10 @@ On startup, gitea-mq automatically configures each managed repository:
 - **Branch protection**: Adds `gitea-mq` as a required status check to all existing branch protection rules (always runs)
 - **Webhook**: Creates a webhook for `status` events pointed at the service (only if `GITEA_MQ_EXTERNAL_URL` is set)
 
-If you set `GITEA_MQ_EXTERNAL_URL`, gitea-mq will auto-create webhooks so Gitea can push `status` events back. This is the externally-reachable URL of gitea-mq (e.g. `https://mq.example.com`), **not** the Gitea URL. Without it, branch protection is still auto-configured, but you must create the webhook manually in each repo (event type: `status`, pointing at `<your-mq-url>/webhook`).
+If you set `GITEA_MQ_EXTERNAL_URL`, gitea-mq will auto-create webhooks so Gitea can push `status` events back.
+This is the externally-reachable URL of gitea-mq (e.g. `https://mq.example.com`), **not** the Gitea URL.
+Without it, branch protection is still auto-configured,
+but you must create the webhook manually in each repo (event type: `status`, pointing at `<your-mq-url>/webhook`).
 
 ## CI configuration
 
@@ -61,7 +64,11 @@ when:
     - mq/*
 ```
 
-The required checks are resolved from Gitea's branch protection settings (excluding `gitea-mq` itself). If no branch protection is configured, the `GITEA_MQ_REQUIRED_CHECKS` fallback is used. If neither is set, any single passing check is sufficient.
+gitea-mq needs to know which CI checks must pass on the merge branch before it allows a merge. It resolves this in order:
+
+1. **Branch protection** — If the target branch has protection rules with required status checks, those are used (excluding `gitea-mq` itself to avoid a circular dependency).
+2. **`GITEA_MQ_REQUIRED_CHECKS`** — If branch protection exists but has no required status checks (or no branch protection is configured at all), this comma-separated list is used as a fallback (e.g. `ci/woodpecker,lint`).
+3. **Any single success** — If neither is configured, any single passing commit status on the merge branch is enough.
 
 ## Dashboard
 
@@ -113,10 +120,10 @@ The NixOS module:
 | `webhookSecretFile` | path | — | File containing the webhook secret |
 | `listenAddr` | string | `:8080` | HTTP listen address |
 | `webhookPath` | string | `/webhook` | Webhook endpoint path |
-| `externalUrl` | string | — | External URL for webhook auto-setup |
+| `externalUrl` | string | — | URL where Gitea can reach this service (for webhook auto-setup) |
 | `pollInterval` | string | `30s` | Poll interval |
 | `checkTimeout` | string | `1h` | Check timeout |
-| `requiredChecks` | list of strings | `[]` | Fallback required checks |
+| `requiredChecks` | list of strings | `[]` | Fallback required CI contexts when branch protection has none |
 | `refreshInterval` | string | `10s` | Dashboard refresh interval |
 | `logLevel` | enum | `info` | Log level |
 
