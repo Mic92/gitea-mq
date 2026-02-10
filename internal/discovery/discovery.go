@@ -6,6 +6,7 @@ package discovery
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/jogman/gitea-mq/internal/config"
@@ -52,7 +53,7 @@ func DiscoverOnce(ctx context.Context, deps *Deps) error {
 			continue
 		}
 
-		if !containsTopic(topics, deps.Topic) {
+		if !slices.Contains(topics, deps.Topic) {
 			continue
 		}
 
@@ -127,15 +128,6 @@ func Run(ctx context.Context, deps *Deps, interval time.Duration) {
 			}
 		}
 	}
-}
-
-func containsTopic(topics []string, target string) bool {
-	for _, t := range topics {
-		if t == target {
-			return true
-		}
-	}
-	return false
 }
 
 func parseKey(key string) (config.RepoRef, bool) {
