@@ -3,6 +3,7 @@ package web_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -23,12 +24,9 @@ func (s *staticRepoLister) List() []config.RepoRef {
 }
 
 func (s *staticRepoLister) Contains(fullName string) bool {
-	for _, r := range s.repos {
-		if r.String() == fullName {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(s.repos, func(r config.RepoRef) bool {
+		return r.String() == fullName
+	})
 }
 
 func TestOverviewShowsRepoAndQueueData(t *testing.T) {
