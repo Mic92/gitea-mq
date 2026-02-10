@@ -11,7 +11,12 @@ in
   options.services.gitea-mq = {
     enable = lib.mkEnableOption "gitea-mq merge queue service";
 
-    package = lib.mkPackageOption pkgs "gitea-mq" { };
+    package = lib.mkOption {
+      type = lib.types.package;
+      default = pkgs.callPackage ./package.nix { };
+      defaultText = lib.literalExpression "pkgs.callPackage ./package.nix { }";
+      description = "The gitea-mq package to use.";
+    };
 
     giteaUrl = lib.mkOption {
       type = lib.types.str;

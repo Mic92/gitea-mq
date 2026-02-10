@@ -24,10 +24,11 @@
       perSystem =
         {
           pkgs,
-          self',
-          system,
           ...
         }:
+        let
+          gitea-mq = pkgs.callPackage ./nix/package.nix { };
+        in
         {
           treefmt = {
             projectRootFile = "flake.nix";
@@ -35,56 +36,17 @@
             programs.gofumpt.enable = true;
           };
 
-          packages.default = self'.packages.gitea-mq;
-
-          packages.gitea-mq = pkgs.buildGoModule {
-            pname = "gitea-mq";
-            version = "0.1.0";
-            src = pkgs.lib.fileset.toSource {
-              root = ./.;
-              fileset = pkgs.lib.fileset.unions [
-                ./go.mod
-                ./go.sum
-                ./cmd
-                ./internal
-              ];
-            };
-            vendorHash = "sha256-Wsbaom3zPpZuyh5gG0DMvZ9Oo5nyIUSGa75E9qmZOC4=";
-            nativeCheckInputs = [
-              pkgs.postgresql
-              pkgs.gitea
-              pkgs.git
-            ];
-            meta.mainProgram = "gitea-mq";
-          };
+          packages.default = gitea-mq;
+          packages.gitea-mq = gitea-mq;
 
           checks = {
-            golangci-lint = self'.packages.gitea-mq.overrideAttrs (old: {
-              nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.golangci-lint ];
-              outputs = [ "out" ];
-              buildPhase = ''
-                HOME=$TMPDIR
-                golangci-lint run
-              '';
-              installPhase = ''
-                touch $out
-              '';
-            });
+            golangci-lint = pkgs.callPackage ./nix/golangci-lint.nix { inherit gitea-mq; };
           }
           // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-            nixos-test = import ./nix/test.nix {
-              inherit pkgs;
-              self = inputs.self;
-            };
+            nixos-test = pkgs.callPackage ./nix/test.nix { self = inputs.self; };
           };
 
-          devShells.default = pkgs.mkShell {
-            inputsFrom = [ self'.packages.gitea-mq ];
-            packages = with pkgs; [
-              sqlc
-              golangci-lint
-            ];
-          };
+          devShells.default = pkgs.callPackage ./nix/devshell.nix { inherit gitea-mq; };
         };
     };
 }

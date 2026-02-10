@@ -4,7 +4,6 @@
 {
   pkgs,
   self,
-  ...
 }:
 pkgs.testers.runNixOSTest {
   name = "gitea-mq-integration";
