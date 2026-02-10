@@ -36,6 +36,16 @@ func (r RepoRef) String() string {
 	return r.Owner + "/" + r.Name
 }
 
+// ParseRepoRef parses an "owner/name" string into a RepoRef.
+// Returns false if the format is invalid.
+func ParseRepoRef(s string) (RepoRef, bool) {
+	owner, name, ok := strings.Cut(s, "/")
+	if !ok || owner == "" || name == "" {
+		return RepoRef{}, false
+	}
+	return RepoRef{Owner: owner, Name: name}, true
+}
+
 // Load reads configuration from environment variables, validates required
 // fields, and applies defaults.
 func Load() (*Config, error) {
@@ -152,11 +162,11 @@ func parseRepos(s string) ([]RepoRef, error) {
 		if part == "" {
 			continue
 		}
-		owner, name, ok := strings.Cut(part, "/")
-		if !ok || owner == "" || name == "" {
+		ref, ok := ParseRepoRef(part)
+		if !ok {
 			return nil, fmt.Errorf("invalid repo format %q, expected owner/name", part)
 		}
-		repos = append(repos, RepoRef{Owner: owner, Name: name})
+		repos = append(repos, ref)
 	}
 	if len(repos) == 0 {
 		return nil, fmt.Errorf("no repos specified")

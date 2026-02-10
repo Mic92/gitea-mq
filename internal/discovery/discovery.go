@@ -7,7 +7,6 @@ import (
 	"context"
 	"log/slog"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/jogman/gitea-mq/internal/config"
@@ -95,7 +94,7 @@ func DiscoverOnce(ctx context.Context, deps *Deps) error {
 				continue
 			}
 			slog.Info("discovery: removing repo", "repo", key)
-			ref, ok := parseKey(key)
+			ref, ok := config.ParseRepoRef(key)
 			if ok {
 				deps.Registry.Remove(ref)
 			}
@@ -131,10 +130,3 @@ func Run(ctx context.Context, deps *Deps, interval time.Duration) {
 	}
 }
 
-func parseKey(key string) (config.RepoRef, bool) {
-	owner, name, ok := strings.Cut(key, "/")
-	if !ok || owner == "" || name == "" {
-		return config.RepoRef{}, false
-	}
-	return config.RepoRef{Owner: owner, Name: name}, true
-}
