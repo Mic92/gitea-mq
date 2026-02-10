@@ -124,32 +124,23 @@ func overviewHandler(deps *Deps) http.HandlerFunc {
 		}
 
 		for _, ref := range deps.Repos.List() {
+			overview := RepoOverview{Owner: ref.Owner, Name: ref.Name}
+
 			repo, err := deps.Queue.GetOrCreateRepo(ctx, ref.Owner, ref.Name)
 			if err != nil {
 				slog.Error("failed to get repo", "repo", ref, "error", err)
-				data.Repos = append(data.Repos, RepoOverview{
-					Owner: ref.Owner,
-					Name:  ref.Name,
-				})
+				data.Repos = append(data.Repos, overview)
 				continue
 			}
 
 			entries, err := deps.Queue.ListActiveEntries(ctx, repo.ID)
 			if err != nil {
 				slog.Error("failed to list active entries", "repo", ref, "error", err)
-				data.Repos = append(data.Repos, RepoOverview{
-					Owner: ref.Owner,
-					Name:  ref.Name,
-				})
+				data.Repos = append(data.Repos, overview)
 				continue
 			}
 
-			overview := RepoOverview{
-				Owner:     ref.Owner,
-				Name:      ref.Name,
-				QueueSize: len(entries),
-			}
-
+			overview.QueueSize = len(entries)
 			if len(entries) > 0 {
 				overview.Head = &HeadEntry{
 					PrNumber: entries[0].PrNumber,
