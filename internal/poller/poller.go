@@ -37,6 +37,47 @@ type PollResult struct {
 	Paused   bool    // true if Gitea was unreachable
 }
 
+// removeOpts controls optional behaviour when removing a PR from the queue.
+type removeOpts struct {
+	cancelAutomerge bool
+	comment         string // if non-empty, post this comment on the PR
+	advance         bool   // whether to record in Advanced (queue moved forward)
+	logMsg          string // slog message
+	logAttrs        []any  // extra slog key-value pairs
+}
+
+// removePR dequeues a PR, optionally cancels automerge and posts a comment,
+// cleans up the merge branch if the entry was head, and records the removal
+// in the poll result.
+func removePR(ctx context.Context, deps *Deps, result *PollResult, entry *pg.QueueEntry, opts removeOpts) error {
+	dqResult, err := deps.Queue.Dequeue(ctx, deps.RepoID, entry.PrNumber)
+	if err != nil {
+		return err
+	}
+
+	if opts.cancelAutomerge {
+		_ = deps.Gitea.CancelAutoMerge(ctx, deps.Owner, deps.Repo, entry.PrNumber)
+	}
+
+	if opts.comment != "" {
+		_ = deps.Gitea.CreateComment(ctx, deps.Owner, deps.Repo, entry.PrNumber, opts.comment)
+	}
+
+	if dqResult.WasHead {
+		merge.CleanupMergeBranch(ctx, deps.Gitea, deps.Owner, deps.Repo, entry)
+	}
+
+	result.Dequeued = append(result.Dequeued, entry.PrNumber)
+
+	if opts.advance {
+		result.Advanced = append(result.Advanced, entry.PrNumber)
+	}
+
+	slog.Info(opts.logMsg, append([]any{"pr", entry.PrNumber}, opts.logAttrs...)...)
+
+	return nil
+}
+
 // PollOnce runs a single poll cycle for one repository:
 //
 //  1. Fetch all open PRs
@@ -138,68 +179,51 @@ func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 
 			if fullPR.HasMerged {
 				// Step 4: Merged PR — remove + advance.
-				dqResult, err := deps.Queue.Dequeue(ctx, deps.RepoID, entry.PrNumber)
-				if err != nil {
+				if err := removePR(ctx, deps, result, &entry, removeOpts{
+					advance: true,
+					logMsg:  "removed merged PR from queue",
+				}); err != nil {
 					result.Errors = append(result.Errors, fmt.Errorf("dequeue merged PR #%d: %w", entry.PrNumber, err))
-					continue
 				}
-				if dqResult.WasHead {
-					merge.CleanupMergeBranch(ctx, deps.Gitea, deps.Owner, deps.Repo, &entry)
-					result.Advanced = append(result.Advanced, entry.PrNumber)
-				}
-				result.Dequeued = append(result.Dequeued, entry.PrNumber)
-				slog.Info("removed merged PR from queue", "pr", entry.PrNumber)
+
 				continue
 			}
 
 			// Closed but not merged — silently remove.
-			dqResult, err := deps.Queue.Dequeue(ctx, deps.RepoID, entry.PrNumber)
-			if err != nil {
+			if err := removePR(ctx, deps, result, &entry, removeOpts{
+				logMsg: "removed closed PR from queue",
+			}); err != nil {
 				result.Errors = append(result.Errors, fmt.Errorf("dequeue closed PR #%d: %w", entry.PrNumber, err))
-				continue
 			}
-			if dqResult.WasHead {
-				merge.CleanupMergeBranch(ctx, deps.Gitea, deps.Owner, deps.Repo, &entry)
-			}
-			result.Dequeued = append(result.Dequeued, entry.PrNumber)
-			slog.Info("removed closed PR from queue", "pr", entry.PrNumber)
+
 			continue
 		}
 
 		// Step 7: Target branch change detection.
 		if pr.Base != nil && pr.Base.Ref != entry.TargetBranch {
-			dqResult, err := deps.Queue.Dequeue(ctx, deps.RepoID, entry.PrNumber)
-			if err != nil {
+			if err := removePR(ctx, deps, result, &entry, removeOpts{
+				cancelAutomerge: true,
+				comment:         fmt.Sprintf("⚠️ Removed from merge queue: target branch changed from `%s` to `%s`. Please re-schedule automerge.", entry.TargetBranch, pr.Base.Ref),
+				logMsg:          "removed retargeted PR from queue",
+				logAttrs:        []any{"old_branch", entry.TargetBranch, "new_branch", pr.Base.Ref},
+			}); err != nil {
 				result.Errors = append(result.Errors, fmt.Errorf("dequeue retargeted PR #%d: %w", entry.PrNumber, err))
-				continue
 			}
-			_ = deps.Gitea.CancelAutoMerge(ctx, deps.Owner, deps.Repo, entry.PrNumber)
-			_ = deps.Gitea.CreateComment(ctx, deps.Owner, deps.Repo, entry.PrNumber,
-				fmt.Sprintf("⚠️ Removed from merge queue: target branch changed from `%s` to `%s`. Please re-schedule automerge.", entry.TargetBranch, pr.Base.Ref))
-			if dqResult.WasHead {
-				merge.CleanupMergeBranch(ctx, deps.Gitea, deps.Owner, deps.Repo, &entry)
-			}
-			result.Dequeued = append(result.Dequeued, entry.PrNumber)
-			slog.Info("removed retargeted PR from queue", "pr", entry.PrNumber, "old_branch", entry.TargetBranch, "new_branch", pr.Base.Ref)
+
 			continue
 		}
 
 		// Step 5: Head SHA changed → new push detection.
 		if pr.Head != nil && pr.Head.Sha != entry.PrHeadSha {
-			dqResult, err := deps.Queue.Dequeue(ctx, deps.RepoID, entry.PrNumber)
-			if err != nil {
+			if err := removePR(ctx, deps, result, &entry, removeOpts{
+				cancelAutomerge: true,
+				comment:         "⚠️ Removed from merge queue: new commits were pushed. Please re-schedule automerge.",
+				advance:         true,
+				logMsg:          "removed PR due to new push",
+			}); err != nil {
 				result.Errors = append(result.Errors, fmt.Errorf("dequeue pushed PR #%d: %w", entry.PrNumber, err))
-				continue
 			}
-			_ = deps.Gitea.CancelAutoMerge(ctx, deps.Owner, deps.Repo, entry.PrNumber)
-			_ = deps.Gitea.CreateComment(ctx, deps.Owner, deps.Repo, entry.PrNumber,
-				"⚠️ Removed from merge queue: new commits were pushed. Please re-schedule automerge.")
-			if dqResult.WasHead {
-				merge.CleanupMergeBranch(ctx, deps.Gitea, deps.Owner, deps.Repo, &entry)
-			}
-			result.Dequeued = append(result.Dequeued, entry.PrNumber)
-			result.Advanced = append(result.Advanced, entry.PrNumber)
-			slog.Info("removed PR due to new push", "pr", entry.PrNumber)
+
 			continue
 		}
 
@@ -211,16 +235,12 @@ func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 		}
 
 		if !HasAutomergeScheduled(timeline) {
-			dqResult, err := deps.Queue.Dequeue(ctx, deps.RepoID, entry.PrNumber)
-			if err != nil {
+			if err := removePR(ctx, deps, result, &entry, removeOpts{
+				logMsg: "removed PR due to automerge cancellation",
+			}); err != nil {
 				result.Errors = append(result.Errors, fmt.Errorf("dequeue cancelled PR #%d: %w", entry.PrNumber, err))
-				continue
 			}
-			if dqResult.WasHead {
-				merge.CleanupMergeBranch(ctx, deps.Gitea, deps.Owner, deps.Repo, &entry)
-			}
-			result.Dequeued = append(result.Dequeued, entry.PrNumber)
-			slog.Info("removed PR due to automerge cancellation", "pr", entry.PrNumber)
+
 			continue
 		}
 
@@ -230,22 +250,21 @@ func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 				completedTime := entry.CompletedAt.Time
 				if time.Since(completedTime) > deps.SuccessTimeout {
 					// PR has been in success state too long — automerge probably failed.
-					_ = deps.Gitea.CancelAutoMerge(ctx, deps.Owner, deps.Repo, entry.PrNumber)
 					_ = deps.Gitea.CreateCommitStatus(ctx, deps.Owner, deps.Repo, entry.PrHeadSha, gitea.CommitStatus{
 						Context:     "gitea-mq",
 						State:       "error",
 						Description: "Automerge did not complete in time",
 					})
-					_ = deps.Gitea.CreateComment(ctx, deps.Owner, deps.Repo, entry.PrNumber,
-						"⚠️ Removed from merge queue: PR was marked as ready to merge but Gitea did not merge it in time. This may indicate a branch protection issue.")
 					_ = deps.Queue.SetError(ctx, deps.RepoID, entry.PrNumber, "automerge did not complete in time")
-					if _, err := deps.Queue.Dequeue(ctx, deps.RepoID, entry.PrNumber); err != nil {
+
+					if err := removePR(ctx, deps, result, &entry, removeOpts{
+						cancelAutomerge: true,
+						comment:         "⚠️ Removed from merge queue: PR was marked as ready to merge but Gitea did not merge it in time. This may indicate a branch protection issue.",
+						advance:         true,
+						logMsg:          "removed PR due to success-but-not-merged timeout",
+					}); err != nil {
 						result.Errors = append(result.Errors, fmt.Errorf("dequeue timed-out PR #%d: %w", entry.PrNumber, err))
 					}
-					merge.CleanupMergeBranch(ctx, deps.Gitea, deps.Owner, deps.Repo, &entry)
-					result.Dequeued = append(result.Dequeued, entry.PrNumber)
-					result.Advanced = append(result.Advanced, entry.PrNumber)
-					slog.Info("removed PR due to success-but-not-merged timeout", "pr", entry.PrNumber)
 				}
 			}
 		}
