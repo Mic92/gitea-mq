@@ -91,6 +91,22 @@ func (c *HTTPClient) decodeJSON(resp *http.Response, v any) error {
 	return nil
 }
 
+// doDiscard executes an HTTP request, checks for errors, and discards the
+// response body. Used by write-only endpoints (POST/PATCH/DELETE) that don't
+// need the response payload.
+func (c *HTTPClient) doDiscard(ctx context.Context, method, path string, body any, errLabel string) error {
+	resp, err := c.do(ctx, method, path, body)
+	if err != nil {
+		return err
+	}
+
+	if err := c.decodeJSON(resp, nil); err != nil {
+		return fmt.Errorf("%s: %w", errLabel, err)
+	}
+
+	return nil
+}
+
 // APIError represents a non-2xx response from the Gitea API.
 type APIError struct {
 	StatusCode int
@@ -200,13 +216,9 @@ func (c *HTTPClient) GetPRTimeline(ctx context.Context, owner, repo string, inde
 func (c *HTTPClient) CreateCommitStatus(ctx context.Context, owner, repo, sha string, status CommitStatus) error {
 	path := fmt.Sprintf("/repos/%s/%s/statuses/%s", owner, repo, sha)
 
-	resp, err := c.do(ctx, http.MethodPost, path, status)
-	if err != nil {
+	if err := c.doDiscard(ctx, http.MethodPost, path, status,
+		fmt.Sprintf("create commit status on %s in %s/%s", sha[:8], owner, repo)); err != nil {
 		return err
-	}
-
-	if err := c.decodeJSON(resp, nil); err != nil {
-		return fmt.Errorf("create commit status on %s in %s/%s: %w", sha[:8], owner, repo, err)
 	}
 
 	slog.Debug("created commit status", "owner", owner, "repo", repo, "sha", sha[:8], "context", status.Context, "state", status.State)
@@ -219,18 +231,8 @@ func (c *HTTPClient) CreateCommitStatus(ctx context.Context, owner, repo, sha st
 func (c *HTTPClient) CreateComment(ctx context.Context, owner, repo string, index int64, body string) error {
 	path := fmt.Sprintf("/repos/%s/%s/issues/%d/comments", owner, repo, index)
 
-	payload := map[string]string{"body": body}
-
-	resp, err := c.do(ctx, http.MethodPost, path, payload)
-	if err != nil {
-		return err
-	}
-
-	if err := c.decodeJSON(resp, nil); err != nil {
-		return fmt.Errorf("create comment on PR #%d in %s/%s: %w", index, owner, repo, err)
-	}
-
-	return nil
+	return c.doDiscard(ctx, http.MethodPost, path, map[string]string{"body": body},
+		fmt.Sprintf("create comment on PR #%d in %s/%s", index, owner, repo))
 }
 
 // CancelAutoMerge cancels the scheduled automerge for a pull request.
@@ -238,12 +240,8 @@ func (c *HTTPClient) CreateComment(ctx context.Context, owner, repo string, inde
 func (c *HTTPClient) CancelAutoMerge(ctx context.Context, owner, repo string, index int64) error {
 	path := fmt.Sprintf("/repos/%s/%s/pulls/%d/merge", owner, repo, index)
 
-	resp, err := c.do(ctx, http.MethodDelete, path, nil)
-	if err != nil {
-		return err
-	}
-
-	if err := c.decodeJSON(resp, nil); err != nil {
+	if err := c.doDiscard(ctx, http.MethodDelete, path, nil,
+		fmt.Sprintf("cancel automerge on PR #%d in %s/%s", index, owner, repo)); err != nil {
 		// 404 means automerge was already cancelled — treat as success.
 		if IsNotFound(err) {
 			slog.Debug("automerge already cancelled", "owner", owner, "repo", repo, "pr", index)
@@ -251,7 +249,7 @@ func (c *HTTPClient) CancelAutoMerge(ctx context.Context, owner, repo string, in
 			return nil
 		}
 
-		return fmt.Errorf("cancel automerge on PR #%d in %s/%s: %w", index, owner, repo, err)
+		return err
 	}
 
 	slog.Debug("cancelled automerge", "owner", owner, "repo", repo, "pr", index)
@@ -286,21 +284,9 @@ func (c *HTTPClient) GetBranchProtection(ctx context.Context, owner, repo, branc
 func (c *HTTPClient) CreateBranch(ctx context.Context, owner, repo, name, target string) error {
 	path := fmt.Sprintf("/repos/%s/%s/branches", owner, repo)
 
-	payload := map[string]string{
-		"new_branch_name": name,
-		"old_ref_name":    target,
-	}
-
-	resp, err := c.do(ctx, http.MethodPost, path, payload)
-	if err != nil {
-		return err
-	}
-
-	if err := c.decodeJSON(resp, nil); err != nil {
-		return fmt.Errorf("create branch %s from %s in %s/%s: %w", name, target, owner, repo, err)
-	}
-
-	return nil
+	return c.doDiscard(ctx, http.MethodPost, path,
+		map[string]string{"new_branch_name": name, "old_ref_name": target},
+		fmt.Sprintf("create branch %s from %s in %s/%s", name, target, owner, repo))
 }
 
 // DeleteBranch deletes a branch.
@@ -308,12 +294,8 @@ func (c *HTTPClient) CreateBranch(ctx context.Context, owner, repo, name, target
 func (c *HTTPClient) DeleteBranch(ctx context.Context, owner, repo, name string) error {
 	path := fmt.Sprintf("/repos/%s/%s/branches/%s", owner, repo, name)
 
-	resp, err := c.do(ctx, http.MethodDelete, path, nil)
-	if err != nil {
-		return err
-	}
-
-	if err := c.decodeJSON(resp, nil); err != nil {
+	if err := c.doDiscard(ctx, http.MethodDelete, path, nil,
+		fmt.Sprintf("delete branch %s in %s/%s", name, owner, repo)); err != nil {
 		// 404 means branch already deleted — treat as success.
 		if IsNotFound(err) {
 			slog.Debug("branch already deleted", "owner", owner, "repo", repo, "branch", name)
@@ -321,7 +303,7 @@ func (c *HTTPClient) DeleteBranch(ctx context.Context, owner, repo, name string)
 			return nil
 		}
 
-		return fmt.Errorf("delete branch %s in %s/%s: %w", name, owner, repo, err)
+		return err
 	}
 
 	return nil
@@ -443,16 +425,8 @@ func (c *HTTPClient) ListBranchProtections(ctx context.Context, owner, repo stri
 func (c *HTTPClient) EditBranchProtection(ctx context.Context, owner, repo, name string, opts EditBranchProtectionOpts) error {
 	path := fmt.Sprintf("/repos/%s/%s/branch_protections/%s", owner, repo, name)
 
-	resp, err := c.do(ctx, http.MethodPatch, path, opts)
-	if err != nil {
-		return err
-	}
-
-	if err := c.decodeJSON(resp, nil); err != nil {
-		return fmt.Errorf("edit branch protection %s in %s/%s: %w", name, owner, repo, err)
-	}
-
-	return nil
+	return c.doDiscard(ctx, http.MethodPatch, path, opts,
+		fmt.Sprintf("edit branch protection %s in %s/%s", name, owner, repo))
 }
 
 // ListWebhooks lists all webhooks for a repository. Handles pagination.
@@ -465,18 +439,8 @@ func (c *HTTPClient) ListWebhooks(ctx context.Context, owner, repo string) ([]We
 // CreateWebhook creates a webhook on a repository.
 // POST /repos/{owner}/{repo}/hooks
 func (c *HTTPClient) CreateWebhook(ctx context.Context, owner, repo string, opts CreateWebhookOpts) error {
-	path := fmt.Sprintf("/repos/%s/%s/hooks", owner, repo)
-
-	resp, err := c.do(ctx, http.MethodPost, path, opts)
-	if err != nil {
-		return err
-	}
-
-	if err := c.decodeJSON(resp, nil); err != nil {
-		return fmt.Errorf("create webhook in %s/%s: %w", owner, repo, err)
-	}
-
-	return nil
+	return c.doDiscard(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/%s/hooks", owner, repo), opts,
+		fmt.Sprintf("create webhook in %s/%s", owner, repo))
 }
 
 // Ensure HTTPClient implements Client at compile time.
