@@ -22,8 +22,23 @@ type RepoMonitor struct {
 	RepoID int64
 }
 
+// RepoLookup abstracts how the webhook handler finds a repo's monitor.
+// Implementations include the RepoRegistry (dynamic) and simple maps (tests).
+type RepoLookup interface {
+	LookupMonitor(fullName string) (*RepoMonitor, bool)
+}
+
+// MapRepoLookup adapts a static map to the RepoLookup interface.
+type MapRepoLookup map[string]*RepoMonitor
+
+// LookupMonitor returns the RepoMonitor for a given "owner/name" key.
+func (m MapRepoLookup) LookupMonitor(fullName string) (*RepoMonitor, bool) {
+	rm, ok := m[fullName]
+	return rm, ok
+}
+
 // Handler returns an http.Handler that processes Gitea webhook events.
-func Handler(secret string, repos map[string]*RepoMonitor, queueSvc *queue.Service) http.Handler {
+func Handler(secret string, repos RepoLookup, queueSvc *queue.Service) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -63,7 +78,7 @@ func Handler(secret string, repos map[string]*RepoMonitor, queueSvc *queue.Servi
 
 		// Route to the correct repo.
 		repoKey := event.Repository.FullName
-		rm, ok := repos[repoKey]
+		rm, ok := repos.LookupMonitor(repoKey)
 		if !ok {
 			slog.Debug("webhook for unmanaged repo", "repo", repoKey)
 			w.WriteHeader(http.StatusOK)

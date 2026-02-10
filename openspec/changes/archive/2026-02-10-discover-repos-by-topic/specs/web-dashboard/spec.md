@@ -1,4 +1,4 @@
-## ADDED Requirements
+## MODIFIED Requirements
 
 ### Requirement: Queue overview page
 The system SHALL serve an HTML page at the root path (`/`) listing all currently managed repositories and their current queue status. The repo list SHALL be read dynamically from the registry on each request, reflecting any changes from topic-based discovery.
@@ -43,33 +43,3 @@ The system SHALL serve an HTML page at `/repo/{owner}/{name}` showing the detail
 - **WHEN** a user visits `/repo/org/app` successfully
 - **AND** `org/app` is removed from the managed set by the discovery loop
 - **THEN** the next visit to `/repo/org/app` returns HTTP 404
-
-### Requirement: Check status display
-The system SHALL display the status of each required check for the head-of-queue PR on the repository detail page. Each check SHALL show its name and current state (pending, success, failure, error).
-
-#### Scenario: Head-of-queue PR with mixed check states
-- **WHEN** PR #42 is head-of-queue and has checks: `ci/build` (success), `ci/lint` (pending), `ci/test` (failure)
-- **THEN** the detail page shows all three checks with their respective states
-- **AND** uses visual indicators (e.g., ✅ ❌ ⏳) for each state
-
-### Requirement: Auto-refresh
-The system SHALL include auto-refresh functionality on dashboard pages so users see updated state without manual reload. The refresh interval SHALL be configurable, defaulting to 10 seconds.
-
-#### Scenario: Queue state changes
-- **WHEN** a user has the dashboard open and a PR is merged
-- **THEN** within the refresh interval the page updates to reflect the new queue state
-
-### Requirement: No authentication required
-The web dashboard SHALL be publicly accessible without authentication. All pages are read-only views of queue state.
-
-#### Scenario: Unauthenticated access
-- **WHEN** any user accesses the dashboard without credentials
-- **THEN** all pages are accessible and display queue information
-
-### Requirement: Server-rendered HTML
-The dashboard SHALL be implemented as server-rendered HTML without JavaScript frameworks. Pages SHALL be functional without JavaScript enabled, with auto-refresh implemented via HTML meta refresh or minimal inline script.
-
-#### Scenario: JavaScript disabled
-- **WHEN** a user accesses the dashboard with JavaScript disabled
-- **THEN** the page renders correctly and displays current queue state
-- **AND** auto-refresh still works via `<meta http-equiv="refresh">`

@@ -31,11 +31,19 @@ in
 
     repos = lib.mkOption {
       type = lib.types.listOf lib.types.str;
-      description = "List of repos to manage in owner/name format.";
+      default = [ ];
+      description = "List of repos to manage in owner/name format. Optional when topic is set.";
       example = [
         "org/app"
         "org/lib"
       ];
+    };
+
+    topic = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = "Gitea topic to discover repos by. Repos with this topic and admin access will be managed automatically.";
+      example = "merge-queue";
     };
 
     databaseUrl = lib.mkOption {
@@ -91,6 +99,12 @@ in
       description = "Dashboard auto-refresh interval.";
     };
 
+    discoveryInterval = lib.mkOption {
+      type = lib.types.str;
+      default = "5m";
+      description = "How often to re-discover repos by topic. Only used when topic is set.";
+    };
+
     logLevel = lib.mkOption {
       type = lib.types.enum [
         "debug"
@@ -104,6 +118,13 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = cfg.topic != null || cfg.repos != [ ];
+        message = "services.gitea-mq: at least one of 'topic' or 'repos' must be set.";
+      }
+    ];
+
     systemd.services.gitea-mq = {
       description = "gitea-mq merge queue for Gitea";
       after = [
@@ -128,7 +149,6 @@ in
 
       environment = {
         GITEA_MQ_GITEA_URL = cfg.giteaUrl;
-        GITEA_MQ_REPOS = lib.concatStringsSep "," cfg.repos;
         GITEA_MQ_DATABASE_URL = cfg.databaseUrl;
         GITEA_MQ_LISTEN_ADDR = cfg.listenAddr;
         GITEA_MQ_WEBHOOK_PATH = cfg.webhookPath;
@@ -137,6 +157,13 @@ in
         GITEA_MQ_CHECK_TIMEOUT = cfg.checkTimeout;
         GITEA_MQ_REFRESH_INTERVAL = cfg.refreshInterval;
         GITEA_MQ_LOG_LEVEL = cfg.logLevel;
+      }
+      // lib.optionalAttrs (cfg.repos != [ ]) {
+        GITEA_MQ_REPOS = lib.concatStringsSep "," cfg.repos;
+      }
+      // lib.optionalAttrs (cfg.topic != null) {
+        GITEA_MQ_TOPIC = cfg.topic;
+        GITEA_MQ_DISCOVERY_INTERVAL = cfg.discoveryInterval;
       }
       // lib.optionalAttrs (cfg.requiredChecks != [ ]) {
         GITEA_MQ_REQUIRED_CHECKS = lib.concatStringsSep "," cfg.requiredChecks;

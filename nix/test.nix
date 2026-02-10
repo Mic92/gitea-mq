@@ -69,11 +69,13 @@ pkgs.testers.runNixOSTest {
         giteaUrl = "http://localhost:3000";
         giteaTokenFile = "/run/gitea-mq/token";
         repos = [ "testuser/testrepo" ];
+        topic = "merge-queue";
         databaseUrl = "postgres:///gitea-mq?host=/run/postgresql";
         webhookSecretFile = "/run/gitea-mq/secret";
         listenAddr = ":8080";
         externalUrl = "http://localhost:8080";
         pollInterval = "5s";
+        discoveryInterval = "5s";
         checkTimeout = "5m";
         logLevel = "debug";
       };
@@ -259,6 +261,25 @@ pkgs.testers.runNixOSTest {
     machine.wait_until_succeeds(
         f"! curl -sf http://localhost:8080/repo/testuser/testrepo "
         f"| grep -q 'PR #{pr_number}'",
+        timeout=30,
+    )
+
+    # --- Topic-based discovery test ---
+    # Create a second repo with the merge-queue topic and verify it gets discovered.
+    machine.succeed(
+        f"curl -sf -X POST http://localhost:3000/api/v1/user/repos "
+        f"-H 'Authorization: token {token}' "
+        f"-H 'Content-Type: application/json' "
+        f"-d '{{\"name\": \"discovered-repo\", \"auto_init\": true, \"default_branch\": \"main\"}}'"
+    )
+    machine.succeed(
+        f"curl -sf -X PUT 'http://localhost:3000/api/v1/repos/testuser/discovered-repo/topics/merge-queue' "
+        f"-H 'Authorization: token {token}'"
+    )
+
+    # Wait for the discovery loop to pick it up and show it on the dashboard.
+    machine.wait_until_succeeds(
+        "curl -sf http://localhost:8080/ | grep -q 'testuser/discovered-repo'",
         timeout=30,
     )
   '';

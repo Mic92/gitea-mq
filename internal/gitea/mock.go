@@ -21,6 +21,8 @@ type MockClient struct {
 	// Response configurators. Set these before calling the method under test.
 	// Each returns (result, error). If nil, the method returns zero value + nil.
 
+	ListUserReposFn         func(ctx context.Context) ([]Repo, error)
+	GetRepoTopicsFn         func(ctx context.Context, owner, repo string) ([]string, error)
 	ListOpenPRsFn           func(ctx context.Context, owner, repo string) ([]PR, error)
 	GetPRFn                 func(ctx context.Context, owner, repo string, index int64) (*PR, error)
 	GetPRTimelineFn         func(ctx context.Context, owner, repo string, index int64) ([]TimelineComment, error)
@@ -68,6 +70,26 @@ func (m *MockClient) Reset() {
 	defer m.mu.Unlock()
 
 	m.Calls = nil
+}
+
+func (m *MockClient) ListUserRepos(ctx context.Context) ([]Repo, error) {
+	m.record("ListUserRepos")
+
+	if m.ListUserReposFn != nil {
+		return m.ListUserReposFn(ctx)
+	}
+
+	return nil, nil
+}
+
+func (m *MockClient) GetRepoTopics(ctx context.Context, owner, repo string) ([]string, error) {
+	m.record("GetRepoTopics", owner, repo)
+
+	if m.GetRepoTopicsFn != nil {
+		return m.GetRepoTopicsFn(ctx, owner, repo)
+	}
+
+	return nil, nil
 }
 
 func (m *MockClient) ListOpenPRs(ctx context.Context, owner, repo string) ([]PR, error) {

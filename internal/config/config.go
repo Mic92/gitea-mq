@@ -9,19 +9,21 @@ import (
 
 // Config holds all configuration for the gitea-mq service.
 type Config struct {
-	GiteaURL        string
-	GiteaToken      string
-	Repos           []RepoRef
-	DatabaseURL     string
-	WebhookSecret   string
-	ListenAddr      string
-	WebhookPath     string
-	ExternalURL     string // optional: external URL for webhook auto-setup
-	PollInterval    time.Duration
-	CheckTimeout    time.Duration
-	RequiredChecks  []string
-	RefreshInterval time.Duration
-	LogLevel        string // "debug", "info", "warn", "error"
+	GiteaURL          string
+	GiteaToken        string
+	Repos             []RepoRef
+	Topic             string // optional: discover repos by this Gitea topic
+	DatabaseURL       string
+	WebhookSecret     string
+	ListenAddr        string
+	WebhookPath       string
+	ExternalURL       string // optional: external URL for webhook auto-setup
+	PollInterval      time.Duration
+	CheckTimeout      time.Duration
+	RequiredChecks    []string
+	RefreshInterval   time.Duration
+	DiscoveryInterval time.Duration
+	LogLevel          string // "debug", "info", "warn", "error"
 }
 
 // RepoRef identifies a repository by owner and name.
@@ -59,8 +61,10 @@ func Load() (*Config, error) {
 		missing = append(missing, "GITEA_MQ_GITEA_TOKEN")
 	}
 
+	cfg.Topic = os.Getenv("GITEA_MQ_TOPIC")
+
 	reposStr := os.Getenv("GITEA_MQ_REPOS")
-	if reposStr == "" {
+	if reposStr == "" && cfg.Topic == "" {
 		missing = append(missing, "GITEA_MQ_REPOS")
 	}
 
@@ -78,14 +82,17 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))
 	}
 
-	// Parse repos
-	repos, err := parseRepos(reposStr)
-	if err != nil {
-		return nil, fmt.Errorf("GITEA_MQ_REPOS: %w", err)
+	// Parse repos (may be empty when topic-based discovery is used).
+	if reposStr != "" {
+		repos, err := parseRepos(reposStr)
+		if err != nil {
+			return nil, fmt.Errorf("GITEA_MQ_REPOS: %w", err)
+		}
+		cfg.Repos = repos
 	}
-	cfg.Repos = repos
 
 	// Parse durations with defaults
+	var err error
 	cfg.PollInterval, err = parseDurationOrDefault("GITEA_MQ_POLL_INTERVAL", 30*time.Second)
 	if err != nil {
 		return nil, err
@@ -97,6 +104,11 @@ func Load() (*Config, error) {
 	}
 
 	cfg.RefreshInterval, err = parseDurationOrDefault("GITEA_MQ_REFRESH_INTERVAL", 10*time.Second)
+	if err != nil {
+		return nil, err
+	}
+
+	cfg.DiscoveryInterval, err = parseDurationOrDefault("GITEA_MQ_DISCOVERY_INTERVAL", 5*time.Minute)
 	if err != nil {
 		return nil, err
 	}

@@ -12,12 +12,10 @@ import (
 	"time"
 
 	"github.com/jogman/gitea-mq/internal/config"
+	"github.com/jogman/gitea-mq/internal/discovery"
 	"github.com/jogman/gitea-mq/internal/gitea"
-	"github.com/jogman/gitea-mq/internal/merge"
-	"github.com/jogman/gitea-mq/internal/monitor"
-	"github.com/jogman/gitea-mq/internal/poller"
 	"github.com/jogman/gitea-mq/internal/queue"
-	"github.com/jogman/gitea-mq/internal/setup"
+	"github.com/jogman/gitea-mq/internal/registry"
 	"github.com/jogman/gitea-mq/internal/store/pg"
 	"github.com/jogman/gitea-mq/internal/web"
 	"github.com/jogman/gitea-mq/internal/webhook"
@@ -56,6 +54,7 @@ func run() error {
 	slog.Info("starting gitea-mq",
 		"listen", cfg.ListenAddr,
 		"repos", cfg.Repos,
+		"topic", cfg.Topic,
 		"poll_interval", cfg.PollInterval,
 		"check_timeout", cfg.CheckTimeout,
 	)
@@ -80,65 +79,48 @@ func run() error {
 		webhookURL = cfg.ExternalURL + cfg.WebhookPath
 	}
 
-	// Per-repo setup: auto-setup, repo registration, cleanup.
-	repoMonitors := make(map[string]*webhook.RepoMonitor, len(cfg.Repos))
+	// Create the repo registry — central coordination for managed repos.
+	reg := registry.New(ctx, &registry.Deps{
+		Gitea:          giteaClient,
+		Queue:          queueSvc,
+		WebhookURL:     webhookURL,
+		WebhookSecret:  cfg.WebhookSecret,
+		PollInterval:   cfg.PollInterval,
+		CheckTimeout:   cfg.CheckTimeout,
+		FallbackChecks: cfg.RequiredChecks,
+		SuccessTimeout: 5 * time.Minute,
+	})
 
+	// Register explicit repos.
 	for _, ref := range cfg.Repos {
-		// Auto-setup: ensure branch protection and webhook.
-		if webhookURL == "" {
-			slog.Info("skipping webhook auto-setup (GITEA_MQ_EXTERNAL_URL not set)", "repo", ref)
-			if err := setup.EnsureBranchProtection(ctx, giteaClient, ref.Owner, ref.Name); err != nil {
-				slog.Warn("branch protection auto-setup failed", "repo", ref, "error", err)
-			}
-		} else if err := setup.EnsureRepo(ctx, giteaClient, ref.Owner, ref.Name, webhookURL, cfg.WebhookSecret); err != nil {
-			slog.Warn("auto-setup failed", "repo", ref, "error", err)
-			// Non-fatal: continue even if auto-setup fails.
-		}
-
-		// Ensure repo exists in DB.
-		repo, err := queueSvc.GetOrCreateRepo(ctx, ref.Owner, ref.Name)
-		if err != nil {
+		if err := reg.Add(ctx, ref); err != nil {
 			return fmt.Errorf("register repo %s: %w", ref, err)
 		}
+	}
 
-		// Cleanup stale merge branches from previous runs.
-		if err := merge.CleanupStaleBranches(ctx, giteaClient, queueSvc, ref.Owner, ref.Name, repo.ID); err != nil {
-			slog.Warn("stale branch cleanup failed", "repo", ref, "error", err)
+	// Topic-based discovery: run initial discovery, then start background loop.
+	if cfg.Topic != "" {
+		discDeps := &discovery.Deps{
+			Gitea:         giteaClient,
+			Registry:      reg,
+			Topic:         cfg.Topic,
+			ExplicitRepos: cfg.Repos,
 		}
 
-		// Set up monitor deps for this repo.
-		monDeps := &monitor.Deps{
-			Gitea:          giteaClient,
-			Queue:          queueSvc,
-			Owner:          ref.Owner,
-			Repo:           ref.Name,
-			RepoID:         repo.ID,
-			CheckTimeout:   cfg.CheckTimeout,
-			FallbackChecks: cfg.RequiredChecks,
+		// Initial discovery blocks startup so all repos are ready before serving.
+		if err := discovery.DiscoverOnce(ctx, discDeps); err != nil {
+			slog.Warn("initial discovery failed, continuing with explicit repos", "error", err)
 		}
 
-		repoMonitors[ref.String()] = &webhook.RepoMonitor{
-			Deps:   monDeps,
-			RepoID: repo.ID,
-		}
-
-		// Start poller goroutine.
-		pollerDeps := &poller.Deps{
-			Gitea:          giteaClient,
-			Queue:          queueSvc,
-			RepoID:         repo.ID,
-			Owner:          ref.Owner,
-			Repo:           ref.Name,
-			SuccessTimeout: 5 * time.Minute,
-		}
-		go poller.Run(ctx, pollerDeps, cfg.PollInterval)
+		// Background discovery loop.
+		go discovery.Run(ctx, discDeps, cfg.DiscoveryInterval)
 	}
 
 	// HTTP server: webhook + dashboard on the same mux.
 	mux := http.NewServeMux()
 
-	// Webhook handler.
-	webhookHandler := webhook.Handler(cfg.WebhookSecret, repoMonitors, queueSvc)
+	// Webhook handler — uses registry for dynamic repo lookup.
+	webhookHandler := webhook.Handler(cfg.WebhookSecret, reg, queueSvc)
 	mux.Handle(cfg.WebhookPath, webhookHandler)
 
 	// Health check.
@@ -148,10 +130,10 @@ func run() error {
 		_, _ = w.Write([]byte("ok\n"))
 	})
 
-	// Dashboard.
+	// Dashboard — uses registry for dynamic repo listing.
 	webDeps := &web.Deps{
 		Queue:           queueSvc,
-		ManagedRepos:    cfg.Repos,
+		Repos:           reg,
 		RefreshInterval: int(cfg.RefreshInterval.Seconds()),
 	}
 	dashMux := web.NewMux(webDeps)

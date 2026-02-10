@@ -117,7 +117,7 @@ func TestFullMergeQueueFlow(t *testing.T) {
 
 	// Set up the webhook handler so we can deliver status events to it.
 	repoKey := "testuser/" + repoName
-	repoMonitors := map[string]*webhook.RepoMonitor{
+	repoMonitors := webhook.MapRepoLookup{
 		repoKey: {
 			Deps:   monDeps,
 			RepoID: repo.ID,

@@ -12,6 +12,24 @@ import (
 	"github.com/jogman/gitea-mq/internal/web"
 )
 
+// staticRepoLister implements web.RepoLister for tests.
+type staticRepoLister struct {
+	repos []config.RepoRef
+}
+
+func (s *staticRepoLister) List() []config.RepoRef {
+	return s.repos
+}
+
+func (s *staticRepoLister) Contains(fullName string) bool {
+	for _, r := range s.repos {
+		if r.String() == fullName {
+			return true
+		}
+	}
+	return false
+}
+
 func TestOverviewShowsRepoAndQueueData(t *testing.T) {
 	pool := newTestDB(t)
 	svc := queue.NewService(pool)
@@ -30,10 +48,10 @@ func TestOverviewShowsRepoAndQueueData(t *testing.T) {
 
 	deps := &web.Deps{
 		Queue: svc,
-		ManagedRepos: []config.RepoRef{
+		Repos: &staticRepoLister{repos: []config.RepoRef{
 			{Owner: "org", Name: "app"},
 			{Owner: "org", Name: "lib"},
-		},
+		}},
 		RefreshInterval: 5,
 	}
 
@@ -111,7 +129,7 @@ func TestRepoDetailShowsPRsAndChecks(t *testing.T) {
 
 	deps := &web.Deps{
 		Queue:           svc,
-		ManagedRepos:    []config.RepoRef{{Owner: "org", Name: "app"}},
+		Repos:           &staticRepoLister{repos: []config.RepoRef{{Owner: "org", Name: "app"}}},
 		RefreshInterval: 10,
 	}
 
@@ -163,7 +181,7 @@ func TestRepoDetailUnknownRepoReturns404(t *testing.T) {
 
 	deps := &web.Deps{
 		Queue:           svc,
-		ManagedRepos:    []config.RepoRef{{Owner: "org", Name: "app"}},
+		Repos:           &staticRepoLister{repos: []config.RepoRef{{Owner: "org", Name: "app"}}},
 		RefreshInterval: 10,
 	}
 

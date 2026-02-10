@@ -74,10 +74,17 @@ type RepoDetailData struct {
 	RefreshInterval int // seconds
 }
 
+// RepoLister abstracts how the dashboard gets the current managed repo set.
+// Implementations include the RepoRegistry (dynamic) and static lists (tests).
+type RepoLister interface {
+	List() []config.RepoRef
+	Contains(fullName string) bool
+}
+
 // Deps holds the dependencies the web handlers need.
 type Deps struct {
 	Queue           *queue.Service
-	ManagedRepos    []config.RepoRef
+	Repos           RepoLister
 	RefreshInterval int // seconds
 }
 
@@ -116,7 +123,7 @@ func overviewHandler(deps *Deps) http.HandlerFunc {
 			RefreshInterval: deps.RefreshInterval,
 		}
 
-		for _, ref := range deps.ManagedRepos {
+		for _, ref := range deps.Repos.List() {
 			repo, err := deps.Queue.GetOrCreateRepo(ctx, ref.Owner, ref.Name)
 			if err != nil {
 				slog.Error("failed to get repo", "repo", ref, "error", err)
@@ -178,14 +185,7 @@ func repoHandler(deps *Deps) http.HandlerFunc {
 		}
 
 		// Check if this is a managed repo.
-		managed := false
-		for _, ref := range deps.ManagedRepos {
-			if ref.Owner == owner && ref.Name == name {
-				managed = true
-				break
-			}
-		}
-		if !managed {
+		if !deps.Repos.Contains(owner + "/" + name) {
 			http.NotFound(w, r)
 			return
 		}

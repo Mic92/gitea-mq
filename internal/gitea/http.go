@@ -130,6 +130,58 @@ func IsNotFound(err error) bool {
 	return false
 }
 
+// ListUserRepos returns all repositories accessible to the authenticated user.
+// Handles pagination.
+func (c *HTTPClient) ListUserRepos(ctx context.Context) ([]Repo, error) {
+	var allRepos []Repo
+
+	page := 1
+
+	for {
+		path := fmt.Sprintf("/user/repos?page=%d&limit=50", page)
+
+		resp, err := c.do(ctx, http.MethodGet, path, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		var repos []Repo
+		if err := c.decodeJSON(resp, &repos); err != nil {
+			return nil, fmt.Errorf("list user repos: %w", err)
+		}
+
+		allRepos = append(allRepos, repos...)
+
+		if len(repos) < 50 {
+			break
+		}
+
+		page++
+	}
+
+	return allRepos, nil
+}
+
+// GetRepoTopics returns the topics for a repository.
+// Gitea doesn't include topics in the repo listing, so this needs a separate call.
+func (c *HTTPClient) GetRepoTopics(ctx context.Context, owner, repo string) ([]string, error) {
+	path := fmt.Sprintf("/repos/%s/%s/topics", owner, repo)
+
+	resp, err := c.do(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Topics []string `json:"topics"`
+	}
+	if err := c.decodeJSON(resp, &result); err != nil {
+		return nil, fmt.Errorf("get topics for %s/%s: %w", owner, repo, err)
+	}
+
+	return result.Topics, nil
+}
+
 // ListOpenPRs returns all open pull requests for a repository.
 // Handles pagination to get all results.
 func (c *HTTPClient) ListOpenPRs(ctx context.Context, owner, repo string) ([]PR, error) {

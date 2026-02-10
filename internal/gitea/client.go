@@ -101,9 +101,39 @@ type CreateWebhookOpts struct {
 	Config map[string]string `json:"config"`
 }
 
+// Repo represents a repository from the Gitea API.
+// Used by topic-based discovery to list accessible repos and check permissions.
+type Repo struct {
+	FullName    string          `json:"full_name"`
+	Owner       RepoOwner       `json:"owner"`
+	Name        string          `json:"name"`
+	Permissions RepoPermissions `json:"permissions"`
+}
+
+// RepoOwner holds the owner info from a Gitea repo response.
+type RepoOwner struct {
+	Login string `json:"login"`
+}
+
+// RepoPermissions holds the permission flags from a Gitea repo response.
+type RepoPermissions struct {
+	Admin bool `json:"admin"`
+	Push  bool `json:"push"`
+	Pull  bool `json:"pull"`
+}
+
 // Client defines the Gitea API surface used by gitea-mq.
 // All methods accept a context for cancellation and return an error on failure.
 type Client interface {
+	// ListUserRepos returns all repositories accessible to the authenticated user.
+	// Handles pagination internally.
+	// GET /user/repos
+	ListUserRepos(ctx context.Context) ([]Repo, error)
+
+	// GetRepoTopics returns the topics for a repository.
+	// GET /repos/{owner}/{repo}/topics
+	GetRepoTopics(ctx context.Context, owner, repo string) ([]string, error)
+
 	// ListOpenPRs returns all open pull requests for a repository.
 	ListOpenPRs(ctx context.Context, owner, repo string) ([]PR, error)
 

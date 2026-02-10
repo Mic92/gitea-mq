@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Discover PRs with automerge scheduled
-The system SHALL periodically poll the Gitea API to discover open PRs that have automerge scheduled. Discovery SHALL be done by querying each managed repo's open PRs and checking their timeline for `pull_scheduled_merge` and `pull_cancel_scheduled_merge` comment types. A PR is considered automerge-scheduled if its most recent automerge-related timeline comment is `pull_scheduled_merge`.
+The system SHALL periodically poll the Gitea API to discover open PRs that have automerge scheduled. Discovery SHALL be done by querying each managed repo's open PRs and checking their timeline for `pull_scheduled_merge` and `pull_cancel_scheduled_merge` comment types. A PR is considered automerge-scheduled if its most recent automerge-related timeline comment is `pull_scheduled_merge`. Poller goroutines SHALL be started dynamically as repos are added to the managed set and stopped when repos are removed.
 
 #### Scenario: PR has automerge scheduled
 - **WHEN** the poller checks repo `org/app` and PR #42 has a `pull_scheduled_merge` timeline comment with no subsequent `pull_cancel_scheduled_merge`
@@ -16,6 +16,16 @@ The system SHALL periodically poll the Gitea API to discover open PRs that have 
 - **WHEN** the poller discovers PR #42 has automerge scheduled
 - **AND** PR #42 is already in the merge queue
 - **THEN** the system takes no action (no duplicate enqueue)
+
+#### Scenario: Poller starts for dynamically discovered repo
+- **WHEN** the discovery loop adds `org/new-repo` to the managed set
+- **THEN** a poller goroutine is started for `org/new-repo` with the configured poll interval
+- **AND** the first poll runs immediately
+
+#### Scenario: Poller stops for removed repo
+- **WHEN** the discovery loop removes `org/old-repo` from the managed set
+- **THEN** the poller goroutine for `org/old-repo` is stopped (its context is cancelled)
+- **AND** no further polls occur for `org/old-repo`
 
 ### Requirement: Detect automerge cancellation
 The system SHALL detect when a user cancels automerge on a queued PR. On the next poll cycle, if a previously-queued PR no longer has automerge scheduled, the system SHALL remove it from the queue.
@@ -97,7 +107,7 @@ The system SHALL detect when a managed repository no longer exists (API returns 
 - **AND** logs a warning that the repository no longer exists
 
 ### Requirement: Auto-configure Gitea on startup
-The system SHALL automatically configure each managed repository on startup: ensure `gitea-mq` is in the branch protection's required status checks, and ensure a webhook for `status` events is pointed at this service's webhook endpoint.
+The system SHALL automatically configure each managed repository: ensure `gitea-mq` is in the branch protection's required status checks, and ensure a webhook for `status` events is pointed at this service's webhook endpoint. Auto-configuration SHALL run both at startup for initially-managed repos AND when new repos are added to the managed set by the discovery loop.
 
 #### Scenario: Branch protection missing gitea-mq check
 - **WHEN** the service starts and repo `org/app` has branch protection on `main` but `gitea-mq` is not in `status_check_contexts`
@@ -119,6 +129,12 @@ The system SHALL automatically configure each managed repository on startup: ens
 #### Scenario: Webhook already exists
 - **WHEN** the service starts and repo `org/app` already has a webhook pointing at this service
 - **THEN** the system takes no action
+
+#### Scenario: Newly discovered repo auto-configured
+- **WHEN** the discovery loop finds `org/new-repo` with the matching topic
+- **AND** `org/new-repo` is not yet managed
+- **THEN** the system runs auto-configuration for `org/new-repo` (branch protection + webhook setup)
+- **AND** starts a poller goroutine for `org/new-repo`
 
 ### Requirement: Configurable poll interval
 The system SHALL support a configurable poll interval (via environment variable) for checking automerge state. The default poll interval SHALL be 30 seconds.

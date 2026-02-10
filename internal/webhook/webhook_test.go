@@ -65,7 +65,7 @@ func setup(t *testing.T) *testEnv {
 		CheckTimeout: 1 * time.Hour,
 	}
 
-	repos := map[string]*webhook.RepoMonitor{
+	repos := webhook.MapRepoLookup{
 		"org/app": {Deps: deps, RepoID: repo.ID},
 	}
 
