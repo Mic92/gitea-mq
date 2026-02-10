@@ -130,36 +130,36 @@ func IsNotFound(err error) bool {
 	return false
 }
 
-// ListUserRepos returns all repositories accessible to the authenticated user.
-// Handles pagination.
-func (c *HTTPClient) ListUserRepos(ctx context.Context) ([]Repo, error) {
-	var allRepos []Repo
+// paginate fetches all pages of a paginated Gitea API endpoint.
+// pathFmt must contain a single %d verb for the page number (e.g. "/user/repos?page=%d&limit=50").
+func paginate[T any](ctx context.Context, c *HTTPClient, pathFmt, errLabel string) ([]T, error) {
+	var all []T
 
-	page := 1
-
-	for {
-		path := fmt.Sprintf("/user/repos?page=%d&limit=50", page)
+	for page := 1; ; page++ {
+		path := fmt.Sprintf(pathFmt, page)
 
 		resp, err := c.do(ctx, http.MethodGet, path, nil)
 		if err != nil {
 			return nil, err
 		}
 
-		var repos []Repo
-		if err := c.decodeJSON(resp, &repos); err != nil {
-			return nil, fmt.Errorf("list user repos: %w", err)
+		var items []T
+		if err := c.decodeJSON(resp, &items); err != nil {
+			return nil, fmt.Errorf("%s: %w", errLabel, err)
 		}
 
-		allRepos = append(allRepos, repos...)
+		all = append(all, items...)
 
-		if len(repos) < 50 {
-			break
+		if len(items) < 50 {
+			return all, nil
 		}
-
-		page++
 	}
+}
 
-	return allRepos, nil
+// ListUserRepos returns all repositories accessible to the authenticated user.
+// Handles pagination.
+func (c *HTTPClient) ListUserRepos(ctx context.Context) ([]Repo, error) {
+	return paginate[Repo](ctx, c, "/user/repos?page=%d&limit=50", "list user repos")
 }
 
 // GetRepoTopics returns the topics for a repository.
@@ -185,33 +185,9 @@ func (c *HTTPClient) GetRepoTopics(ctx context.Context, owner, repo string) ([]s
 // ListOpenPRs returns all open pull requests for a repository.
 // Handles pagination to get all results.
 func (c *HTTPClient) ListOpenPRs(ctx context.Context, owner, repo string) ([]PR, error) {
-	var allPRs []PR
-
-	page := 1
-
-	for {
-		path := fmt.Sprintf("/repos/%s/%s/pulls?state=open&page=%d&limit=50", owner, repo, page)
-
-		resp, err := c.do(ctx, http.MethodGet, path, nil)
-		if err != nil {
-			return nil, err
-		}
-
-		var prs []PR
-		if err := c.decodeJSON(resp, &prs); err != nil {
-			return nil, fmt.Errorf("list open PRs for %s/%s: %w", owner, repo, err)
-		}
-
-		allPRs = append(allPRs, prs...)
-
-		if len(prs) < 50 {
-			break
-		}
-
-		page++
-	}
-
-	return allPRs, nil
+	return paginate[PR](ctx, c,
+		fmt.Sprintf("/repos/%s/%s/pulls?state=open&page=%%d&limit=50", owner, repo),
+		fmt.Sprintf("list open PRs for %s/%s", owner, repo))
 }
 
 // GetPR returns a single pull request by index.
@@ -234,33 +210,9 @@ func (c *HTTPClient) GetPR(ctx context.Context, owner, repo string, index int64)
 // GetPRTimeline returns timeline comments for a pull request.
 // Handles pagination. The endpoint is GET /repos/{owner}/{repo}/issues/{index}/timeline.
 func (c *HTTPClient) GetPRTimeline(ctx context.Context, owner, repo string, index int64) ([]TimelineComment, error) {
-	var allComments []TimelineComment
-
-	page := 1
-
-	for {
-		path := fmt.Sprintf("/repos/%s/%s/issues/%d/timeline?page=%d&limit=50", owner, repo, index, page)
-
-		resp, err := c.do(ctx, http.MethodGet, path, nil)
-		if err != nil {
-			return nil, err
-		}
-
-		var comments []TimelineComment
-		if err := c.decodeJSON(resp, &comments); err != nil {
-			return nil, fmt.Errorf("get PR #%d timeline in %s/%s: %w", index, owner, repo, err)
-		}
-
-		allComments = append(allComments, comments...)
-
-		if len(comments) < 50 {
-			break
-		}
-
-		page++
-	}
-
-	return allComments, nil
+	return paginate[TimelineComment](ctx, c,
+		fmt.Sprintf("/repos/%s/%s/issues/%d/timeline?page=%%d&limit=50", owner, repo, index),
+		fmt.Sprintf("get PR #%d timeline in %s/%s", index, owner, repo))
 }
 
 // CreateCommitStatus posts a commit status on a specific SHA.
@@ -502,33 +454,9 @@ func IsMergeConflict(err error) bool {
 // ListBranchProtections lists all branch protection rules for a repository.
 // Handles pagination.
 func (c *HTTPClient) ListBranchProtections(ctx context.Context, owner, repo string) ([]BranchProtection, error) {
-	var allBPs []BranchProtection
-
-	page := 1
-
-	for {
-		path := fmt.Sprintf("/repos/%s/%s/branch_protections?page=%d&limit=50", owner, repo, page)
-
-		resp, err := c.do(ctx, http.MethodGet, path, nil)
-		if err != nil {
-			return nil, err
-		}
-
-		var bps []BranchProtection
-		if err := c.decodeJSON(resp, &bps); err != nil {
-			return nil, fmt.Errorf("list branch protections for %s/%s: %w", owner, repo, err)
-		}
-
-		allBPs = append(allBPs, bps...)
-
-		if len(bps) < 50 {
-			break
-		}
-
-		page++
-	}
-
-	return allBPs, nil
+	return paginate[BranchProtection](ctx, c,
+		fmt.Sprintf("/repos/%s/%s/branch_protections?page=%%d&limit=50", owner, repo),
+		fmt.Sprintf("list branch protections for %s/%s", owner, repo))
 }
 
 // EditBranchProtection updates a branch protection rule.
@@ -559,33 +487,9 @@ func (c *HTTPClient) EditBranchProtection(ctx context.Context, owner, repo, name
 
 // ListWebhooks lists all webhooks for a repository. Handles pagination.
 func (c *HTTPClient) ListWebhooks(ctx context.Context, owner, repo string) ([]Webhook, error) {
-	var allHooks []Webhook
-
-	page := 1
-
-	for {
-		path := fmt.Sprintf("/repos/%s/%s/hooks?page=%d&limit=50", owner, repo, page)
-
-		resp, err := c.do(ctx, http.MethodGet, path, nil)
-		if err != nil {
-			return nil, err
-		}
-
-		var hooks []Webhook
-		if err := c.decodeJSON(resp, &hooks); err != nil {
-			return nil, fmt.Errorf("list webhooks for %s/%s: %w", owner, repo, err)
-		}
-
-		allHooks = append(allHooks, hooks...)
-
-		if len(hooks) < 50 {
-			break
-		}
-
-		page++
-	}
-
-	return allHooks, nil
+	return paginate[Webhook](ctx, c,
+		fmt.Sprintf("/repos/%s/%s/hooks?page=%%d&limit=50", owner, repo),
+		fmt.Sprintf("list webhooks for %s/%s", owner, repo))
 }
 
 // CreateWebhook creates a webhook on a repository.
