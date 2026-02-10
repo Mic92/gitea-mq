@@ -17,7 +17,7 @@ linters:
 
 formatters:
   enable:
-    - gofmt
+    - gofumpt
 
 issues:
   exclude-dirs:

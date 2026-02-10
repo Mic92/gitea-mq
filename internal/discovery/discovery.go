@@ -129,4 +129,3 @@ func Run(ctx context.Context, deps *Deps, interval time.Duration) {
 		}
 	}
 }
-

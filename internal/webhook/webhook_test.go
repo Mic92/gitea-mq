@@ -119,5 +119,3 @@ func TestHandler_IgnoresOwnStatus(t *testing.T) {
 		t.Fatal("should not process own status — feedback loop risk")
 	}
 }
-
-
