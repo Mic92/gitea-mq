@@ -30,6 +30,16 @@ func (q *Queries) CountQueuePosition(ctx context.Context, arg CountQueuePosition
 	return count, err
 }
 
+const dequeueAllByRepo = `-- name: DequeueAllByRepo :exec
+DELETE FROM queue_entries
+WHERE repo_id = $1
+`
+
+func (q *Queries) DequeueAllByRepo(ctx context.Context, repoID int64) error {
+	_, err := q.db.Exec(ctx, dequeueAllByRepo, repoID)
+	return err
+}
+
 const dequeuePR = `-- name: DequeuePR :exec
 DELETE FROM queue_entries
 WHERE repo_id = $1 AND pr_number = $2

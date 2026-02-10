@@ -310,6 +310,12 @@ func (s *Service) GetOrCreateRepo(ctx context.Context, owner, name string) (pg.R
 	})
 }
 
+// DequeueAll removes all queue entries for a repo. Used when a repo is
+// removed from the registry to avoid leaving orphaned entries in the DB.
+func (s *Service) DequeueAll(ctx context.Context, repoID int64) error {
+	return s.queries().DequeueAllByRepo(ctx, repoID)
+}
+
 // LoadActiveQueues returns all non-terminal entries across all repos for startup recovery.
 func (s *Service) LoadActiveQueues(ctx context.Context) ([]pg.LoadActiveQueuesRow, error) {
 	return s.queries().LoadActiveQueues(ctx)

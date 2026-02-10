@@ -90,6 +90,65 @@ func TestRemove(t *testing.T) {
 	}
 }
 
+func TestRemoveCleansUpMergeBranchesAndDBEntries(t *testing.T) {
+	pool := testutil.TestDB(t)
+	queueSvc := queue.NewService(pool)
+	mock := &gitea.MockClient{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	deps := &registry.Deps{
+		Gitea:          mock,
+		Queue:          queueSvc,
+		PollInterval:   1 * time.Hour,
+		CheckTimeout:   1 * time.Hour,
+		SuccessTimeout: 5 * time.Minute,
+	}
+
+	reg := registry.New(ctx, deps)
+	ref := config.RepoRef{Owner: "org", Name: "app"}
+
+	if err := reg.Add(ctx, ref); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	m, ok := reg.Lookup("org/app")
+	if !ok {
+		t.Fatal("repo not found after Add")
+	}
+
+	// Simulate a PR in the queue with a merge branch (as if testing is in progress).
+	_, err := queueSvc.Enqueue(ctx, m.RepoID, 42, "abc123", "main")
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	if err := queueSvc.SetMergeBranch(ctx, m.RepoID, 42, "mq/42", "merge-sha"); err != nil {
+		t.Fatalf("SetMergeBranch: %v", err)
+	}
+
+	// Remove the repo — should clean up merge branches and DB entries.
+	reg.Remove(ref)
+
+	// Verify merge branch was deleted via API.
+	deleteCalls := mock.CallsTo("DeleteBranch")
+	if len(deleteCalls) != 1 {
+		t.Fatalf("expected 1 DeleteBranch call, got %d", len(deleteCalls))
+	}
+	if deleteCalls[0].Args[2] != "mq/42" {
+		t.Errorf("expected DeleteBranch for mq/42, got %v", deleteCalls[0].Args[2])
+	}
+
+	// Verify DB entries are gone.
+	entries, err := queueSvc.ListActiveEntries(ctx, m.RepoID)
+	if err != nil {
+		t.Fatalf("ListActiveEntries: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected 0 active entries after Remove, got %d", len(entries))
+	}
+}
+
 func TestRemoveNonExistent(t *testing.T) {
 	reg, _ := newTestRegistry(t)
 	// Should not panic.

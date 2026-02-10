@@ -139,8 +139,8 @@ func (r *RepoRegistry) Add(ctx context.Context, ref config.RepoRef) error {
 	return nil
 }
 
-// Remove stops a repo's poller and removes it from the registry. Does NOT
-// touch DB data. No-op if the repo is not managed.
+// Remove stops a repo's poller, cleans up merge branches and DB entries,
+// and removes the repo from the registry. No-op if the repo is not managed.
 func (r *RepoRegistry) Remove(ref config.RepoRef) {
 	key := ref.String()
 
@@ -151,10 +151,32 @@ func (r *RepoRegistry) Remove(ref config.RepoRef) {
 	}
 	r.mu.Unlock()
 
-	if exists {
-		managed.cancel()
-		slog.Info("removed repo from registry", "repo", key)
+	if !exists {
+		return
 	}
+
+	// Cancel the poller first so it stops making new API calls.
+	managed.cancel()
+
+	// Clean up merge branches and DB entries using a background context
+	// since the per-repo context is now cancelled.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	entries, err := r.deps.Queue.ListActiveEntries(ctx, managed.RepoID)
+	if err != nil {
+		slog.Warn("failed to list entries for cleanup", "repo", key, "error", err)
+	} else {
+		for _, entry := range entries {
+			merge.CleanupMergeBranch(ctx, r.deps.Gitea, ref.Owner, ref.Name, &entry)
+		}
+	}
+
+	if err := r.deps.Queue.DequeueAll(ctx, managed.RepoID); err != nil {
+		slog.Warn("failed to dequeue entries on removal", "repo", key, "error", err)
+	}
+
+	slog.Info("removed repo from registry", "repo", key)
 }
 
 // Lookup returns the ManagedRepo for a given "owner/name" key, or nil if
