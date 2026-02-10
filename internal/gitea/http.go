@@ -469,17 +469,8 @@ func (c *HTTPClient) EditBranchProtection(ctx context.Context, owner, repo, name
 		return err
 	}
 
-	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			slog.Warn("failed to close response body", "error", err)
-		}
-	}()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-
-		return fmt.Errorf("edit branch protection %s in %s/%s: status %d: %s",
-			name, owner, repo, resp.StatusCode, string(bodyBytes))
+	if err := c.decodeJSON(resp, nil); err != nil {
+		return fmt.Errorf("edit branch protection %s in %s/%s: %w", name, owner, repo, err)
 	}
 
 	return nil
