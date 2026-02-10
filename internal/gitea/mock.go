@@ -30,7 +30,7 @@ type MockClient struct {
 	GetBranchProtectionFn   func(ctx context.Context, owner, repo, branch string) (*BranchProtection, error)
 	CreateBranchFn          func(ctx context.Context, owner, repo, name, target string) error
 	DeleteBranchFn          func(ctx context.Context, owner, repo, name string) error
-	MergeBranchesFn         func(ctx context.Context, owner, repo, base, head string) (*MergeResult, error)
+	MergeBranchesFn         func(ctx context.Context, owner, repo, base, head, branchName string) (*MergeResult, error)
 	ListBranchProtectionsFn func(ctx context.Context, owner, repo string) ([]BranchProtection, error)
 	EditBranchProtectionFn  func(ctx context.Context, owner, repo, name string, opts EditBranchProtectionOpts) error
 	ListWebhooksFn          func(ctx context.Context, owner, repo string) ([]Webhook, error)
@@ -160,11 +160,11 @@ func (m *MockClient) DeleteBranch(ctx context.Context, owner, repo, name string)
 	return nil
 }
 
-func (m *MockClient) MergeBranches(ctx context.Context, owner, repo, base, head string) (*MergeResult, error) {
-	m.record("MergeBranches", owner, repo, base, head)
+func (m *MockClient) MergeBranches(ctx context.Context, owner, repo, base, head, branchName string) (*MergeResult, error) {
+	m.record("MergeBranches", owner, repo, base, head, branchName)
 
 	if m.MergeBranchesFn != nil {
-		return m.MergeBranchesFn(ctx, owner, repo, base, head)
+		return m.MergeBranchesFn(ctx, owner, repo, base, head, branchName)
 	}
 
 	return &MergeResult{SHA: "mock-merge-sha"}, nil

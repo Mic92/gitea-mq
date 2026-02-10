@@ -8,6 +8,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"os/exec"
 	"strings"
 )
 
@@ -342,124 +344,86 @@ func (c *HTTPClient) DeleteBranch(ctx context.Context, owner, repo, name string)
 	return nil
 }
 
-// MergeBranches creates a merge of head into base and pushes it as a branch.
+// MergeBranches creates a merge of head into base and pushes it as branch
+// mq/<head-short>. It shells out to git because Gitea has no API to merge
+// two arbitrary refs into a new branch.
 //
-// Gitea doesn't have a direct "merge two refs into a new branch" API, so we
-// use the "update a file" / git merge approach. The strategy:
+// Steps:
+//  1. Shallow-clone the repo (base branch only)
+//  2. Fetch the head SHA
+//  3. git merge --no-ff the head SHA into base
+//  4. Push the result as mq/<head-short>
 //
-//  1. Create a temp branch from base (the target branch)
-//  2. Use the merge-upstream or update-branch API to merge head into it
-//
-// Since Gitea's API for this is limited, we use the repo merge API via the
-// "merge pull request" test endpoint, or alternatively use the contents API.
-//
-// For now, we use Gitea's built-in merge support:
-//   - POST /repos/{owner}/{repo}/merge-upstream with the branch name
-//
-// However, merge-upstream is for fork syncing. Instead, we'll create the
-// branch from base, then use the API to merge the PR head ref into it.
-//
-// The most reliable approach is:
-//  1. Create branch mq/<pr> from the target branch
-//  2. Use POST /repos/{owner}/{repo}/branches/{branch}/merge to merge the
-//     PR head into it — but this endpoint doesn't exist.
-//
-// So the real approach per the design doc's fallback is:
-//   - Use git operations via the Gitea API
-//   - Specifically: use the "update branch" API or create a merge commit
-//
-// For a production implementation, we create a temporary branch from the target
-// and use the contents API to create a merge commit. But given Gitea's API
-// limitations, the practical approach is:
-//
-//  1. Get the base SHA and head SHA
-//  2. Call the Gitea merge API to create a merge commit
-//
-// Since this is complex, we use a simpler approach leveraging Gitea's
-// "update pull request" (POST /repos/{owner}/{repo}/pulls/{index}/update)
-// API, or we delegate to a git-level operation.
-//
-// The implementation below uses the repo contents merge API. If Gitea adds
-// better branch merge support, this can be updated. The Client interface
-// abstracts this complexity away from the queue logic.
-func (c *HTTPClient) MergeBranches(ctx context.Context, owner, repo, base, head string) (*MergeResult, error) {
-	// Step 1: Create temp branch from base (target branch).
-	tmpBranch := "mq/" + head // head is typically the PR number as string
-	path := fmt.Sprintf("/repos/%s/%s/branches", owner, repo)
-
-	payload := map[string]string{
-		"new_branch_name": tmpBranch,
-		"old_ref_name":    base,
-	}
-
-	resp, err := c.do(ctx, http.MethodPost, path, payload)
+// On conflict git merge exits non-zero and we return a MergeConflictError.
+func (c *HTTPClient) MergeBranches(ctx context.Context, owner, repo, base, head, branchName string) (*MergeResult, error) {
+	tmpDir, err := os.MkdirTemp("", "gitea-mq-merge-*")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create temp dir: %w", err)
 	}
+	defer os.RemoveAll(tmpDir)
 
-	// Parse the created branch to get its SHA
-	var branchResp struct {
-		Commit struct {
-			ID string `json:"id"`
-		} `json:"commit"`
-	}
+	cloneURL := fmt.Sprintf("%s/%s/%s.git", c.baseURL, owner, repo)
 
-	if err := c.decodeJSON(resp, &branchResp); err != nil {
-		return nil, fmt.Errorf("create merge branch %s in %s/%s: %w", tmpBranch, owner, repo, err)
-	}
+	// Use token auth via URL for git push.
+	authedURL := fmt.Sprintf("%s://gitea-mq:%s@%s",
+		cloneURL[:strings.Index(cloneURL, "://")],
+		c.token,
+		cloneURL[strings.Index(cloneURL, "://")+3:],
+	)
 
-	// Step 2: Merge the PR head into the temp branch using the
-	// "update branch" approach — POST /repos/{owner}/{repo}/merge-upstream
-	mergePath := fmt.Sprintf("/repos/%s/%s/merge-upstream", owner, repo)
-	mergePayload := map[string]string{
-		"branch":  tmpBranch,
-		"ff_only": "false",
-	}
-
-	// Note: merge-upstream is designed for fork syncing with upstream.
-	// If the repo is not a fork, this won't work. In that case, we need
-	// an alternative approach.
-	//
-	// Alternative: use the contents/git API to create a merge commit directly.
-	// For now, we attempt it and handle errors.
-	mergeResp, err := c.do(ctx, http.MethodPost, mergePath, mergePayload)
-	if err != nil {
-		// Clean up the temp branch on failure
-		_ = c.DeleteBranch(ctx, owner, repo, tmpBranch)
-
-		return nil, fmt.Errorf("merge %s into %s in %s/%s: %w", head, base, owner, repo, err)
-	}
-	defer func() {
-		if err := mergeResp.Body.Close(); err != nil {
-			slog.Warn("failed to close response body", "error", err)
+	run := func(args ...string) ([]byte, error) {
+		cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+		cmd.Dir = tmpDir
+		cmd.Env = append(os.Environ(),
+			"GIT_TERMINAL_PROMPT=0",
+			"GIT_AUTHOR_NAME=gitea-mq",
+			"GIT_AUTHOR_EMAIL=gitea-mq@localhost",
+			"GIT_COMMITTER_NAME=gitea-mq",
+			"GIT_COMMITTER_EMAIL=gitea-mq@localhost",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return out, fmt.Errorf("%s: %w\n%s", strings.Join(args, " "), err, out)
 		}
-	}()
+		return out, nil
+	}
 
-	if mergeResp.StatusCode < 200 || mergeResp.StatusCode >= 300 {
-		// Clean up the temp branch on merge failure (likely conflict)
-		_ = c.DeleteBranch(ctx, owner, repo, tmpBranch)
-		bodyBytes, _ := io.ReadAll(mergeResp.Body)
+	// Clone base branch only (shallow for speed).
+	if _, err := run("git", "clone", "--depth=1", "--branch", base, authedURL, "."); err != nil {
+		return nil, fmt.Errorf("clone: %w", err)
+	}
 
-		return nil, &MergeConflictError{
-			Base:    base,
-			Head:    head,
-			Message: string(bodyBytes),
+	// Fetch the PR head SHA so we can merge it.
+	if _, err := run("git", "fetch", "origin", head); err != nil {
+		return nil, fmt.Errorf("fetch head: %w", err)
+	}
+
+	// Merge head into base. --no-ff ensures a merge commit even if fast-forward
+	// is possible, so CI always sees the combined result.
+	mergeOut, mergeErr := run("git", "merge", "--no-ff", "-m", "mq: merge "+head+" into "+base, "FETCH_HEAD")
+	if mergeErr != nil {
+		// Check if this is a merge conflict.
+		if strings.Contains(string(mergeOut), "CONFLICT") || strings.Contains(string(mergeOut), "Automatic merge failed") {
+			return nil, &MergeConflictError{Base: base, Head: head, Message: string(mergeOut)}
 		}
+		return nil, fmt.Errorf("merge: %w", mergeErr)
 	}
 
-	// Get the updated branch SHA after merge
-	branchPath := fmt.Sprintf("/repos/%s/%s/branches/%s", owner, repo, tmpBranch)
+	// Push as the requested branch name.
+	if _, err := run("git", "push", "origin", "HEAD:refs/heads/"+branchName); err != nil {
+		return nil, fmt.Errorf("push: %w", err)
+	}
 
-	branchGetResp, err := c.do(ctx, http.MethodGet, branchPath, nil)
+	// Read the merge commit SHA.
+	shaOut, err := run("git", "rev-parse", "HEAD")
 	if err != nil {
-		return nil, fmt.Errorf("get merge branch SHA: %w", err)
+		return nil, fmt.Errorf("rev-parse: %w", err)
 	}
+	sha := strings.TrimSpace(string(shaOut))
 
-	if err := c.decodeJSON(branchGetResp, &branchResp); err != nil {
-		return nil, fmt.Errorf("decode merge branch: %w", err)
-	}
+	slog.Debug("created merge branch", "branch", branchName, "sha", sha[:8])
 
-	return &MergeResult{SHA: branchResp.Commit.ID}, nil
+	return &MergeResult{SHA: sha}, nil
 }
 
 // MergeConflictError indicates a merge conflict when creating the merge branch.

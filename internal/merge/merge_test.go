@@ -36,7 +36,7 @@ func setup(t *testing.T) (*gitea.MockClient, *queue.Service, context.Context, in
 func TestStartTesting_Success(t *testing.T) {
 	mock, svc, ctx, repoID := setup(t)
 
-	mock.MergeBranchesFn = func(_ context.Context, _, _, _, _ string) (*gitea.MergeResult, error) {
+	mock.MergeBranchesFn = func(_ context.Context, _, _, _, _, _ string) (*gitea.MergeResult, error) {
 		return &gitea.MergeResult{SHA: "mergesha123"}, nil
 	}
 
@@ -75,7 +75,7 @@ func TestStartTesting_Success(t *testing.T) {
 func TestStartTesting_Conflict(t *testing.T) {
 	mock, svc, ctx, repoID := setup(t)
 
-	mock.MergeBranchesFn = func(_ context.Context, _, _, _, _ string) (*gitea.MergeResult, error) {
+	mock.MergeBranchesFn = func(_ context.Context, _, _, _, _, _ string) (*gitea.MergeResult, error) {
 		return nil, &gitea.MergeConflictError{Base: "main", Head: "prsha", Message: "conflict"}
 	}
 

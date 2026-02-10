@@ -25,7 +25,7 @@ type StartTestingResult struct {
 func StartTesting(ctx context.Context, giteaClient gitea.Client, svc *queue.Service, owner, repo string, repoID int64, entry *pg.QueueEntry) (*StartTestingResult, error) {
 	branchName := fmt.Sprintf("mq/%d", entry.PrNumber)
 
-	mergeResult, err := giteaClient.MergeBranches(ctx, owner, repo, entry.TargetBranch, entry.PrHeadSha)
+	mergeResult, err := giteaClient.MergeBranches(ctx, owner, repo, entry.TargetBranch, entry.PrHeadSha, branchName)
 	if err != nil {
 		if gitea.IsMergeConflict(err) {
 			slog.Info("merge conflict", "pr", entry.PrNumber)

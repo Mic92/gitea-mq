@@ -9,7 +9,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	os.Exit(testutil.RunWithPostgres(m))
+	os.Exit(testutil.RunWithPostgresAndGitea(m))
 }
 
 func newTestDB(t *testing.T) *pgxpool.Pool {

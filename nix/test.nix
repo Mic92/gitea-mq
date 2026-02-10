@@ -82,7 +82,10 @@ pkgs.testers.runNixOSTest {
       # Don't start gitea-mq until the test script has written the secrets.
       systemd.services.gitea-mq.wantedBy = lib.mkForce [ ];
 
-      environment.systemPackages = [ config.services.gitea.package ];
+      environment.systemPackages = [
+        config.services.gitea.package
+        pkgs.jq
+      ];
     };
 
   testScript = ''
@@ -191,11 +194,72 @@ pkgs.testers.runNixOSTest {
         timeout=30,
     )
 
-    # The poller should have set gitea-mq to pending on the PR.
+    # Wait for the poller to create the merge branch (state=testing).
+    # The merge branch mq/<pr> appears in Gitea when the poller calls
+    # StartTesting via git push.
+    merge_branch_sha = ""
+    machine.wait_until_succeeds(
+        f"curl -sf 'http://localhost:3000/api/v1/repos/testuser/testrepo/branches/mq/{pr_number}' "
+        f"-H 'Authorization: token {token}' "
+        f"| jq -e '.commit.id'",
+        timeout=30,
+    )
+    merge_branch_json = machine.succeed(
+        f"curl -sf 'http://localhost:3000/api/v1/repos/testuser/testrepo/branches/mq/{pr_number}' "
+        f"-H 'Authorization: token {token}'"
+    )
+    merge_branch_sha = json.loads(merge_branch_json)["commit"]["id"]
+
+    # The poller should have set gitea-mq to pending ("Testing merge result")
+    # on the PR head.
     machine.wait_until_succeeds(
         f"curl -sf 'http://localhost:3000/api/v1/repos/testuser/testrepo/statuses/{pr_sha}' "
         f"-H 'Authorization: token {token}' "
-        f"| grep -q gitea-mq",
+        f"| jq -e '.[] | select(.context == \"gitea-mq\" and .status == \"pending\")'",
+        timeout=30,
+    )
+
+    # --- Simulate external CI passing on the merge branch ---
+    # Set ci/build=success on the merge branch SHA. Gitea will fire a
+    # webhook to gitea-mq, whose monitor will then set gitea-mq=success
+    # on the PR head.
+    machine.succeed(
+        f"curl -sf -X POST 'http://localhost:3000/api/v1/repos/testuser/testrepo/statuses/{merge_branch_sha}' "
+        f"-H 'Authorization: token {token}' "
+        f"-H 'Content-Type: application/json' "
+        f"-d '{{\"context\": \"ci/build\", \"state\": \"success\", \"description\": \"build passed\"}}'"
+    )
+
+    # Wait for gitea-mq to set gitea-mq=success on the PR head via the
+    # webhook → monitor flow.
+    machine.wait_until_succeeds(
+        f"curl -sf 'http://localhost:3000/api/v1/repos/testuser/testrepo/statuses/{pr_sha}' "
+        f"-H 'Authorization: token {token}' "
+        f"| jq -e '.[] | select(.context == \"gitea-mq\" and .status == \"success\")'",
+        timeout=30,
+    )
+
+    # Also set ci/build=success on the PR head so Gitea's automerge sees
+    # all required checks passing on the PR itself.
+    machine.succeed(
+        f"curl -sf -X POST 'http://localhost:3000/api/v1/repos/testuser/testrepo/statuses/{pr_sha}' "
+        f"-H 'Authorization: token {token}' "
+        f"-H 'Content-Type: application/json' "
+        f"-d '{{\"context\": \"ci/build\", \"state\": \"success\", \"description\": \"build passed\"}}'"
+    )
+
+    # Wait for Gitea's automerge to merge the PR.
+    machine.wait_until_succeeds(
+        f"curl -sf 'http://localhost:3000/api/v1/repos/testuser/testrepo/pulls/{pr_number}' "
+        f"-H 'Authorization: token {token}' "
+        f"| jq -e '.merged == true'",
+        timeout=60,
+    )
+
+    # After the merge, the poller should remove the PR from the queue.
+    machine.wait_until_succeeds(
+        f"! curl -sf http://localhost:8080/repo/testuser/testrepo "
+        f"| grep -q 'PR #{pr_number}'",
         timeout=30,
     )
   '';

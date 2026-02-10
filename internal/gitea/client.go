@@ -139,10 +139,9 @@ type Client interface {
 	// DELETE /repos/{owner}/{repo}/branches/{branch}
 	DeleteBranch(ctx context.Context, owner, repo, name string) error
 
-	// MergeBranches creates a temporary merge of head into base, pushed as
-	// a new branch named mq/<pr>. Returns the merge SHA, or an error if
-	// there are conflicts.
-	MergeBranches(ctx context.Context, owner, repo, base, head string) (*MergeResult, error)
+	// MergeBranches merges head into base and pushes the result as branchName.
+	// Returns the merge commit SHA, or a MergeConflictError if there are conflicts.
+	MergeBranches(ctx context.Context, owner, repo, base, head, branchName string) (*MergeResult, error)
 
 	// ListBranchProtections lists all branch protection rules for a repository.
 	// GET /repos/{owner}/{repo}/branch_protections

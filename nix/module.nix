@@ -137,6 +137,8 @@ in
         GITEA_MQ_REQUIRED_CHECKS = lib.concatStringsSep "," cfg.requiredChecks;
       };
 
+      path = [ pkgs.git ];
+
       # Script wrapper to load secrets from credential files into env vars.
       script = ''
         export GITEA_MQ_GITEA_TOKEN="$(< "$CREDENTIALS_DIRECTORY/gitea-token")"

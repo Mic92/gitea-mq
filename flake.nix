@@ -50,7 +50,11 @@
               ];
             };
             vendorHash = "sha256-Wsbaom3zPpZuyh5gG0DMvZ9Oo5nyIUSGa75E9qmZOC4=";
-            nativeCheckInputs = [ pkgs.postgresql ];
+            nativeCheckInputs = [
+              pkgs.postgresql
+              pkgs.gitea
+              pkgs.git
+            ];
             meta.mainProgram = "gitea-mq";
           };
 

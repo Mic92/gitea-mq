@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jogman/gitea-mq/internal/gitea"
+	"github.com/jogman/gitea-mq/internal/merge"
 	"github.com/jogman/gitea-mq/internal/queue"
 	"github.com/jogman/gitea-mq/internal/store/pg"
 )
@@ -256,6 +257,48 @@ func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 					slog.Info("removed PR due to success-but-not-merged timeout", "pr", entry.PrNumber)
 				}
 			}
+		}
+	}
+
+	// Step 9: Start testing for any head-of-queue entry still in "queued" state.
+	// This kicks off merge branch creation for newly-enqueued PRs or after
+	// the previous head was removed and the queue advanced.
+	//
+	// Re-fetch active entries since the loop above may have changed them.
+	activeEntries, err = deps.Queue.ListActiveEntries(ctx, deps.RepoID)
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Errorf("list active entries for testing: %w", err))
+		return result, nil
+	}
+
+	// Collect unique target branches that have queued entries.
+	seenBranches := make(map[string]bool)
+	for _, entry := range activeEntries {
+		if seenBranches[entry.TargetBranch] {
+			continue
+		}
+		seenBranches[entry.TargetBranch] = true
+
+		head, err := deps.Queue.Head(ctx, deps.RepoID, entry.TargetBranch)
+		if err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("get head for branch %s: %w", entry.TargetBranch, err))
+			continue
+		}
+		if head == nil || head.State != pg.EntryStateQueued {
+			continue
+		}
+
+		startResult, err := merge.StartTesting(ctx, deps.Gitea, deps.Queue, deps.Owner, deps.Repo, deps.RepoID, head)
+		if err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("start testing for PR #%d: %w", head.PrNumber, err))
+			continue
+		}
+		if startResult.Conflict {
+			// PR was removed due to conflict — the next head (if any)
+			// will be picked up on the next poll cycle.
+			slog.Info("head-of-queue had conflict, will retry next cycle", "pr", head.PrNumber)
+		} else {
+			slog.Info("started testing for head-of-queue", "pr", head.PrNumber, "branch", startResult.MergeBranchName)
 		}
 	}
 

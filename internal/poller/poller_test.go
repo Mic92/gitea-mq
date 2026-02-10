@@ -71,6 +71,9 @@ func TestPollOnce_NewAutomergePR_Enqueues(t *testing.T) {
 	mock.GetPRTimelineFn = func(_ context.Context, _, _ string, _ int64) ([]gitea.TimelineComment, error) {
 		return automergeTimeline(), nil
 	}
+	mock.MergeBranchesFn = func(_ context.Context, _, _, _, _, _ string) (*gitea.MergeResult, error) {
+		return &gitea.MergeResult{SHA: "mock-merge-sha"}, nil
+	}
 
 	result, err := poller.PollOnce(ctx, deps)
 	if err != nil {
@@ -81,7 +84,7 @@ func TestPollOnce_NewAutomergePR_Enqueues(t *testing.T) {
 		t.Fatalf("expected PR #42 enqueued, got %v", result.Enqueued)
 	}
 
-	// Verify the PR is in the queue.
+	// Verify the PR is in the queue and transitioned to testing.
 	entry, _ := svc.GetEntry(ctx, repoID, 42)
 	if entry == nil {
 		t.Fatal("PR #42 should be in queue")
@@ -89,15 +92,22 @@ func TestPollOnce_NewAutomergePR_Enqueues(t *testing.T) {
 	if entry.PrHeadSha != "sha42" {
 		t.Fatalf("expected head SHA sha42, got %s", entry.PrHeadSha)
 	}
-
-	// Verify pending status was set.
-	statusCalls := mock.CallsTo("CreateCommitStatus")
-	if len(statusCalls) != 1 {
-		t.Fatalf("expected 1 CreateCommitStatus call, got %d", len(statusCalls))
+	if entry.State != pg.EntryStateTesting {
+		t.Fatalf("expected state=testing after poll, got %s", entry.State)
 	}
-	status := statusCalls[0].Args[3].(gitea.CommitStatus)
-	if status.State != "pending" || status.Context != "gitea-mq" {
-		t.Fatalf("expected pending gitea-mq status, got %+v", status)
+
+	// Verify two status calls: pending on enqueue, then pending "Testing merge result".
+	statusCalls := mock.CallsTo("CreateCommitStatus")
+	if len(statusCalls) != 2 {
+		t.Fatalf("expected 2 CreateCommitStatus calls, got %d", len(statusCalls))
+	}
+	enqueueStatus := statusCalls[0].Args[3].(gitea.CommitStatus)
+	if enqueueStatus.State != "pending" || enqueueStatus.Context != "gitea-mq" {
+		t.Fatalf("expected pending gitea-mq status on enqueue, got %+v", enqueueStatus)
+	}
+	testingStatus := statusCalls[1].Args[3].(gitea.CommitStatus)
+	if testingStatus.State != "pending" || testingStatus.Description != "Testing merge result" {
+		t.Fatalf("expected pending 'Testing merge result' status, got %+v", testingStatus)
 	}
 }
 
@@ -115,6 +125,9 @@ func TestPollOnce_AlreadyQueued_Noop(t *testing.T) {
 	mock.GetPRTimelineFn = func(_ context.Context, _, _ string, _ int64) ([]gitea.TimelineComment, error) {
 		return automergeTimeline(), nil
 	}
+	mock.MergeBranchesFn = func(_ context.Context, _, _, _, _, _ string) (*gitea.MergeResult, error) {
+		return &gitea.MergeResult{SHA: "mock-merge-sha"}, nil
+	}
 
 	result, err := poller.PollOnce(ctx, deps)
 	if err != nil {
@@ -124,9 +137,21 @@ func TestPollOnce_AlreadyQueued_Noop(t *testing.T) {
 	if len(result.Enqueued) != 0 {
 		t.Fatalf("expected no enqueues, got %v", result.Enqueued)
 	}
-	// No status calls should be made for already-queued PRs.
-	if len(mock.CallsTo("CreateCommitStatus")) != 0 {
-		t.Fatal("should not create status for already-queued PR")
+
+	// No enqueue status call, but StartTesting should set "Testing merge result".
+	statusCalls := mock.CallsTo("CreateCommitStatus")
+	if len(statusCalls) != 1 {
+		t.Fatalf("expected 1 CreateCommitStatus call (from StartTesting), got %d", len(statusCalls))
+	}
+	status := statusCalls[0].Args[3].(gitea.CommitStatus)
+	if status.Description != "Testing merge result" {
+		t.Fatalf("expected 'Testing merge result' status, got %+v", status)
+	}
+
+	// Verify entry transitioned to testing.
+	entry, _ := svc.GetEntry(ctx, repoID, 42)
+	if entry == nil || entry.State != pg.EntryStateTesting {
+		t.Fatalf("expected state=testing, got %v", entry)
 	}
 }
 
