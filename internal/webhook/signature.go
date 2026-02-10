@@ -21,9 +21,7 @@ func ValidateSignature(body []byte, signature, secret string) bool {
 		return false
 	}
 
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write(body)
-	expected := hex.EncodeToString(mac.Sum(nil))
+	expected := ComputeSignature(body, secret)
 
 	return hmac.Equal([]byte(expected), []byte(signature))
 }
