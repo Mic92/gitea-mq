@@ -170,19 +170,16 @@ func TestProcessCheckStatus_RetrySuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	// This triggers failure handling — reset for the retry test.
-	// Re-enqueue for a clean slate.
-	mock.Reset()
-	svc2, ctx2, repoID2 := setupClean(t)
-	deps2 := *deps
-	deps2.Queue = svc2
-	deps2.RepoID = repoID2
-	enqueueTesting(t, svc2, ctx2, repoID2, 42)
+	// Re-setup with a clean DB so the queue and mock state are fresh.
+	deps, mock, svc, ctx, repoID = setupMonitorTest(t)
+	withBranchProtection(mock, "gitea-mq", "ci/build")
+	enqueueTesting(t, svc, ctx, repoID, 42)
 
-	entry, _ = svc2.GetEntry(ctx2, repoID2, 42)
+	entry, _ = svc.GetEntry(ctx, repoID, 42)
 
 	// Record failure, then overwrite with success (simulating retry).
-	_ = svc2.SaveCheckStatus(ctx2, entry.ID, "ci/build", pg.CheckStateFailure)
-	if err := monitor.ProcessCheckStatus(ctx2, &deps2, entry, "ci/build", pg.CheckStateSuccess); err != nil {
+	_ = svc.SaveCheckStatus(ctx, entry.ID, "ci/build", pg.CheckStateFailure)
+	if err := monitor.ProcessCheckStatus(ctx, deps, entry, "ci/build", pg.CheckStateSuccess); err != nil {
 		t.Fatal(err)
 	}
 
@@ -190,19 +187,4 @@ func TestProcessCheckStatus_RetrySuccess(t *testing.T) {
 	if len(statusCalls) != 1 || statusCalls[0].Args[3].(gitea.CommitStatus).State != "success" {
 		t.Fatal("expected success after retry overwrites failure")
 	}
-}
-
-func setupClean(t *testing.T) (*queue.Service, context.Context, int64) {
-	t.Helper()
-
-	pool := testutil.NewTestDB(t, testutil.Server())
-	svc := queue.NewService(pool)
-	ctx := t.Context()
-
-	repo, err := svc.GetOrCreateRepo(ctx, "org", "app")
-	if err != nil {
-		t.Fatalf("create repo: %v", err)
-	}
-
-	return svc, ctx, repo.ID
 }
