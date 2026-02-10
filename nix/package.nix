@@ -17,7 +17,7 @@ buildGoModule {
       ./../internal
     ];
   };
-  vendorHash = "sha256-Wsbaom3zPpZuyh5gG0DMvZ9Oo5nyIUSGa75E9qmZOC4=";
+  vendorHash = "sha256-yvZ9HaoNHL47FBEDAtnWxm3o+8t+uYUrkVdfypJjQVw=";
   nativeCheckInputs = [
     postgresql
     gitea
