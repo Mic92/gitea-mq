@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -199,7 +200,9 @@ ALLOWED_HOST_LIST = loopback
 
 		resp, httpErr := httpClient.Get(server.URL + "/api/v1/version")
 		if httpErr == nil {
-			resp.Body.Close()
+			if err := resp.Body.Close(); err != nil {
+				slog.Warn("failed to close response body", "error", err)
+			}
 
 			if resp.StatusCode == http.StatusOK {
 				break
@@ -238,7 +241,9 @@ func freePort() (int, error) {
 	}
 
 	port := l.Addr().(*net.TCPAddr).Port
-	l.Close()
+	if err := l.Close(); err != nil {
+		return 0, fmt.Errorf("close listener: %w", err)
+	}
 
 	return port, nil
 }
@@ -278,7 +283,11 @@ func (a *GiteaAPI) CreateToken(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("create token: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			slog.Warn("failed to close response body", "error", err)
+		}
+	}()
 
 	if resp.StatusCode != http.StatusCreated {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -322,7 +331,11 @@ func (a *GiteaAPI) Do(t *testing.T, method, path string, body string) (int, []by
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, path, err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			slog.Warn("failed to close response body", "error", err)
+		}
+	}()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {

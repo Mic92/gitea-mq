@@ -32,7 +32,7 @@
           treefmt = {
             projectRootFile = "flake.nix";
             programs.nixfmt.enable = true;
-            programs.gofmt.enable = true;
+            programs.gofumpt.enable = true;
           };
 
           packages.default = self'.packages.gitea-mq;
@@ -58,7 +58,20 @@
             meta.mainProgram = "gitea-mq";
           };
 
-          checks = pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          checks = {
+            golangci-lint = self'.packages.gitea-mq.overrideAttrs (old: {
+              nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.golangci-lint ];
+              outputs = [ "out" ];
+              buildPhase = ''
+                HOME=$TMPDIR
+                golangci-lint run
+              '';
+              installPhase = ''
+                touch $out
+              '';
+            });
+          }
+          // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
             nixos-test = import ./nix/test.nix {
               inherit pkgs;
               self = inputs.self;

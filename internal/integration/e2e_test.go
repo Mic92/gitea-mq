@@ -272,9 +272,12 @@ type httpRecorder struct {
 	body       []byte
 }
 
-func (r *httpRecorder) Header() http.Header        { return http.Header{} }
-func (r *httpRecorder) WriteHeader(code int)        { r.statusCode = code }
-func (r *httpRecorder) Write(b []byte) (int, error) { r.body = append(r.body, b...); return len(b), nil }
+func (r *httpRecorder) Header() http.Header  { return http.Header{} }
+func (r *httpRecorder) WriteHeader(code int) { r.statusCode = code }
+func (r *httpRecorder) Write(b []byte) (int, error) {
+	r.body = append(r.body, b...)
+	return len(b), nil
+}
 
 func itoa(n int64) string {
 	return fmt.Sprintf("%d", n)

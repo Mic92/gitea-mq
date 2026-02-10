@@ -360,7 +360,11 @@ func (c *HTTPClient) MergeBranches(ctx context.Context, owner, repo, base, head,
 	if err != nil {
 		return nil, fmt.Errorf("create temp dir: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			slog.Warn("failed to remove temp dir", "path", tmpDir, "error", err)
+		}
+	}()
 
 	cloneURL := fmt.Sprintf("%s/%s/%s.git", c.baseURL, owner, repo)
 
