@@ -19,8 +19,15 @@
 
       imports = [ inputs.treefmt-nix.flakeModule ];
 
+      flake.nixosModules.default = ./nix/module.nix;
+
       perSystem =
-        { pkgs, self', ... }:
+        {
+          pkgs,
+          self',
+          system,
+          ...
+        }:
         {
           treefmt = {
             projectRootFile = "flake.nix";
@@ -43,6 +50,15 @@
               ];
             };
             vendorHash = "sha256-Wsbaom3zPpZuyh5gG0DMvZ9Oo5nyIUSGa75E9qmZOC4=";
+            nativeCheckInputs = [ pkgs.postgresql ];
+            meta.mainProgram = "gitea-mq";
+          };
+
+          checks = pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+            nixos-test = import ./nix/test.nix {
+              inherit pkgs;
+              self = inputs.self;
+            };
           };
 
           devShells.default = pkgs.mkShell {
@@ -50,7 +66,6 @@
             packages = with pkgs; [
               sqlc
               golangci-lint
-              postgresql
             ];
           };
         };

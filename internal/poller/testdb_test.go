@@ -1,4 +1,4 @@
-package queue_test
+package poller_test
 
 import (
 	"os"

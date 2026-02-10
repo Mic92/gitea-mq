@@ -1,0 +1,208 @@
+package monitor_test
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/jogman/gitea-mq/internal/gitea"
+	"github.com/jogman/gitea-mq/internal/monitor"
+	"github.com/jogman/gitea-mq/internal/queue"
+	"github.com/jogman/gitea-mq/internal/store/pg"
+	"github.com/jogman/gitea-mq/internal/testutil"
+)
+
+func setupMonitorTest(t *testing.T) (*monitor.Deps, *gitea.MockClient, *queue.Service, context.Context, int64) {
+	t.Helper()
+
+	pool := testutil.NewTestDB(t, testutil.Server())
+	svc := queue.NewService(pool)
+	ctx := t.Context()
+
+	repo, err := svc.GetOrCreateRepo(ctx, "org", "app")
+	if err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+
+	mock := &gitea.MockClient{}
+	deps := &monitor.Deps{
+		Gitea:        mock,
+		Queue:        svc,
+		Owner:        "org",
+		Repo:         "app",
+		RepoID:       repo.ID,
+		CheckTimeout: 1 * time.Hour,
+	}
+
+	return deps, mock, svc, ctx, repo.ID
+}
+
+// enqueueTesting is a helper that enqueues a PR and transitions it to
+// the testing state with a merge branch, which is the precondition for
+// ProcessCheckStatus.
+func enqueueTesting(t *testing.T, svc *queue.Service, ctx context.Context, repoID, prNumber int64) {
+	t.Helper()
+
+	if _, err := svc.Enqueue(ctx, repoID, prNumber, "sha"+string(rune('0'+prNumber%10)), "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.UpdateState(ctx, repoID, prNumber, pg.EntryStateTesting); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.SetMergeBranch(ctx, repoID, prNumber, "mq/42", "mergesha"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func withBranchProtection(mock *gitea.MockClient, checks ...string) {
+	mock.GetBranchProtectionFn = func(_ context.Context, _, _, _ string) (*gitea.BranchProtection, error) {
+		return &gitea.BranchProtection{
+			EnableStatusCheck:   true,
+			StatusCheckContexts: checks,
+		}, nil
+	}
+}
+
+// All required checks pass → gitea-mq set to success, merge branch deleted,
+// entry stays in queue (poller confirms merge later).
+func TestProcessCheckStatus_AllPass_TriggersSuccess(t *testing.T) {
+	deps, mock, svc, ctx, repoID := setupMonitorTest(t)
+	withBranchProtection(mock, "gitea-mq", "ci/build")
+	enqueueTesting(t, svc, ctx, repoID, 42)
+
+	entry, _ := svc.GetEntry(ctx, repoID, 42)
+
+	if err := monitor.ProcessCheckStatus(ctx, deps, entry, "ci/build", pg.CheckStateSuccess); err != nil {
+		t.Fatal(err)
+	}
+
+	statusCalls := mock.CallsTo("CreateCommitStatus")
+	if len(statusCalls) != 1 {
+		t.Fatalf("expected 1 CreateCommitStatus, got %d", len(statusCalls))
+	}
+	if statusCalls[0].Args[3].(gitea.CommitStatus).State != "success" {
+		t.Fatal("expected success status")
+	}
+
+	// Entry must still be in queue — poller removes after merge.
+	entry, _ = svc.GetEntry(ctx, repoID, 42)
+	if entry == nil || entry.State != pg.EntryStateSuccess {
+		t.Fatal("entry should be in success state, not removed")
+	}
+}
+
+// A required check fails → gitea-mq set to failure, automerge cancelled,
+// comment posted, merge branch deleted, queue advances.
+func TestProcessCheckStatus_Failure_CancelsAndAdvances(t *testing.T) {
+	deps, mock, svc, ctx, repoID := setupMonitorTest(t)
+	withBranchProtection(mock, "gitea-mq", "ci/build")
+	enqueueTesting(t, svc, ctx, repoID, 42)
+
+	// PR #43 is next in line.
+	if _, err := svc.Enqueue(ctx, repoID, 43, "sha43", "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	entry, _ := svc.GetEntry(ctx, repoID, 42)
+
+	if err := monitor.ProcessCheckStatus(ctx, deps, entry, "ci/build", pg.CheckStateFailure); err != nil {
+		t.Fatal(err)
+	}
+
+	if statusCalls := mock.CallsTo("CreateCommitStatus"); len(statusCalls) != 1 ||
+		statusCalls[0].Args[3].(gitea.CommitStatus).State != "failure" {
+		t.Fatal("expected failure status on PR head commit")
+	}
+	if len(mock.CallsTo("CancelAutoMerge")) != 1 {
+		t.Fatal("expected CancelAutoMerge")
+	}
+	if len(mock.CallsTo("CreateComment")) != 1 {
+		t.Fatal("expected failure comment")
+	}
+	if len(mock.CallsTo("DeleteBranch")) != 1 {
+		t.Fatal("expected merge branch cleanup")
+	}
+
+	head, _ := svc.Head(ctx, repoID, "main")
+	if head == nil || head.PrNumber != 43 {
+		t.Fatal("expected queue to advance to PR #43")
+	}
+}
+
+// Only some required checks reported → no action, stay waiting.
+func TestProcessCheckStatus_Partial_StaysWaiting(t *testing.T) {
+	deps, mock, svc, ctx, repoID := setupMonitorTest(t)
+	withBranchProtection(mock, "gitea-mq", "ci/build", "ci/lint")
+	enqueueTesting(t, svc, ctx, repoID, 42)
+
+	entry, _ := svc.GetEntry(ctx, repoID, 42)
+
+	// Only ci/build reported — ci/lint still pending.
+	if err := monitor.ProcessCheckStatus(ctx, deps, entry, "ci/build", pg.CheckStateSuccess); err != nil {
+		t.Fatal(err)
+	}
+
+	// No success/failure status should be set.
+	if len(mock.CallsTo("CreateCommitStatus")) != 0 {
+		t.Fatal("should not set status while waiting for more checks")
+	}
+
+	// Entry should still be testing.
+	entry, _ = svc.GetEntry(ctx, repoID, 42)
+	if entry.State != pg.EntryStateTesting {
+		t.Fatalf("expected testing state, got %s", entry.State)
+	}
+}
+
+// A check retries: failure → pending → success. The latest state (success)
+// is what counts because SaveCheckStatus upserts.
+func TestProcessCheckStatus_RetrySuccess(t *testing.T) {
+	deps, mock, svc, ctx, repoID := setupMonitorTest(t)
+	withBranchProtection(mock, "gitea-mq", "ci/build")
+	enqueueTesting(t, svc, ctx, repoID, 42)
+
+	entry, _ := svc.GetEntry(ctx, repoID, 42)
+
+	// First: failure.
+	if err := monitor.ProcessCheckStatus(ctx, deps, entry, "ci/build", pg.CheckStateFailure); err != nil {
+		t.Fatal(err)
+	}
+	// This triggers failure handling — reset for the retry test.
+	// Re-enqueue for a clean slate.
+	mock.Reset()
+	svc2, ctx2, repoID2 := setupClean(t)
+	deps2 := *deps
+	deps2.Queue = svc2
+	deps2.RepoID = repoID2
+	enqueueTesting(t, svc2, ctx2, repoID2, 42)
+
+	entry, _ = svc2.GetEntry(ctx2, repoID2, 42)
+
+	// Record failure, then overwrite with success (simulating retry).
+	_ = svc2.SaveCheckStatus(ctx2, entry.ID, "ci/build", pg.CheckStateFailure)
+	if err := monitor.ProcessCheckStatus(ctx2, &deps2, entry, "ci/build", pg.CheckStateSuccess); err != nil {
+		t.Fatal(err)
+	}
+
+	statusCalls := mock.CallsTo("CreateCommitStatus")
+	if len(statusCalls) != 1 || statusCalls[0].Args[3].(gitea.CommitStatus).State != "success" {
+		t.Fatal("expected success after retry overwrites failure")
+	}
+}
+
+func setupClean(t *testing.T) (*queue.Service, context.Context, int64) {
+	t.Helper()
+
+	pool := testutil.NewTestDB(t, testutil.Server())
+	svc := queue.NewService(pool)
+	ctx := t.Context()
+
+	repo, err := svc.GetOrCreateRepo(ctx, "org", "app")
+	if err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+
+	return svc, ctx, repo.ID
+}

@@ -297,6 +297,11 @@ func (s *Service) GetCheckStatuses(ctx context.Context, entryID int64) ([]pg.Che
 	return s.queries().GetCheckStatuses(ctx, entryID)
 }
 
+// ListActiveEntries returns all non-terminal entries for a repo.
+func (s *Service) ListActiveEntries(ctx context.Context, repoID int64) ([]pg.QueueEntry, error) {
+	return s.queries().ListActiveEntriesByRepo(ctx, repoID)
+}
+
 // GetOrCreateRepo ensures a repo row exists and returns it.
 func (s *Service) GetOrCreateRepo(ctx context.Context, owner, name string) (pg.Repo, error) {
 	return s.queries().GetOrCreateRepo(ctx, pg.GetOrCreateRepoParams{

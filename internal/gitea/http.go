@@ -65,7 +65,11 @@ func (c *HTTPClient) do(ctx context.Context, method, path string, body any) (*ht
 // decodeJSON reads the response body and decodes JSON into v.
 // It also checks for non-2xx status codes.
 func (c *HTTPClient) decodeJSON(resp *http.Response, v any) error {
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			slog.Warn("failed to close response body", "error", err)
+		}
+	}()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		bodyBytes, _ := io.ReadAll(resp.Body)
@@ -87,7 +91,11 @@ func (c *HTTPClient) decodeJSON(resp *http.Response, v any) error {
 
 // expectStatus checks the response has the expected status code.
 func (c *HTTPClient) expectStatus(resp *http.Response, expected int) error {
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			slog.Warn("failed to close response body", "error", err)
+		}
+	}()
 
 	if resp.StatusCode != expected {
 		bodyBytes, _ := io.ReadAll(resp.Body)
@@ -421,7 +429,11 @@ func (c *HTTPClient) MergeBranches(ctx context.Context, owner, repo, base, head 
 
 		return nil, fmt.Errorf("merge %s into %s in %s/%s: %w", head, base, owner, repo, err)
 	}
-	defer mergeResp.Body.Close()
+	defer func() {
+		if err := mergeResp.Body.Close(); err != nil {
+			slog.Warn("failed to close response body", "error", err)
+		}
+	}()
 
 	if mergeResp.StatusCode < 200 || mergeResp.StatusCode >= 300 {
 		// Clean up the temp branch on merge failure (likely conflict)
@@ -509,15 +521,18 @@ func (c *HTTPClient) EditBranchProtection(ctx context.Context, owner, repo, name
 		return err
 	}
 
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			slog.Warn("failed to close response body", "error", err)
+		}
+	}()
+
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
 
 		return fmt.Errorf("edit branch protection %s in %s/%s: status %d: %s",
 			name, owner, repo, resp.StatusCode, string(bodyBytes))
 	}
-
-	resp.Body.Close()
 
 	return nil
 }
