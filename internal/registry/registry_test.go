@@ -20,7 +20,7 @@ func newTestRegistry(t *testing.T) (*registry.RepoRegistry, context.Context) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	pool := testutil.NewTestDB(t, testutil.Server())
+	pool := testutil.TestDB(t)
 	queueSvc := queue.NewService(pool)
 
 	deps := &registry.Deps{

@@ -39,7 +39,7 @@ type testEnv struct {
 func setup(t *testing.T) *testEnv {
 	t.Helper()
 
-	pool := testutil.NewTestDB(t, testutil.Server())
+	pool := testutil.TestDB(t)
 	svc := queue.NewService(pool)
 	ctx := t.Context()
 

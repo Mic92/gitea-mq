@@ -20,7 +20,7 @@ func newTestSetup(t *testing.T) (*registry.RepoRegistry, *gitea.MockClient, cont
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	pool := testutil.NewTestDB(t, testutil.Server())
+	pool := testutil.TestDB(t)
 	queueSvc := queue.NewService(pool)
 	mock := &gitea.MockClient{}
 

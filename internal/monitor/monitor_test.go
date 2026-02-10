@@ -15,7 +15,7 @@ import (
 func setupMonitorTest(t *testing.T) (*monitor.Deps, *gitea.MockClient, *queue.Service, context.Context, int64) {
 	t.Helper()
 
-	pool := testutil.NewTestDB(t, testutil.Server())
+	pool := testutil.TestDB(t)
 	svc := queue.NewService(pool)
 	ctx := t.Context()
 
