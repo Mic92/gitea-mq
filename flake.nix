@@ -26,6 +26,8 @@
       perSystem =
         {
           pkgs,
+          self',
+          lib,
           ...
         }:
         let
@@ -41,12 +43,19 @@
           packages.default = gitea-mq;
           packages.gitea-mq = gitea-mq;
 
-          checks = {
-            golangci-lint = pkgs.callPackage ./nix/golangci-lint.nix { inherit gitea-mq; };
-          }
-          // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-            nixos-test = pkgs.callPackage ./nix/test.nix { self = inputs.self; };
-          };
+          checks =
+            let
+              packages = lib.mapAttrs' (n: lib.nameValuePair "package-${n}") self'.packages;
+              devShells = lib.mapAttrs' (n: lib.nameValuePair "devShell-${n}") self'.devShells;
+            in
+            {
+              golangci-lint = pkgs.callPackage ./nix/golangci-lint.nix { inherit gitea-mq; };
+            }
+            // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+              nixos-test = pkgs.callPackage ./nix/test.nix { self = inputs.self; };
+            }
+            // packages
+            // devShells;
 
           devShells.default = pkgs.callPackage ./nix/devshell.nix { inherit gitea-mq; };
         };
