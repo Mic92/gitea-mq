@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 
 	"github.com/jogman/gitea-mq/internal/gitea"
 )
@@ -27,15 +28,7 @@ func EnsureBranchProtection(ctx context.Context, client gitea.Client, owner, rep
 	}
 
 	for _, bp := range bps {
-		hasGiteaMQ := false
-		for _, c := range bp.StatusCheckContexts {
-			if c == "gitea-mq" {
-				hasGiteaMQ = true
-				break
-			}
-		}
-
-		if hasGiteaMQ {
+		if slices.Contains(bp.StatusCheckContexts, "gitea-mq") {
 			slog.Debug("gitea-mq already in required checks",
 				"owner", owner, "repo", repo, "rule", bp.RuleName)
 			continue
