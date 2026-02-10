@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/jogman/gitea-mq/internal/gitea"
 	"github.com/jogman/gitea-mq/internal/queue"
@@ -81,7 +82,9 @@ func CleanupMergeBranch(ctx context.Context, giteaClient gitea.Client, owner, re
 }
 
 // CleanupStaleBranches scans for orphaned mq/* branches and deletes them.
-// Called on startup to clean up after crashes.
+// Called on startup to clean up after crashes. A branch is considered stale
+// if its name starts with "mq/" but is not referenced by any active queue
+// entry.
 func CleanupStaleBranches(ctx context.Context, giteaClient gitea.Client, svc *queue.Service, owner, repo string, repoID int64) error {
 	// Get all active entries to know which merge branches are legitimate.
 	activeEntries, err := svc.ListActiveEntries(ctx, repoID)
@@ -97,16 +100,34 @@ func CleanupStaleBranches(ctx context.Context, giteaClient gitea.Client, svc *qu
 	}
 
 	// List all branches and find orphaned mq/* ones.
-	// Gitea doesn't have a "list branches by prefix" API, so we list all
-	// and filter. For repos with many branches this could be slow, but
-	// mq/* branches are short-lived so there should be few.
-	//
-	// Note: We use ListOpenPRs as a proxy — actually we need a branch listing API.
-	// Since the Gitea client doesn't have ListBranches yet, we skip this for now
-	// and just log that cleanup would happen. The actual cleanup relies on the
-	// queue entries having merge_branch_name set, which CleanupMergeBranch handles.
+	branches, err := giteaClient.ListBranches(ctx, owner, repo)
+	if err != nil {
+		return fmt.Errorf("list branches: %w", err)
+	}
+
+	var deleted int
+	for _, b := range branches {
+		if !strings.HasPrefix(b.Name, "mq/") {
+			continue
+		}
+
+		if activeBranches[b.Name] {
+			continue
+		}
+
+		slog.Info("deleting stale merge branch", "owner", owner, "repo", repo, "branch", b.Name)
+
+		if err := giteaClient.DeleteBranch(ctx, owner, repo, b.Name); err != nil {
+			slog.Warn("failed to delete stale branch", "branch", b.Name, "error", err)
+
+			continue
+		}
+
+		deleted++
+	}
+
 	slog.Info("startup merge branch cleanup", "owner", owner, "repo", repo,
-		"active_branches", len(activeBranches))
+		"active_branches", len(activeBranches), "stale_deleted", deleted)
 
 	return nil
 }

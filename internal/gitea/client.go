@@ -67,6 +67,12 @@ func MQStatus(state, description string) CommitStatus {
 	return CommitStatus{Context: "gitea-mq", State: state, Description: description}
 }
 
+// Branch represents a branch from the Gitea API.
+// Only the fields we need are included.
+type Branch struct {
+	Name string `json:"name"`
+}
+
 // BranchProtection holds the relevant fields from a branch protection rule.
 // Matches Gitea's BranchProtection API response.
 type BranchProtection struct {
@@ -166,6 +172,11 @@ type Client interface {
 	// GetBranchProtection returns the branch protection rule for a branch.
 	// GET /repos/{owner}/{repo}/branch_protections/{name}
 	GetBranchProtection(ctx context.Context, owner, repo, branch string) (*BranchProtection, error)
+
+	// ListBranches returns all branches for a repository.
+	// Handles pagination internally.
+	// GET /repos/{owner}/{repo}/branches
+	ListBranches(ctx context.Context, owner, repo string) ([]Branch, error)
 
 	// CreateBranch creates a new branch from a target ref.
 	// POST /repos/{owner}/{repo}/branches

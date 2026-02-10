@@ -279,6 +279,13 @@ func (c *HTTPClient) GetBranchProtection(ctx context.Context, owner, repo, branc
 	return &bp, nil
 }
 
+// ListBranches returns all branches for a repository. Handles pagination.
+func (c *HTTPClient) ListBranches(ctx context.Context, owner, repo string) ([]Branch, error) {
+	return paginate[Branch](ctx, c,
+		fmt.Sprintf("/repos/%s/%s/branches?page=%%d&limit=50", owner, repo),
+		fmt.Sprintf("list branches for %s/%s", owner, repo))
+}
+
 // CreateBranch creates a new branch from a target ref.
 // POST /repos/{owner}/{repo}/branches
 func (c *HTTPClient) CreateBranch(ctx context.Context, owner, repo, name, target string) error {

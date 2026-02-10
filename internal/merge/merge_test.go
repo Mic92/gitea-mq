@@ -2,6 +2,7 @@ package merge_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 
@@ -104,5 +105,70 @@ func TestStartTesting_Conflict(t *testing.T) {
 	}
 	if len(mock.CallsTo("CreateComment")) != 1 {
 		t.Fatal("expected conflict comment")
+	}
+}
+
+// CleanupStaleBranches deletes mq/* branches that have no active queue entry.
+func TestCleanupStaleBranches_DeletesOrphans(t *testing.T) {
+	mock, svc, ctx, repoID := setup(t)
+
+	// Create one active entry with a merge branch.
+	if _, err := svc.Enqueue(ctx, repoID, 10, "sha10", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SetMergeBranch(ctx, repoID, 10, "mq/10", "mergesha10"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate branches on the remote: mq/10 (active), mq/99 (stale), main (non-mq).
+	mock.ListBranchesFn = func(_ context.Context, _, _ string) ([]gitea.Branch, error) {
+		return []gitea.Branch{
+			{Name: "main"},
+			{Name: "mq/10"},
+			{Name: "mq/99"},
+		}, nil
+	}
+
+	if err := merge.CleanupStaleBranches(ctx, mock, svc, "org", "app", repoID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Only mq/99 should be deleted — mq/10 is active, main is not an mq branch.
+	deletes := mock.CallsTo("DeleteBranch")
+	if len(deletes) != 1 {
+		t.Fatalf("expected 1 delete call, got %d", len(deletes))
+	}
+	if deletes[0].Args[2] != "mq/99" {
+		t.Fatalf("expected mq/99 deleted, got %s", deletes[0].Args[2])
+	}
+}
+
+// CleanupStaleBranches continues if a single delete fails.
+func TestCleanupStaleBranches_DeleteErrorContinues(t *testing.T) {
+	mock, svc, ctx, repoID := setup(t)
+
+	mock.ListBranchesFn = func(_ context.Context, _, _ string) ([]gitea.Branch, error) {
+		return []gitea.Branch{
+			{Name: "mq/1"},
+			{Name: "mq/2"},
+		}, nil
+	}
+
+	callCount := 0
+	mock.DeleteBranchFn = func(_ context.Context, _, _, name string) error {
+		callCount++
+		if name == "mq/1" {
+			return fmt.Errorf("permission denied")
+		}
+		return nil
+	}
+
+	if err := merge.CleanupStaleBranches(ctx, mock, svc, "org", "app", repoID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Both branches should be attempted even though mq/1 fails.
+	if callCount != 2 {
+		t.Fatalf("expected 2 delete attempts, got %d", callCount)
 	}
 }

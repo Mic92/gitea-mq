@@ -30,6 +30,7 @@ type MockClient struct {
 	CreateCommentFn         func(ctx context.Context, owner, repo string, index int64, body string) error
 	CancelAutoMergeFn       func(ctx context.Context, owner, repo string, index int64) error
 	GetBranchProtectionFn   func(ctx context.Context, owner, repo, branch string) (*BranchProtection, error)
+	ListBranchesFn          func(ctx context.Context, owner, repo string) ([]Branch, error)
 	CreateBranchFn          func(ctx context.Context, owner, repo, name, target string) error
 	DeleteBranchFn          func(ctx context.Context, owner, repo, name string) error
 	MergeBranchesFn         func(ctx context.Context, owner, repo, base, head, branchName string) (*MergeResult, error)
@@ -157,6 +158,16 @@ func (m *MockClient) GetBranchProtection(ctx context.Context, owner, repo, branc
 
 	if m.GetBranchProtectionFn != nil {
 		return m.GetBranchProtectionFn(ctx, owner, repo, branch)
+	}
+
+	return nil, nil
+}
+
+func (m *MockClient) ListBranches(ctx context.Context, owner, repo string) ([]Branch, error) {
+	m.record("ListBranches", owner, repo)
+
+	if m.ListBranchesFn != nil {
+		return m.ListBranchesFn(ctx, owner, repo)
 	}
 
 	return nil, nil
