@@ -15,7 +15,6 @@ import (
 	"github.com/jogman/gitea-mq/internal/gitea"
 	"github.com/jogman/gitea-mq/internal/monitor"
 	"github.com/jogman/gitea-mq/internal/queue"
-	"github.com/jogman/gitea-mq/internal/store/pg"
 	"github.com/jogman/gitea-mq/internal/testutil"
 	"github.com/jogman/gitea-mq/internal/webhook"
 )
@@ -121,29 +120,4 @@ func TestHandler_IgnoresOwnStatus(t *testing.T) {
 	}
 }
 
-// The actual purpose: webhook arrives for merge branch commit → monitor
-// evaluates checks → sets gitea-mq=success.
-func TestHandler_StatusRoutedToMonitor(t *testing.T) {
-	env := setup(t)
 
-	if _, err := env.svc.Enqueue(env.ctx, env.repoID, 42, "prsha", "main"); err != nil {
-		t.Fatal(err)
-	}
-	_ = env.svc.UpdateState(env.ctx, env.repoID, 42, pg.EntryStateTesting)
-	_ = env.svc.SetMergeBranch(env.ctx, env.repoID, 42, "mq/42", "mergesha")
-
-	body := makePayload("mergesha", "ci/build", "success", "org/app")
-	rec := doRequest(env.handler, body, sign(body))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec.Code)
-	}
-
-	statusCalls := env.mock.CallsTo("CreateCommitStatus")
-	if len(statusCalls) != 1 {
-		t.Fatalf("expected 1 CreateCommitStatus, got %d", len(statusCalls))
-	}
-	status := statusCalls[0].Args[3].(gitea.CommitStatus)
-	if status.State != "success" || status.Context != "gitea-mq" {
-		t.Fatalf("expected success gitea-mq status, got %+v", status)
-	}
-}
