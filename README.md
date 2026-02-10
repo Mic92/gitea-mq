@@ -34,7 +34,7 @@ All configuration is via environment variables:
 | `GITEA_MQ_WEBHOOK_SECRET` | yes | — | Shared secret for webhook HMAC |
 | `GITEA_MQ_LISTEN_ADDR` | no | `:8080` | HTTP listen address |
 | `GITEA_MQ_WEBHOOK_PATH` | no | `/webhook` | Webhook endpoint path |
-| `GITEA_MQ_EXTERNAL_URL` | no | — | External URL for webhook auto-setup |
+| `GITEA_MQ_EXTERNAL_URL` | no | — | URL where Gitea can reach this service (for webhook auto-setup; without it, you must create webhooks manually) |
 | `GITEA_MQ_POLL_INTERVAL` | no | `30s` | Automerge discovery poll interval |
 | `GITEA_MQ_CHECK_TIMEOUT` | no | `1h` | Timeout for required checks |
 | `GITEA_MQ_REQUIRED_CHECKS` | no | — | Fallback required check contexts (comma-separated) |
@@ -45,10 +45,10 @@ All configuration is via environment variables:
 
 On startup, gitea-mq automatically configures each managed repository:
 
-- **Branch protection**: Adds `gitea-mq` as a required status check to all existing branch protection rules
-- **Webhook**: Creates a webhook for `status` events pointed at the service
+- **Branch protection**: Adds `gitea-mq` as a required status check to all existing branch protection rules (always runs)
+- **Webhook**: Creates a webhook for `status` events pointed at the service (only if `GITEA_MQ_EXTERNAL_URL` is set)
 
-This means you don't need to manually configure Gitea — just set `GITEA_MQ_EXTERNAL_URL` so the webhook URL is reachable from Gitea.
+If you set `GITEA_MQ_EXTERNAL_URL`, gitea-mq will auto-create webhooks so Gitea can push `status` events back. This is the externally-reachable URL of gitea-mq (e.g. `https://mq.example.com`), **not** the Gitea URL. Without it, branch protection is still auto-configured, but you must create the webhook manually in each repo (event type: `status`, pointing at `<your-mq-url>/webhook`).
 
 ## CI configuration
 

@@ -24,18 +24,14 @@ import (
 )
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slogLevel(),
-	})))
-
 	if err := run(); err != nil {
 		slog.Error("fatal", "error", err)
 		os.Exit(1)
 	}
 }
 
-func slogLevel() slog.Level {
-	switch os.Getenv("GITEA_MQ_LOG_LEVEL") {
+func slogLevel(level string) slog.Level {
+	switch level {
 	case "debug":
 		return slog.LevelDebug
 	case "warn":
@@ -52,6 +48,10 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: slogLevel(cfg.LogLevel),
+	})))
 
 	slog.Info("starting gitea-mq",
 		"listen", cfg.ListenAddr,
@@ -75,9 +75,9 @@ func run() error {
 	giteaClient := gitea.NewHTTPClient(cfg.GiteaURL, cfg.GiteaToken)
 
 	// Resolve webhook URL for auto-setup.
-	webhookURL := cfg.GiteaURL + cfg.WebhookPath // fallback; in practice, the user configures the external URL
-	if ext := os.Getenv("GITEA_MQ_EXTERNAL_URL"); ext != "" {
-		webhookURL = ext + cfg.WebhookPath
+	var webhookURL string
+	if cfg.ExternalURL != "" {
+		webhookURL = cfg.ExternalURL + cfg.WebhookPath
 	}
 
 	// Per-repo setup: auto-setup, repo registration, cleanup.
@@ -85,7 +85,12 @@ func run() error {
 
 	for _, ref := range cfg.Repos {
 		// Auto-setup: ensure branch protection and webhook.
-		if err := setup.EnsureRepo(ctx, giteaClient, ref.Owner, ref.Name, webhookURL, cfg.WebhookSecret); err != nil {
+		if webhookURL == "" {
+			slog.Info("skipping webhook auto-setup (GITEA_MQ_EXTERNAL_URL not set)", "repo", ref)
+			if err := setup.EnsureBranchProtection(ctx, giteaClient, ref.Owner, ref.Name); err != nil {
+				slog.Warn("branch protection auto-setup failed", "repo", ref, "error", err)
+			}
+		} else if err := setup.EnsureRepo(ctx, giteaClient, ref.Owner, ref.Name, webhookURL, cfg.WebhookSecret); err != nil {
 			slog.Warn("auto-setup failed", "repo", ref, "error", err)
 			// Non-fatal: continue even if auto-setup fails.
 		}

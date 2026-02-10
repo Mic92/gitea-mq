@@ -16,10 +16,12 @@ type Config struct {
 	WebhookSecret   string
 	ListenAddr      string
 	WebhookPath     string
+	ExternalURL     string // optional: external URL for webhook auto-setup
 	PollInterval    time.Duration
 	CheckTimeout    time.Duration
 	RequiredChecks  []string
 	RefreshInterval time.Duration
+	LogLevel        string // "debug", "info", "warn", "error"
 }
 
 // RepoRef identifies a repository by owner and name.
@@ -107,6 +109,18 @@ func Load() (*Config, error) {
 				cfg.RequiredChecks = append(cfg.RequiredChecks, c)
 			}
 		}
+	}
+
+	// Optional: external URL for webhook auto-setup
+	cfg.ExternalURL = os.Getenv("GITEA_MQ_EXTERNAL_URL")
+
+	// Optional: log level
+	cfg.LogLevel = envOrDefault("GITEA_MQ_LOG_LEVEL", "info")
+	switch cfg.LogLevel {
+	case "debug", "info", "warn", "error":
+		// valid
+	default:
+		return nil, fmt.Errorf("GITEA_MQ_LOG_LEVEL: invalid value %q, must be one of: debug, info, warn, error", cfg.LogLevel)
 	}
 
 	return cfg, nil
