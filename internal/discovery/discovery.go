@@ -7,6 +7,7 @@ import (
 	"context"
 	"log/slog"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/jogman/gitea-mq/internal/config"
@@ -131,14 +132,9 @@ func Run(ctx context.Context, deps *Deps, interval time.Duration) {
 }
 
 func parseKey(key string) (config.RepoRef, bool) {
-	for i, c := range key {
-		if c == '/' {
-			owner := key[:i]
-			name := key[i+1:]
-			if owner != "" && name != "" {
-				return config.RepoRef{Owner: owner, Name: name}, true
-			}
-		}
+	owner, name, ok := strings.Cut(key, "/")
+	if !ok || owner == "" || name == "" {
+		return config.RepoRef{}, false
 	}
-	return config.RepoRef{}, false
+	return config.RepoRef{Owner: owner, Name: name}, true
 }
