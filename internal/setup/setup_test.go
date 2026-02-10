@@ -2,6 +2,7 @@ package setup_test
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/jogman/gitea-mq/internal/gitea"
@@ -32,23 +33,11 @@ func TestEnsureBranchProtection_AddsMissing(t *testing.T) {
 	}
 
 	opts := calls[0].Args[3].(gitea.EditBranchProtectionOpts)
-	found := false
-	for _, c := range opts.StatusCheckContexts {
-		if c == "gitea-mq" {
-			found = true
-		}
-	}
-	if !found {
+	if !slices.Contains(opts.StatusCheckContexts, "gitea-mq") {
 		t.Error("expected gitea-mq in status check contexts")
 	}
 	// Original check should be preserved.
-	foundCI := false
-	for _, c := range opts.StatusCheckContexts {
-		if c == "ci/build" {
-			foundCI = true
-		}
-	}
-	if !foundCI {
+	if !slices.Contains(opts.StatusCheckContexts, "ci/build") {
 		t.Error("expected ci/build preserved in status check contexts")
 	}
 }
