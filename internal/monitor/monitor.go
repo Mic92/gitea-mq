@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jogman/gitea-mq/internal/gitea"
+	"github.com/jogman/gitea-mq/internal/merge"
 	"github.com/jogman/gitea-mq/internal/queue"
 	"github.com/jogman/gitea-mq/internal/store/pg"
 )
@@ -138,11 +139,7 @@ func HandleSuccess(ctx context.Context, deps *Deps, entry *pg.QueueEntry) error 
 	}
 
 	// Delete the merge branch — CI is done, no longer needed.
-	if entry.MergeBranchName.Valid && entry.MergeBranchName.String != "" {
-		if err := deps.Gitea.DeleteBranch(ctx, deps.Owner, deps.Repo, entry.MergeBranchName.String); err != nil {
-			slog.Warn("failed to delete merge branch", "branch", entry.MergeBranchName.String, "error", err)
-		}
-	}
+	merge.CleanupMergeBranch(ctx, deps.Gitea, deps.Owner, deps.Repo, entry)
 
 	// Transition to success state. The poller will advance once the PR is merged.
 	if err := deps.Queue.UpdateState(ctx, deps.RepoID, entry.PrNumber, pg.EntryStateSuccess); err != nil {
@@ -176,11 +173,7 @@ func HandleFailure(ctx context.Context, deps *Deps, entry *pg.QueueEntry, failed
 		slog.Warn("failed to post failure comment", "pr", entry.PrNumber, "error", err)
 	}
 
-	if entry.MergeBranchName.Valid && entry.MergeBranchName.String != "" {
-		if err := deps.Gitea.DeleteBranch(ctx, deps.Owner, deps.Repo, entry.MergeBranchName.String); err != nil {
-			slog.Warn("failed to delete merge branch", "branch", entry.MergeBranchName.String, "error", err)
-		}
-	}
+	merge.CleanupMergeBranch(ctx, deps.Gitea, deps.Owner, deps.Repo, entry)
 
 	if err := deps.Queue.UpdateState(ctx, deps.RepoID, entry.PrNumber, pg.EntryStateFailed); err != nil {
 		slog.Warn("failed to update state to failed", "pr", entry.PrNumber, "error", err)
@@ -215,11 +208,7 @@ func HandleTimeout(ctx context.Context, deps *Deps, entry *pg.QueueEntry) error 
 		slog.Warn("failed to post timeout comment", "pr", entry.PrNumber, "error", err)
 	}
 
-	if entry.MergeBranchName.Valid && entry.MergeBranchName.String != "" {
-		if err := deps.Gitea.DeleteBranch(ctx, deps.Owner, deps.Repo, entry.MergeBranchName.String); err != nil {
-			slog.Warn("failed to delete merge branch", "branch", entry.MergeBranchName.String, "error", err)
-		}
-	}
+	merge.CleanupMergeBranch(ctx, deps.Gitea, deps.Owner, deps.Repo, entry)
 
 	if err := deps.Queue.UpdateState(ctx, deps.RepoID, entry.PrNumber, pg.EntryStateFailed); err != nil {
 		slog.Warn("failed to update state to failed", "pr", entry.PrNumber, "error", err)

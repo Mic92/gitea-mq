@@ -144,12 +144,7 @@ func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 					continue
 				}
 				if dqResult.WasHead {
-					// Clean up merge branch if present.
-					if entry.MergeBranchName.Valid && entry.MergeBranchName.String != "" {
-						if err := deps.Gitea.DeleteBranch(ctx, deps.Owner, deps.Repo, entry.MergeBranchName.String); err != nil {
-							result.Errors = append(result.Errors, fmt.Errorf("delete merge branch for PR #%d: %w", entry.PrNumber, err))
-						}
-					}
+					merge.CleanupMergeBranch(ctx, deps.Gitea, deps.Owner, deps.Repo, &entry)
 					result.Advanced = append(result.Advanced, entry.PrNumber)
 				}
 				result.Dequeued = append(result.Dequeued, entry.PrNumber)
@@ -163,10 +158,8 @@ func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 				result.Errors = append(result.Errors, fmt.Errorf("dequeue closed PR #%d: %w", entry.PrNumber, err))
 				continue
 			}
-			if dqResult.WasHead && entry.MergeBranchName.Valid && entry.MergeBranchName.String != "" {
-				if err := deps.Gitea.DeleteBranch(ctx, deps.Owner, deps.Repo, entry.MergeBranchName.String); err != nil {
-					result.Errors = append(result.Errors, fmt.Errorf("delete merge branch for closed PR #%d: %w", entry.PrNumber, err))
-				}
+			if dqResult.WasHead {
+				merge.CleanupMergeBranch(ctx, deps.Gitea, deps.Owner, deps.Repo, &entry)
 			}
 			result.Dequeued = append(result.Dequeued, entry.PrNumber)
 			slog.Info("removed closed PR from queue", "pr", entry.PrNumber)
@@ -183,8 +176,8 @@ func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 			_ = deps.Gitea.CancelAutoMerge(ctx, deps.Owner, deps.Repo, entry.PrNumber)
 			_ = deps.Gitea.CreateComment(ctx, deps.Owner, deps.Repo, entry.PrNumber,
 				fmt.Sprintf("⚠️ Removed from merge queue: target branch changed from `%s` to `%s`. Please re-schedule automerge.", entry.TargetBranch, pr.Base.Ref))
-			if dqResult.WasHead && entry.MergeBranchName.Valid && entry.MergeBranchName.String != "" {
-				_ = deps.Gitea.DeleteBranch(ctx, deps.Owner, deps.Repo, entry.MergeBranchName.String)
+			if dqResult.WasHead {
+				merge.CleanupMergeBranch(ctx, deps.Gitea, deps.Owner, deps.Repo, &entry)
 			}
 			result.Dequeued = append(result.Dequeued, entry.PrNumber)
 			slog.Info("removed retargeted PR from queue", "pr", entry.PrNumber, "old_branch", entry.TargetBranch, "new_branch", pr.Base.Ref)
@@ -201,8 +194,8 @@ func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 			_ = deps.Gitea.CancelAutoMerge(ctx, deps.Owner, deps.Repo, entry.PrNumber)
 			_ = deps.Gitea.CreateComment(ctx, deps.Owner, deps.Repo, entry.PrNumber,
 				"⚠️ Removed from merge queue: new commits were pushed. Please re-schedule automerge.")
-			if dqResult.WasHead && entry.MergeBranchName.Valid && entry.MergeBranchName.String != "" {
-				_ = deps.Gitea.DeleteBranch(ctx, deps.Owner, deps.Repo, entry.MergeBranchName.String)
+			if dqResult.WasHead {
+				merge.CleanupMergeBranch(ctx, deps.Gitea, deps.Owner, deps.Repo, &entry)
 			}
 			result.Dequeued = append(result.Dequeued, entry.PrNumber)
 			result.Advanced = append(result.Advanced, entry.PrNumber)
@@ -223,8 +216,8 @@ func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 				result.Errors = append(result.Errors, fmt.Errorf("dequeue cancelled PR #%d: %w", entry.PrNumber, err))
 				continue
 			}
-			if dqResult.WasHead && entry.MergeBranchName.Valid && entry.MergeBranchName.String != "" {
-				_ = deps.Gitea.DeleteBranch(ctx, deps.Owner, deps.Repo, entry.MergeBranchName.String)
+			if dqResult.WasHead {
+				merge.CleanupMergeBranch(ctx, deps.Gitea, deps.Owner, deps.Repo, &entry)
 			}
 			result.Dequeued = append(result.Dequeued, entry.PrNumber)
 			slog.Info("removed PR due to automerge cancellation", "pr", entry.PrNumber)
@@ -249,9 +242,7 @@ func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 					if _, err := deps.Queue.Dequeue(ctx, deps.RepoID, entry.PrNumber); err != nil {
 						result.Errors = append(result.Errors, fmt.Errorf("dequeue timed-out PR #%d: %w", entry.PrNumber, err))
 					}
-					if entry.MergeBranchName.Valid && entry.MergeBranchName.String != "" {
-						_ = deps.Gitea.DeleteBranch(ctx, deps.Owner, deps.Repo, entry.MergeBranchName.String)
-					}
+					merge.CleanupMergeBranch(ctx, deps.Gitea, deps.Owner, deps.Repo, &entry)
 					result.Dequeued = append(result.Dequeued, entry.PrNumber)
 					result.Advanced = append(result.Advanced, entry.PrNumber)
 					slog.Info("removed PR due to success-but-not-merged timeout", "pr", entry.PrNumber)
