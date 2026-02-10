@@ -64,8 +64,8 @@ func (c *HTTPClient) do(ctx context.Context, method, path string, body any) (*ht
 	return resp, nil
 }
 
-// decodeJSON reads the response body and decodes JSON into v.
-// It also checks for non-2xx status codes.
+// decodeJSON reads the response body, checks for non-2xx status codes, and
+// optionally decodes JSON into v. If v is nil the body is drained and discarded.
 func (c *HTTPClient) decodeJSON(resp *http.Response, v any) error {
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
@@ -85,26 +85,6 @@ func (c *HTTPClient) decodeJSON(resp *http.Response, v any) error {
 	if v != nil {
 		if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
 			return fmt.Errorf("decode response: %w", err)
-		}
-	}
-
-	return nil
-}
-
-// expectStatus checks the response has the expected status code.
-func (c *HTTPClient) expectStatus(resp *http.Response, expected int) error {
-	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			slog.Warn("failed to close response body", "error", err)
-		}
-	}()
-
-	if resp.StatusCode != expected {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-
-		return &APIError{
-			StatusCode: resp.StatusCode,
-			Body:       string(bodyBytes),
 		}
 	}
 
@@ -225,8 +205,7 @@ func (c *HTTPClient) CreateCommitStatus(ctx context.Context, owner, repo, sha st
 		return err
 	}
 
-	// Gitea returns 201 Created for commit status.
-	if err := c.expectStatus(resp, http.StatusCreated); err != nil {
+	if err := c.decodeJSON(resp, nil); err != nil {
 		return fmt.Errorf("create commit status on %s in %s/%s: %w", sha[:8], owner, repo, err)
 	}
 
@@ -247,7 +226,7 @@ func (c *HTTPClient) CreateComment(ctx context.Context, owner, repo string, inde
 		return err
 	}
 
-	if err := c.expectStatus(resp, http.StatusCreated); err != nil {
+	if err := c.decodeJSON(resp, nil); err != nil {
 		return fmt.Errorf("create comment on PR #%d in %s/%s: %w", index, owner, repo, err)
 	}
 
@@ -264,7 +243,7 @@ func (c *HTTPClient) CancelAutoMerge(ctx context.Context, owner, repo string, in
 		return err
 	}
 
-	if err := c.expectStatus(resp, http.StatusNoContent); err != nil {
+	if err := c.decodeJSON(resp, nil); err != nil {
 		// 404 means automerge was already cancelled — treat as success.
 		if IsNotFound(err) {
 			slog.Debug("automerge already cancelled", "owner", owner, "repo", repo, "pr", index)
@@ -317,7 +296,7 @@ func (c *HTTPClient) CreateBranch(ctx context.Context, owner, repo, name, target
 		return err
 	}
 
-	if err := c.expectStatus(resp, http.StatusCreated); err != nil {
+	if err := c.decodeJSON(resp, nil); err != nil {
 		return fmt.Errorf("create branch %s from %s in %s/%s: %w", name, target, owner, repo, err)
 	}
 
@@ -334,7 +313,7 @@ func (c *HTTPClient) DeleteBranch(ctx context.Context, owner, repo, name string)
 		return err
 	}
 
-	if err := c.expectStatus(resp, http.StatusNoContent); err != nil {
+	if err := c.decodeJSON(resp, nil); err != nil {
 		// 404 means branch already deleted — treat as success.
 		if IsNotFound(err) {
 			slog.Debug("branch already deleted", "owner", owner, "repo", repo, "branch", name)
@@ -493,7 +472,7 @@ func (c *HTTPClient) CreateWebhook(ctx context.Context, owner, repo string, opts
 		return err
 	}
 
-	if err := c.expectStatus(resp, http.StatusCreated); err != nil {
+	if err := c.decodeJSON(resp, nil); err != nil {
 		return fmt.Errorf("create webhook in %s/%s: %w", owner, repo, err)
 	}
 
