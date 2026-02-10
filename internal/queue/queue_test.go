@@ -6,12 +6,13 @@ import (
 
 	"github.com/jogman/gitea-mq/internal/queue"
 	"github.com/jogman/gitea-mq/internal/store/pg"
+	"github.com/jogman/gitea-mq/internal/testutil"
 )
 
 func setupTest(t *testing.T) (*queue.Service, context.Context, int64) {
 	t.Helper()
 
-	pool := newTestDB(t)
+	pool := testutil.TestDB(t)
 	svc := queue.NewService(pool)
 	ctx := t.Context()
 
@@ -146,7 +147,7 @@ func TestDequeueReportsHeadStatus(t *testing.T) {
 // Queues for different repos and different branches within the same repo
 // must not interfere with each other.
 func TestQueueIsolation(t *testing.T) {
-	pool := newTestDB(t)
+	pool := testutil.TestDB(t)
 	svc := queue.NewService(pool)
 	ctx := t.Context()
 

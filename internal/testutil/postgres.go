@@ -199,3 +199,11 @@ var globalServer *PostgresServer
 func Server() *PostgresServer {
 	return globalServer
 }
+
+// TestDB is a convenience wrapper that creates a fresh test database on the
+// shared server. Equivalent to NewTestDB(t, Server()).
+func TestDB(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+
+	return NewTestDB(t, Server())
+}

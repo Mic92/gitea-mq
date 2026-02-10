@@ -9,6 +9,7 @@ import (
 	"github.com/jogman/gitea-mq/internal/config"
 	"github.com/jogman/gitea-mq/internal/queue"
 	"github.com/jogman/gitea-mq/internal/store/pg"
+	"github.com/jogman/gitea-mq/internal/testutil"
 	"github.com/jogman/gitea-mq/internal/web"
 )
 
@@ -31,7 +32,7 @@ func (s *staticRepoLister) Contains(fullName string) bool {
 }
 
 func TestOverviewShowsRepoAndQueueData(t *testing.T) {
-	pool := newTestDB(t)
+	pool := testutil.TestDB(t)
 	svc := queue.NewService(pool)
 	ctx := t.Context()
 
@@ -96,7 +97,7 @@ func TestOverviewShowsRepoAndQueueData(t *testing.T) {
 }
 
 func TestRepoDetailShowsPRsAndChecks(t *testing.T) {
-	pool := newTestDB(t)
+	pool := testutil.TestDB(t)
 	svc := queue.NewService(pool)
 	ctx := t.Context()
 
@@ -176,7 +177,7 @@ func TestRepoDetailShowsPRsAndChecks(t *testing.T) {
 }
 
 func TestRepoDetailUnknownRepoReturns404(t *testing.T) {
-	pool := newTestDB(t)
+	pool := testutil.TestDB(t)
 	svc := queue.NewService(pool)
 
 	deps := &web.Deps{

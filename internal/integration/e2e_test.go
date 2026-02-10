@@ -39,7 +39,7 @@ func TestFullMergeQueueFlow(t *testing.T) {
 		t.Skip("gitea server not available")
 	}
 
-	pool := newTestDB(t)
+	pool := testutil.TestDB(t)
 	svc := queue.NewService(pool)
 	ctx := t.Context()
 

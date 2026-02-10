@@ -10,13 +10,14 @@ import (
 	"github.com/jogman/gitea-mq/internal/poller"
 	"github.com/jogman/gitea-mq/internal/queue"
 	"github.com/jogman/gitea-mq/internal/store/pg"
+	"github.com/jogman/gitea-mq/internal/testutil"
 )
 
 // setupPollerTest creates a fresh DB, queue service, mock client, and deps.
 func setupPollerTest(t *testing.T) (*poller.Deps, *gitea.MockClient, *queue.Service, context.Context, int64) {
 	t.Helper()
 
-	pool := newTestDB(t)
+	pool := testutil.TestDB(t)
 	svc := queue.NewService(pool)
 	ctx := t.Context()
 
