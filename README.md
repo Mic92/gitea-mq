@@ -100,13 +100,6 @@ Auto-refreshes via `<meta http-equiv="refresh">` (works without JavaScript).
   };
 }
 ```
-
-The NixOS module:
-- Runs as a systemd service with `DynamicUser`
-- Loads secrets via systemd `LoadCredential` (secrets never in the Nix store)
-- Depends on `postgresql.service`
-- Restarts on failure with a 5-second delay
-
 ### NixOS module options
 
 | Option | Type | Default | Description |
