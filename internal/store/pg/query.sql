@@ -4,10 +4,6 @@ VALUES ($1, $2)
 ON CONFLICT (owner, name) DO UPDATE SET owner = EXCLUDED.owner
 RETURNING *;
 
--- name: GetRepoByOwnerName :one
-SELECT * FROM repos
-WHERE owner = $1 AND name = $2;
-
 -- name: EnqueuePR :one
 INSERT INTO queue_entries (repo_id, pr_number, pr_head_sha, target_branch)
 VALUES ($1, $2, $3, $4)
@@ -66,10 +62,6 @@ JOIN repos r ON r.id = qe.repo_id
 WHERE qe.state NOT IN ('failed', 'cancelled')
 ORDER BY r.owner, r.name, qe.target_branch, qe.enqueued_at ASC;
 
--- name: DeleteCheckStatusesByEntry :exec
-DELETE FROM check_statuses
-WHERE queue_entry_id = $1;
-
 -- name: GetHeadOfQueue :one
 SELECT * FROM queue_entries
 WHERE repo_id = $1 AND target_branch = $2
@@ -81,8 +73,4 @@ SELECT COUNT(*) FROM queue_entries qe
 WHERE qe.repo_id = $1 AND qe.target_branch = $2
   AND qe.enqueued_at <= (SELECT qe2.enqueued_at FROM queue_entries qe2 WHERE qe2.repo_id = $1 AND qe2.pr_number = $3);
 
--- name: ListAllQueues :many
-SELECT qe.*, r.owner, r.name AS repo_name
-FROM queue_entries qe
-JOIN repos r ON r.id = qe.repo_id
-ORDER BY r.owner, r.name, qe.target_branch, qe.enqueued_at ASC;
+
