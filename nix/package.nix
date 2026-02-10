@@ -5,6 +5,9 @@
   gitea,
   git,
 }:
+let
+  vendorHash = lib.fileContents ./goVendorHash.txt;
+in
 buildGoModule {
   pname = "gitea-mq";
   version = "0.1.0";
@@ -17,7 +20,7 @@ buildGoModule {
       ./../internal
     ];
   };
-  vendorHash = "sha256-yvZ9HaoNHL47FBEDAtnWxm3o+8t+uYUrkVdfypJjQVw=";
+  inherit vendorHash;
   nativeCheckInputs = [
     postgresql
     gitea
