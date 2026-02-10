@@ -156,56 +156,36 @@ func HandleFailure(ctx context.Context, deps *Deps, entry *pg.QueueEntry, failed
 
 	desc := fmt.Sprintf("Check failed: %s", failedCheck)
 
-	if err := deps.Gitea.CreateCommitStatus(ctx, deps.Owner, deps.Repo, entry.PrHeadSha, gitea.CommitStatus{
-		Context:     "gitea-mq",
-		State:       "failure",
-		Description: desc,
-	}); err != nil {
-		slog.Warn("failed to set failure status", "pr", entry.PrNumber, "error", err)
-	}
-
-	if err := deps.Gitea.CancelAutoMerge(ctx, deps.Owner, deps.Repo, entry.PrNumber); err != nil {
-		slog.Warn("failed to cancel automerge", "pr", entry.PrNumber, "error", err)
-	}
-
-	comment := fmt.Sprintf("❌ Removed from merge queue: %s", desc)
-	if err := deps.Gitea.CreateComment(ctx, deps.Owner, deps.Repo, entry.PrNumber, comment); err != nil {
-		slog.Warn("failed to post failure comment", "pr", entry.PrNumber, "error", err)
-	}
-
-	merge.CleanupMergeBranch(ctx, deps.Gitea, deps.Owner, deps.Repo, entry)
-
-	if err := deps.Queue.UpdateState(ctx, deps.RepoID, entry.PrNumber, pg.EntryStateFailed); err != nil {
-		slog.Warn("failed to update state to failed", "pr", entry.PrNumber, "error", err)
-	}
-
-	// Advance to next PR.
-	if _, err := deps.Queue.Advance(ctx, deps.RepoID, entry.TargetBranch); err != nil {
-		return fmt.Errorf("advance queue after failure of PR #%d: %w", entry.PrNumber, err)
-	}
-
-	return nil
+	return removeFromQueue(ctx, deps, entry, "failure", desc,
+		fmt.Sprintf("❌ Removed from merge queue: %s", desc))
 }
 
 // HandleTimeout processes a check timeout for the head-of-queue.
 func HandleTimeout(ctx context.Context, deps *Deps, entry *pg.QueueEntry) error {
 	slog.Info("check timeout exceeded", "pr", entry.PrNumber)
 
+	return removeFromQueue(ctx, deps, entry, "error", "Check timeout exceeded",
+		"⏰ Removed from merge queue: check timeout exceeded. Required checks did not complete in time.")
+}
+
+// removeFromQueue is the shared implementation for HandleFailure and HandleTimeout.
+// It sets the commit status, cancels automerge, posts a comment, cleans up
+// the merge branch, marks the entry as failed, and advances the queue.
+func removeFromQueue(ctx context.Context, deps *Deps, entry *pg.QueueEntry, statusState, statusDesc, comment string) error {
 	if err := deps.Gitea.CreateCommitStatus(ctx, deps.Owner, deps.Repo, entry.PrHeadSha, gitea.CommitStatus{
 		Context:     "gitea-mq",
-		State:       "error",
-		Description: "Check timeout exceeded",
+		State:       statusState,
+		Description: statusDesc,
 	}); err != nil {
-		slog.Warn("failed to set error status", "pr", entry.PrNumber, "error", err)
+		slog.Warn("failed to set status", "pr", entry.PrNumber, "error", err)
 	}
 
 	if err := deps.Gitea.CancelAutoMerge(ctx, deps.Owner, deps.Repo, entry.PrNumber); err != nil {
 		slog.Warn("failed to cancel automerge", "pr", entry.PrNumber, "error", err)
 	}
 
-	comment := "⏰ Removed from merge queue: check timeout exceeded. Required checks did not complete in time."
 	if err := deps.Gitea.CreateComment(ctx, deps.Owner, deps.Repo, entry.PrNumber, comment); err != nil {
-		slog.Warn("failed to post timeout comment", "pr", entry.PrNumber, "error", err)
+		slog.Warn("failed to post comment", "pr", entry.PrNumber, "error", err)
 	}
 
 	merge.CleanupMergeBranch(ctx, deps.Gitea, deps.Owner, deps.Repo, entry)
@@ -215,7 +195,7 @@ func HandleTimeout(ctx context.Context, deps *Deps, entry *pg.QueueEntry) error 
 	}
 
 	if _, err := deps.Queue.Advance(ctx, deps.RepoID, entry.TargetBranch); err != nil {
-		return fmt.Errorf("advance queue after timeout of PR #%d: %w", entry.PrNumber, err)
+		return fmt.Errorf("advance queue after removing PR #%d: %w", entry.PrNumber, err)
 	}
 
 	return nil
