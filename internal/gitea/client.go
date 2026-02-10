@@ -61,6 +61,12 @@ type CommitStatus struct {
 	TargetURL   string `json:"target_url,omitempty"`
 }
 
+// MQStatus creates a CommitStatus with the "gitea-mq" context.
+// Centralises the context string so callers don't repeat it.
+func MQStatus(state, description string) CommitStatus {
+	return CommitStatus{Context: "gitea-mq", State: state, Description: description}
+}
+
 // BranchProtection holds the relevant fields from a branch protection rule.
 // Matches Gitea's BranchProtection API response.
 type BranchProtection struct {

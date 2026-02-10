@@ -144,11 +144,8 @@ func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 		if enqResult.IsNew {
 			// Set gitea-mq pending status on the PR's head commit.
 			desc := fmt.Sprintf("Queued (position #%d)", enqResult.Position)
-			if err := deps.Gitea.CreateCommitStatus(ctx, deps.Owner, deps.Repo, headSHA, gitea.CommitStatus{
-				Context:     "gitea-mq",
-				State:       "pending",
-				Description: desc,
-			}); err != nil {
+			if err := deps.Gitea.CreateCommitStatus(ctx, deps.Owner, deps.Repo, headSHA,
+				gitea.MQStatus("pending", desc)); err != nil {
 				result.Errors = append(result.Errors, fmt.Errorf("set pending status for PR #%d: %w", pr.Index, err))
 			}
 
@@ -250,11 +247,8 @@ func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 				completedTime := entry.CompletedAt.Time
 				if time.Since(completedTime) > deps.SuccessTimeout {
 					// PR has been in success state too long — automerge probably failed.
-					_ = deps.Gitea.CreateCommitStatus(ctx, deps.Owner, deps.Repo, entry.PrHeadSha, gitea.CommitStatus{
-						Context:     "gitea-mq",
-						State:       "error",
-						Description: "Automerge did not complete in time",
-					})
+					_ = deps.Gitea.CreateCommitStatus(ctx, deps.Owner, deps.Repo, entry.PrHeadSha,
+						gitea.MQStatus("error", "Automerge did not complete in time"))
 					_ = deps.Queue.SetError(ctx, deps.RepoID, entry.PrNumber, "automerge did not complete in time")
 
 					if err := removePR(ctx, deps, result, &entry, removeOpts{
