@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jogman/gitea-mq/internal/queue"
 	"github.com/jogman/gitea-mq/internal/store/pg"
 )
 
@@ -206,4 +207,22 @@ func TestDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 
 	return NewTestDB(t, Server())
+}
+
+// TestQueueService creates a fresh test database, queue service, and repo
+// row (owner="org", name="app"). Returns the service, a context, and the
+// repo ID. This is the common preamble shared by most test packages.
+func TestQueueService(t *testing.T) (*queue.Service, context.Context, int64) {
+	t.Helper()
+
+	pool := TestDB(t)
+	svc := queue.NewService(pool)
+	ctx := t.Context()
+
+	repo, err := svc.GetOrCreateRepo(ctx, "org", "app")
+	if err != nil {
+		t.Fatalf("create test repo: %v", err)
+	}
+
+	return svc, ctx, repo.ID
 }

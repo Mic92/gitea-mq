@@ -1,7 +1,6 @@
 package queue_test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/jogman/gitea-mq/internal/queue"
@@ -9,24 +8,9 @@ import (
 	"github.com/jogman/gitea-mq/internal/testutil"
 )
 
-func setupTest(t *testing.T) (*queue.Service, context.Context, int64) {
-	t.Helper()
-
-	pool := testutil.TestDB(t)
-	svc := queue.NewService(pool)
-	ctx := t.Context()
-
-	repo, err := svc.GetOrCreateRepo(ctx, "org", "app")
-	if err != nil {
-		t.Fatalf("create repo: %v", err)
-	}
-
-	return svc, ctx, repo.ID
-}
-
 // Tests the core enqueue→head→advance→empty cycle that every PR goes through.
 func TestEnqueueHeadAdvanceCycle(t *testing.T) {
-	svc, ctx, repoID := setupTest(t)
+	svc, ctx, repoID := testutil.TestQueueService(t)
 
 	// Enqueue three PRs.
 	r1, err := svc.Enqueue(ctx, repoID, 10, "sha10", "main")
@@ -81,7 +65,7 @@ func TestEnqueueHeadAdvanceCycle(t *testing.T) {
 
 // Enqueueing a duplicate is a no-op — spec requires at-most-once.
 func TestEnqueueDuplicateIsNoop(t *testing.T) {
-	svc, ctx, repoID := setupTest(t)
+	svc, ctx, repoID := testutil.TestQueueService(t)
 
 	if _, err := svc.Enqueue(ctx, repoID, 42, "sha", "main"); err != nil {
 		t.Fatal(err)
@@ -105,7 +89,7 @@ func TestEnqueueDuplicateIsNoop(t *testing.T) {
 // Dequeue reports whether the removed PR was head-of-queue, which drives
 // merge branch cleanup decisions.
 func TestDequeueReportsHeadStatus(t *testing.T) {
-	svc, ctx, repoID := setupTest(t)
+	svc, ctx, repoID := testutil.TestQueueService(t)
 
 	for _, pr := range []int64{10, 20} {
 		if _, err := svc.Enqueue(ctx, repoID, pr, "sha", "main"); err != nil {
@@ -187,7 +171,7 @@ func TestQueueIsolation(t *testing.T) {
 // Tests the full state lifecycle: queued → testing (with merge branch) →
 // check statuses recorded → state transitions.
 func TestStateLifecycleAndChecks(t *testing.T) {
-	svc, ctx, repoID := setupTest(t)
+	svc, ctx, repoID := testutil.TestQueueService(t)
 
 	enq, err := svc.Enqueue(ctx, repoID, 42, "abc123", "main")
 	if err != nil {
@@ -230,7 +214,7 @@ func TestStateLifecycleAndChecks(t *testing.T) {
 // LoadActiveQueues must exclude terminal states so startup recovery only
 // processes in-flight entries.
 func TestLoadActiveQueuesExcludesTerminal(t *testing.T) {
-	svc, ctx, repoID := setupTest(t)
+	svc, ctx, repoID := testutil.TestQueueService(t)
 
 	if _, err := svc.Enqueue(ctx, repoID, 10, "sha", "main"); err != nil {
 		t.Fatal(err)

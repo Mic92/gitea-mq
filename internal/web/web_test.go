@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/jogman/gitea-mq/internal/config"
-	"github.com/jogman/gitea-mq/internal/queue"
 	"github.com/jogman/gitea-mq/internal/store/pg"
 	"github.com/jogman/gitea-mq/internal/testutil"
 	"github.com/jogman/gitea-mq/internal/web"
@@ -30,18 +29,11 @@ func (s *staticRepoLister) Contains(fullName string) bool {
 }
 
 func TestOverviewShowsRepoAndQueueData(t *testing.T) {
-	pool := testutil.TestDB(t)
-	svc := queue.NewService(pool)
-	ctx := t.Context()
-
-	repo, err := svc.GetOrCreateRepo(ctx, "org", "app")
-	if err != nil {
+	svc, ctx, repoID := testutil.TestQueueService(t)
+	if _, err := svc.Enqueue(ctx, repoID, 42, "abc123", "main"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Enqueue(ctx, repo.ID, 42, "abc123", "main"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := svc.Enqueue(ctx, repo.ID, 43, "def456", "main"); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 43, "def456", "main"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -95,25 +87,18 @@ func TestOverviewShowsRepoAndQueueData(t *testing.T) {
 }
 
 func TestRepoDetailShowsPRsAndChecks(t *testing.T) {
-	pool := testutil.TestDB(t)
-	svc := queue.NewService(pool)
-	ctx := t.Context()
+	svc, ctx, repoID := testutil.TestQueueService(t)
 
-	repo, err := svc.GetOrCreateRepo(ctx, "org", "app")
+	res1, err := svc.Enqueue(ctx, repoID, 42, "abc123", "main")
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	res1, err := svc.Enqueue(ctx, repo.ID, 42, "abc123", "main")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := svc.Enqueue(ctx, repo.ID, 43, "def456", "main"); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 43, "def456", "main"); err != nil {
 		t.Fatal(err)
 	}
 
 	// Put head into testing state and add checks.
-	if err := svc.UpdateState(ctx, repo.ID, 42, pg.EntryStateTesting); err != nil {
+	if err := svc.UpdateState(ctx, repoID, 42, pg.EntryStateTesting); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.SaveCheckStatus(ctx, res1.Entry.ID, "ci/build", pg.CheckStateSuccess); err != nil {
@@ -175,8 +160,7 @@ func TestRepoDetailShowsPRsAndChecks(t *testing.T) {
 }
 
 func TestRepoDetailUnknownRepoReturns404(t *testing.T) {
-	pool := testutil.TestDB(t)
-	svc := queue.NewService(pool)
+	svc, _, _ := testutil.TestQueueService(t)
 
 	deps := &web.Deps{
 		Queue:           svc,

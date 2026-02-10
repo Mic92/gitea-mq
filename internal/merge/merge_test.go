@@ -19,16 +19,9 @@ func TestMain(m *testing.M) {
 func setup(t *testing.T) (*gitea.MockClient, *queue.Service, context.Context, int64) {
 	t.Helper()
 
-	pool := testutil.TestDB(t)
-	svc := queue.NewService(pool)
-	ctx := t.Context()
+	svc, ctx, repoID := testutil.TestQueueService(t)
 
-	repo, err := svc.GetOrCreateRepo(ctx, "org", "app")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	return &gitea.MockClient{}, svc, ctx, repo.ID
+	return &gitea.MockClient{}, svc, ctx, repoID
 }
 
 // Successful merge → branch created, state transitions to testing, pending

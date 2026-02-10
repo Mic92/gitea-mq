@@ -17,26 +17,19 @@ import (
 func setupPollerTest(t *testing.T) (*poller.Deps, *gitea.MockClient, *queue.Service, context.Context, int64) {
 	t.Helper()
 
-	pool := testutil.TestDB(t)
-	svc := queue.NewService(pool)
-	ctx := t.Context()
-
-	repo, err := svc.GetOrCreateRepo(ctx, "org", "app")
-	if err != nil {
-		t.Fatalf("create repo: %v", err)
-	}
+	svc, ctx, repoID := testutil.TestQueueService(t)
 
 	mock := &gitea.MockClient{}
 	deps := &poller.Deps{
 		Gitea:          mock,
 		Queue:          svc,
-		RepoID:         repo.ID,
+		RepoID:         repoID,
 		Owner:          "org",
 		Repo:           "app",
 		SuccessTimeout: 5 * time.Minute,
 	}
 
-	return deps, mock, svc, ctx, repo.ID
+	return deps, mock, svc, ctx, repoID
 }
 
 func makePR(index int64, headSHA, baseBranch string) gitea.PR {

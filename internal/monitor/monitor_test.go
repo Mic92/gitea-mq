@@ -15,14 +15,7 @@ import (
 func setupMonitorTest(t *testing.T) (*monitor.Deps, *gitea.MockClient, *queue.Service, context.Context, int64) {
 	t.Helper()
 
-	pool := testutil.TestDB(t)
-	svc := queue.NewService(pool)
-	ctx := t.Context()
-
-	repo, err := svc.GetOrCreateRepo(ctx, "org", "app")
-	if err != nil {
-		t.Fatalf("create repo: %v", err)
-	}
+	svc, ctx, repoID := testutil.TestQueueService(t)
 
 	mock := &gitea.MockClient{}
 	deps := &monitor.Deps{
@@ -30,11 +23,11 @@ func setupMonitorTest(t *testing.T) (*monitor.Deps, *gitea.MockClient, *queue.Se
 		Queue:        svc,
 		Owner:        "org",
 		Repo:         "app",
-		RepoID:       repo.ID,
+		RepoID:       repoID,
 		CheckTimeout: 1 * time.Hour,
 	}
 
-	return deps, mock, svc, ctx, repo.ID
+	return deps, mock, svc, ctx, repoID
 }
 
 // enqueueTesting is a helper that enqueues a PR and transitions it to

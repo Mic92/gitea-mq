@@ -39,14 +39,7 @@ type testEnv struct {
 func setup(t *testing.T) *testEnv {
 	t.Helper()
 
-	pool := testutil.TestDB(t)
-	svc := queue.NewService(pool)
-	ctx := t.Context()
-
-	repo, err := svc.GetOrCreateRepo(ctx, "org", "app")
-	if err != nil {
-		t.Fatal(err)
-	}
+	svc, ctx, repoID := testutil.TestQueueService(t)
 
 	mock := &gitea.MockClient{}
 	mock.GetBranchProtectionFn = func(_ context.Context, _, _, _ string) (*gitea.BranchProtection, error) {
@@ -61,12 +54,12 @@ func setup(t *testing.T) *testEnv {
 		Queue:        svc,
 		Owner:        "org",
 		Repo:         "app",
-		RepoID:       repo.ID,
+		RepoID:       repoID,
 		CheckTimeout: 1 * time.Hour,
 	}
 
 	repos := webhook.MapRepoLookup{
-		"org/app": {Deps: deps, RepoID: repo.ID},
+		"org/app": {Deps: deps, RepoID: repoID},
 	}
 
 	return &testEnv{
@@ -74,7 +67,7 @@ func setup(t *testing.T) *testEnv {
 		mock:    mock,
 		svc:     svc,
 		ctx:     ctx,
-		repoID:  repo.ID,
+		repoID:  repoID,
 	}
 }
 
