@@ -20,6 +20,7 @@ buildGoModule {
       ./../internal
     ];
   };
+  subPackages = [ "cmd/gitea-mq" ];
   inherit vendorHash;
   nativeCheckInputs = [
     postgresql
