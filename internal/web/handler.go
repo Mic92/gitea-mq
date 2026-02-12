@@ -295,7 +295,7 @@ func servePRDetail(w http.ResponseWriter, r *http.Request, deps *Deps, owner, na
 	data.InQueue = true
 	data.State = string(entry.State)
 	if entry.EnqueuedAt.Valid {
-		data.EnqueuedAt = entry.EnqueuedAt.Time.Format("2006-01-02 15:04:05 UTC")
+		data.EnqueuedAt = entry.EnqueuedAt.Time.UTC().Format("2006-01-02 15:04:05 UTC")
 	}
 
 	// Determine queue position.
