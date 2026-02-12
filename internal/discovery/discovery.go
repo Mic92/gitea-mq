@@ -105,14 +105,11 @@ func DiscoverOnce(ctx context.Context, deps *Deps) error {
 	return nil
 }
 
-// Run starts the discovery loop. It runs DiscoverOnce immediately and then
-// repeats at the given interval. Stops when ctx is cancelled.
+// Run starts the background discovery loop, repeating at the given interval.
+// The caller is responsible for the initial DiscoverOnce call.
+// Stops when ctx is cancelled.
 func Run(ctx context.Context, deps *Deps, interval time.Duration) {
 	slog.Info("discovery loop started", "topic", deps.Topic, "interval", interval)
-
-	if err := DiscoverOnce(ctx, deps); err != nil {
-		slog.Error("discovery error", "error", err)
-	}
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
