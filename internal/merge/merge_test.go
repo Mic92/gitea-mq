@@ -39,7 +39,7 @@ func TestStartTesting_Success(t *testing.T) {
 	}
 	entry, _ := svc.GetEntry(ctx, repoID, 42)
 
-	result, err := merge.StartTesting(ctx, mock, svc, "org", "app", repoID, entry)
+	result, err := merge.StartTesting(ctx, mock, svc, "org", "app", repoID, entry, "https://mq.example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,6 +64,17 @@ func TestStartTesting_Success(t *testing.T) {
 	if updated.MergeBranchName.String != wantBranch {
 		t.Fatalf("expected merge branch %s recorded, got %s", wantBranch, updated.MergeBranchName.String)
 	}
+
+	// Verify TargetURL is set on the "Testing merge result" status.
+	statusCalls := mock.CallsTo("CreateCommitStatus")
+	if len(statusCalls) != 1 {
+		t.Fatalf("expected 1 CreateCommitStatus call, got %d", len(statusCalls))
+	}
+	status := statusCalls[0].Args[3].(gitea.CommitStatus)
+	wantURL := "https://mq.example.com/repo/org/app/pr/42"
+	if status.TargetURL != wantURL {
+		t.Fatalf("expected TargetURL %s, got %s", wantURL, status.TargetURL)
+	}
 }
 
 // Merge conflict → PR removed from queue, automerge cancelled, failure status
@@ -80,7 +91,7 @@ func TestStartTesting_Conflict(t *testing.T) {
 	}
 	entry, _ := svc.GetEntry(ctx, repoID, 42)
 
-	result, err := merge.StartTesting(ctx, mock, svc, "org", "app", repoID, entry)
+	result, err := merge.StartTesting(ctx, mock, svc, "org", "app", repoID, entry, "https://mq.example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,8 +113,13 @@ func TestStartTesting_Conflict(t *testing.T) {
 	if len(mock.CallsTo("CreateCommitStatus")) != 1 {
 		t.Fatal("expected failure status")
 	}
-	if mock.CallsTo("CreateCommitStatus")[0].Args[3].(gitea.CommitStatus).State != "failure" {
+	status := mock.CallsTo("CreateCommitStatus")[0].Args[3].(gitea.CommitStatus)
+	if status.State != "failure" {
 		t.Fatal("expected failure state")
+	}
+	wantURL := "https://mq.example.com/repo/org/app/pr/42"
+	if status.TargetURL != wantURL {
+		t.Fatalf("expected TargetURL %s, got %s", wantURL, status.TargetURL)
 	}
 	if len(mock.CallsTo("CreateComment")) != 1 {
 		t.Fatal("expected conflict comment")

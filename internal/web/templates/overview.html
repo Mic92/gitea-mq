@@ -8,42 +8,21 @@
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+    <nav class="breadcrumb">gitea-mq</nav>
     <h1>🚦 gitea-mq</h1>
     <p class="subtitle">Merge Queue Overview</p>
 
     {{if .Repos}}
-    <table>
-        <thead>
-            <tr>
-                <th>Repository</th>
-                <th>Queue Size</th>
-                <th>Head of Queue</th>
-            </tr>
-        </thead>
-        <tbody>
-            {{range .Repos}}
-            <tr>
-                <td><a href="/repo/{{.Owner}}/{{.Name}}">{{.Owner}}/{{.Name}}</a></td>
-                <td>
-                    {{if eq .QueueSize 0}}
-                        <span class="badge badge-empty">empty</span>
-                    {{else}}
-                        <span class="badge badge-active">{{.QueueSize}}</span>
-                    {{end}}
-                </td>
-                <td>
-                    {{if .Head}}
-                        PR #{{.Head.PrNumber}} ({{.Head.State}})
-                    {{else}}
-                        <span class="empty">—</span>
-                    {{end}}
-                </td>
-            </tr>
-            {{end}}
-        </tbody>
-    </table>
+    <div class="repo-list">
+        {{range .Repos}}
+        <div class="repo-item">
+            <a href="/repo/{{.Owner}}/{{.Name}}">{{.Owner}}/{{.Name}}</a>
+            <span class="badge {{if eq .QueueSize 0}}badge-empty{{else}}badge-active{{end}}">{{.QueueSize}}</span>
+        </div>
+        {{end}}
+    </div>
     {{else}}
-    <p class="empty">No managed repositories.</p>
+    <p class="empty">No repositories discovered yet. Configure GITEA_MQ_REPOS or set the topic on your repos.</p>
     {{end}}
 </body>
 </html>

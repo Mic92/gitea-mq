@@ -34,6 +34,7 @@ type Deps struct {
 	Queue          *queue.Service
 	WebhookURL     string // empty if no external URL configured
 	WebhookSecret  string
+	ExternalURL    string
 	PollInterval   time.Duration
 	CheckTimeout   time.Duration
 	FallbackChecks []string
@@ -98,6 +99,7 @@ func (r *RepoRegistry) Add(ctx context.Context, ref config.RepoRef) error {
 		Owner:          ref.Owner,
 		Repo:           ref.Name,
 		RepoID:         repo.ID,
+		ExternalURL:    r.deps.ExternalURL,
 		CheckTimeout:   r.deps.CheckTimeout,
 		FallbackChecks: r.deps.FallbackChecks,
 	}
@@ -121,6 +123,7 @@ func (r *RepoRegistry) Add(ctx context.Context, ref config.RepoRef) error {
 		RepoID:         repo.ID,
 		Owner:          ref.Owner,
 		Repo:           ref.Name,
+		ExternalURL:    r.deps.ExternalURL,
 		SuccessTimeout: r.deps.SuccessTimeout,
 	}
 	go poller.Run(pollerCtx, pollerDeps, r.deps.PollInterval)

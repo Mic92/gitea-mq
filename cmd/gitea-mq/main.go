@@ -85,6 +85,7 @@ func run() error {
 		Queue:          queueSvc,
 		WebhookURL:     webhookURL,
 		WebhookSecret:  cfg.WebhookSecret,
+		ExternalURL:    cfg.ExternalURL,
 		PollInterval:   cfg.PollInterval,
 		CheckTimeout:   cfg.CheckTimeout,
 		FallbackChecks: cfg.RequiredChecks,
@@ -134,6 +135,7 @@ func run() error {
 	webDeps := &web.Deps{
 		Queue:           queueSvc,
 		Repos:           reg,
+		Gitea:           giteaClient,
 		RefreshInterval: int(cfg.RefreshInterval.Seconds()),
 	}
 	dashMux := web.NewMux(webDeps)

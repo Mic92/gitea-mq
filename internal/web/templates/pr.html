@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="refresh" content="{{.RefreshInterval}}">
+    <title>PR #{{.PrNumber}} – {{.Owner}}/{{.Name}} – gitea-mq</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <nav class="breadcrumb"><a href="/">gitea-mq</a> › <a href="/repo/{{.Owner}}/{{.Name}}">{{.Owner}}/{{.Name}}</a> › PR #{{.PrNumber}}</nav>
+
+    {{if not .InQueue}}
+    <h1>PR #{{.PrNumber}}</h1>
+    <p class="empty">PR #{{.PrNumber}} is not in the merge queue.</p>
+    {{else}}
+    <h1>PR #{{.PrNumber}}: {{.Title}}</h1>
+    <div class="section">
+        <table>
+            <tbody>
+                <tr><th>Author</th><td>{{.Author}}</td></tr>
+                <tr><th>State</th><td><span class="state state-{{.State}}">{{.State}}</span></td></tr>
+                <tr><th>Position</th><td>#{{.Position}}</td></tr>
+                <tr><th>Enqueued</th><td>{{.EnqueuedAt}}</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    {{if .CheckStatuses}}
+    <div class="section">
+        <h2>Check Statuses</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Status</th>
+                    <th>Check</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{range .CheckStatuses}}
+                <tr>
+                    <td class="check-icon">{{checkIcon .State}}</td>
+                    <td>{{.Context}}</td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+    {{end}}
+    {{end}}
+</body>
+</html>

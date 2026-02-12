@@ -1,6 +1,8 @@
 package web_test
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -8,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/jogman/gitea-mq/internal/config"
+	"github.com/jogman/gitea-mq/internal/gitea"
 	"github.com/jogman/gitea-mq/internal/store/pg"
 	"github.com/jogman/gitea-mq/internal/testutil"
 	"github.com/jogman/gitea-mq/internal/web"
@@ -57,57 +60,67 @@ func TestOverviewShowsRepoAndQueueData(t *testing.T) {
 
 	body := rec.Body.String()
 
-	// Both repos listed.
-	if !strings.Contains(body, "org/app") {
-		t.Error("expected org/app in overview")
+	// Both repos listed as links.
+	if !strings.Contains(body, `href="/repo/org/app"`) {
+		t.Error("expected link to org/app repo page")
 	}
-	if !strings.Contains(body, "org/lib") {
-		t.Error("expected org/lib in overview")
+	if !strings.Contains(body, `href="/repo/org/lib"`) {
+		t.Error("expected link to org/lib repo page")
 	}
 
-	// Queue size for org/app should be 2.
+	// Queue count badge for org/app should be 2.
 	if !strings.Contains(body, ">2<") {
-		t.Errorf("expected queue size 2 in body:\n%s", body)
+		t.Errorf("expected queue count 2 in body:\n%s", body)
 	}
 
-	// Head-of-queue should be PR #42.
-	if !strings.Contains(body, "PR #42") {
-		t.Errorf("expected head-of-queue PR #42 in body:\n%s", body)
-	}
-
-	// org/lib should show empty.
-	if !strings.Contains(body, "empty") {
-		t.Error("expected empty badge for org/lib")
+	// org/lib should show 0 badge.
+	if !strings.Contains(body, ">0<") {
+		t.Errorf("expected queue count 0 for org/lib in body:\n%s", body)
 	}
 
 	// Auto-refresh meta tag.
 	if !strings.Contains(body, `content="5"`) {
 		t.Error("expected meta refresh with interval 5")
 	}
+
+	// Breadcrumb: gitea-mq as plain text (current page).
+	if !strings.Contains(body, "<nav") {
+		t.Error("expected breadcrumb nav element")
+	}
 }
 
-func TestRepoDetailShowsPRsAndChecks(t *testing.T) {
+func TestOverviewNoReposShowsHelpMessage(t *testing.T) {
+	svc, _, _ := testutil.TestQueueService(t)
+
+	deps := &web.Deps{
+		Queue:           svc,
+		Repos:           &staticRepoLister{repos: nil},
+		RefreshInterval: 10,
+	}
+
+	mux := web.NewMux(deps)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "No repositories discovered yet") {
+		t.Errorf("expected helpful setup message, got:\n%s", body)
+	}
+}
+
+func TestRepoDetailShowsPRs(t *testing.T) {
 	svc, ctx, repoID := testutil.TestQueueService(t)
 
-	res1, err := svc.Enqueue(ctx, repoID, 42, "abc123", "main")
-	if err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 42, "abc123", "main"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.Enqueue(ctx, repoID, 43, "def456", "main"); err != nil {
 		t.Fatal(err)
 	}
 
-	// Put head into testing state and add checks.
+	// Put head into testing state.
 	if err := svc.UpdateState(ctx, repoID, 42, pg.EntryStateTesting); err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.SaveCheckStatus(ctx, res1.Entry.ID, "ci/build", pg.CheckStateSuccess); err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.SaveCheckStatus(ctx, res1.Entry.ID, "ci/lint", pg.CheckStatePending); err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.SaveCheckStatus(ctx, res1.Entry.ID, "ci/test", pg.CheckStateFailure); err != nil {
 		t.Fatal(err)
 	}
 
@@ -128,34 +141,195 @@ func TestRepoDetailShowsPRsAndChecks(t *testing.T) {
 
 	body := rec.Body.String()
 
-	// Both PRs listed.
-	if !strings.Contains(body, "PR #42") {
-		t.Error("expected PR #42")
+	// Both PRs listed as links to PR detail pages.
+	if !strings.Contains(body, `href="/repo/org/app/pr/42"`) {
+		t.Errorf("expected link to PR #42 detail page, body:\n%s", body)
 	}
-	if !strings.Contains(body, "PR #43") {
-		t.Error("expected PR #43")
+	if !strings.Contains(body, `href="/repo/org/app/pr/43"`) {
+		t.Errorf("expected link to PR #43 detail page, body:\n%s", body)
 	}
 
-	// Check status icons.
+	// Check statuses should NOT be on this page.
+	if strings.Contains(body, "ci/build") || strings.Contains(body, "ci/lint") || strings.Contains(body, "ci/test") {
+		t.Error("repo page should not show check statuses")
+	}
+
+	// Breadcrumb: gitea-mq (link) › org/app (plain text).
+	if !strings.Contains(body, `<nav`) {
+		t.Error("expected breadcrumb nav element")
+	}
+	if !strings.Contains(body, `href="/"`) {
+		t.Error("expected breadcrumb link to overview")
+	}
+}
+
+func TestPRDetailHeadOfQueueTesting(t *testing.T) {
+	svc, ctx, repoID := testutil.TestQueueService(t)
+
+	res1, err := svc.Enqueue(ctx, repoID, 42, "abc123", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.UpdateState(ctx, repoID, 42, pg.EntryStateTesting); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SaveCheckStatus(ctx, res1.Entry.ID, "ci/build", pg.CheckStateSuccess); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SaveCheckStatus(ctx, res1.Entry.ID, "ci/lint", pg.CheckStatePending); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := &gitea.MockClient{}
+	mock.GetPRFn = func(_ context.Context, _, _ string, _ int64) (*gitea.PR, error) {
+		return &gitea.PR{
+			Index: 42,
+			Title: "Fix login bug",
+			User:  &gitea.User{Login: "alice"},
+		}, nil
+	}
+
+	deps := &web.Deps{
+		Queue:           svc,
+		Repos:           &staticRepoLister{repos: []config.RepoRef{{Owner: "org", Name: "app"}}},
+		Gitea:           mock,
+		RefreshInterval: 10,
+	}
+
+	mux := web.NewMux(deps)
+	req := httptest.NewRequest(http.MethodGet, "/repo/org/app/pr/42", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "Fix login bug") {
+		t.Error("expected PR title")
+	}
+	if !strings.Contains(body, "alice") {
+		t.Error("expected PR author")
+	}
+	if !strings.Contains(body, "testing") {
+		t.Error("expected testing state")
+	}
 	if !strings.Contains(body, "✅") {
-		t.Error("expected success check icon ✅")
+		t.Error("expected success check icon")
 	}
 	if !strings.Contains(body, "⏳") {
-		t.Error("expected pending check icon ⏳")
+		t.Error("expected pending check icon")
 	}
-	if !strings.Contains(body, "❌") {
-		t.Error("expected failure check icon ❌")
+	if !strings.Contains(body, "ci/build") {
+		t.Error("expected ci/build check name")
+	}
+}
+
+func TestPRDetailNonHeadQueued(t *testing.T) {
+	svc, ctx, repoID := testutil.TestQueueService(t)
+
+	if _, err := svc.Enqueue(ctx, repoID, 42, "abc123", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Enqueue(ctx, repoID, 43, "def456", "main"); err != nil {
+		t.Fatal(err)
 	}
 
-	// Check contexts.
-	if !strings.Contains(body, "ci/build") {
-		t.Error("expected ci/build")
+	mock := &gitea.MockClient{}
+	mock.GetPRFn = func(_ context.Context, _, _ string, index int64) (*gitea.PR, error) {
+		return &gitea.PR{Index: index, Title: "Some PR", User: &gitea.User{Login: "bob"}}, nil
 	}
-	if !strings.Contains(body, "ci/lint") {
-		t.Error("expected ci/lint")
+
+	deps := &web.Deps{
+		Queue:           svc,
+		Repos:           &staticRepoLister{repos: []config.RepoRef{{Owner: "org", Name: "app"}}},
+		Gitea:           mock,
+		RefreshInterval: 10,
 	}
-	if !strings.Contains(body, "ci/test") {
-		t.Error("expected ci/test")
+
+	mux := web.NewMux(deps)
+	req := httptest.NewRequest(http.MethodGet, "/repo/org/app/pr/43", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "queued") {
+		t.Error("expected queued state")
+	}
+	if !strings.Contains(body, "#2") {
+		t.Error("expected position #2")
+	}
+	// Non-head PR should NOT show check statuses.
+	if strings.Contains(body, "ci/build") {
+		t.Error("non-head PR should not show checks")
+	}
+}
+
+func TestPRDetailNotInQueue(t *testing.T) {
+	svc, _, _ := testutil.TestQueueService(t)
+
+	deps := &web.Deps{
+		Queue:           svc,
+		Repos:           &staticRepoLister{repos: []config.RepoRef{{Owner: "org", Name: "app"}}},
+		RefreshInterval: 10,
+	}
+
+	mux := web.NewMux(deps)
+	req := httptest.NewRequest(http.MethodGet, "/repo/org/app/pr/99", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for PR not in queue, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "not in the merge queue") {
+		t.Errorf("expected 'not in the merge queue' message, got:\n%s", body)
+	}
+}
+
+func TestPRDetailGiteaAPIFailure(t *testing.T) {
+	svc, ctx, repoID := testutil.TestQueueService(t)
+
+	if _, err := svc.Enqueue(ctx, repoID, 42, "abc123", "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := &gitea.MockClient{}
+	mock.GetPRFn = func(_ context.Context, _, _ string, _ int64) (*gitea.PR, error) {
+		return nil, fmt.Errorf("connection refused")
+	}
+
+	deps := &web.Deps{
+		Queue:           svc,
+		Repos:           &staticRepoLister{repos: []config.RepoRef{{Owner: "org", Name: "app"}}},
+		Gitea:           mock,
+		RefreshInterval: 10,
+	}
+
+	mux := web.NewMux(deps)
+	req := httptest.NewRequest(http.MethodGet, "/repo/org/app/pr/42", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 even on API failure, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+	// Should show placeholders.
+	if !strings.Contains(body, "—") {
+		t.Error("expected '—' placeholder for title/author on API failure")
+	}
+	// Should still show queue state.
+	if !strings.Contains(body, "queued") {
+		t.Error("expected queue state even on API failure")
 	}
 }
 

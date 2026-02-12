@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-    <p class="back"><a href="/">← Back to overview</a></p>
+    <nav class="breadcrumb"><a href="/">gitea-mq</a> › {{.Owner}}/{{.Name}}</nav>
     <h1>🚦 {{.Owner}}/{{.Name}}</h1>
     <p class="subtitle">Merge Queue</p>
 
@@ -27,7 +27,7 @@
                 {{range $i, $e := .Entries}}
                 <tr>
                     <td>{{inc $i}}</td>
-                    <td>PR #{{$e.PrNumber}}</td>
+                    <td><a href="/repo/{{$.Owner}}/{{$.Name}}/pr/{{$e.PrNumber}}">PR #{{$e.PrNumber}}</a></td>
                     <td>{{$e.TargetBranch}}</td>
                     <td><span class="state state-{{$e.State}}">{{$e.State}}</span></td>
                 </tr>
@@ -35,29 +35,6 @@
             </tbody>
         </table>
     </div>
-
-    {{if .CheckStatuses}}
-    <div class="section">
-        <h2>Checks for head-of-queue (PR #{{.HeadPR}})</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>Status</th>
-                    <th>Check</th>
-                </tr>
-            </thead>
-            <tbody>
-                {{range .CheckStatuses}}
-                <tr>
-                    <td class="check-icon">{{checkIcon .State}}</td>
-                    <td>{{.Context}}</td>
-                </tr>
-                {{end}}
-            </tbody>
-        </table>
-    </div>
-    {{end}}
-
     {{else}}
     <p class="empty">No PRs in queue.</p>
     {{end}}
