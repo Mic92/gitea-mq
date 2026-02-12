@@ -25,7 +25,7 @@ func BranchName(prNumber int64) string {
 type StartTestingResult struct {
 	MergeBranchName string
 	MergeBranchSHA  string
-	Conflict        bool // true if the merge failed due to conflicts
+	Removed         bool // true if the PR was removed from the queue instead of entering testing
 }
 
 // StartTesting creates a merge branch for the head-of-queue PR and
@@ -52,7 +52,7 @@ func StartTesting(ctx context.Context, giteaClient gitea.Client, svc *queue.Serv
 				return nil, fmt.Errorf("dequeue conflicting PR #%d: %w", entry.PrNumber, err)
 			}
 
-			return &StartTestingResult{Conflict: true}, nil
+			return &StartTestingResult{Removed: true}, nil
 		}
 
 		// Non-conflict merge failure (e.g. unrelated histories, git error).
@@ -69,7 +69,7 @@ func StartTesting(ctx context.Context, giteaClient gitea.Client, svc *queue.Serv
 			return nil, fmt.Errorf("dequeue PR #%d after merge error: %w", entry.PrNumber, err)
 		}
 
-		return &StartTestingResult{Conflict: true}, nil
+		return &StartTestingResult{Removed: true}, nil
 	}
 
 	// Record merge branch and transition to testing.
