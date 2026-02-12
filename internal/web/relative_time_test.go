@@ -16,7 +16,7 @@ func TestRelativeTime(t *testing.T) {
 		// Past times
 		{"just now", now.Add(-2 * time.Second), "just now"},
 		{"seconds", now.Add(-30 * time.Second), "30 seconds ago"},
-		{"1 second", now.Add(-5 * time.Second), "5 seconds ago"},
+		{"5 seconds", now.Add(-5 * time.Second), "5 seconds ago"},
 		{"1 minute", now.Add(-1 * time.Minute), "1 minute ago"},
 		{"minutes", now.Add(-7 * time.Minute), "7 minutes ago"},
 		{"1 hour", now.Add(-1 * time.Hour), "1 hour ago"},
