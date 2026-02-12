@@ -466,6 +466,69 @@ func TestPollOnce_TargetBranchChanged_Removes(t *testing.T) {
 	}
 }
 
+// --- Merge branch creation failure should notify user ---
+
+func TestPollOnce_MergeBranchError_NotifiesUser(t *testing.T) {
+	deps, mock, svc, ctx, repoID := setupPollerTest(t)
+
+	// Pre-enqueue PR #42 so it's head of queue.
+	if _, err := svc.Enqueue(ctx, repoID, 42, "sha42", "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	mock.ListOpenPRsFn = func(_ context.Context, _, _ string) ([]gitea.PR, error) {
+		return []gitea.PR{makePR(42, "sha42", "main")}, nil
+	}
+	mock.GetPRTimelineFn = func(_ context.Context, _, _ string, _ int64) ([]gitea.TimelineComment, error) {
+		return automergeTimeline(), nil
+	}
+	// MergeBranches fails with a non-conflict error (e.g. unrelated histories).
+	mock.MergeBranchesFn = func(_ context.Context, _, _, _, _, _ string) (*gitea.MergeResult, error) {
+		return nil, fmt.Errorf("merge: git merge: exit status 128\nfatal: refusing to merge unrelated histories")
+	}
+
+	result, err := poller.PollOnce(ctx, deps)
+	if err != nil {
+		t.Fatalf("PollOnce: %v", err)
+	}
+
+	// PR should be removed from the queue, not left stuck.
+	entry, _ := svc.GetEntry(ctx, repoID, 42)
+	if entry != nil {
+		t.Fatalf("PR #42 should be removed from queue after merge error, got state=%s", entry.State)
+	}
+
+	// A failure status should be set on the PR head.
+	statusCalls := mock.CallsTo("CreateCommitStatus")
+	foundFailure := false
+	for _, call := range statusCalls {
+		status := call.Args[3].(gitea.CommitStatus)
+		if status.State == "error" && status.Context == "gitea-mq" {
+			foundFailure = true
+		}
+	}
+	if !foundFailure {
+		t.Fatal("expected error status on PR head after merge failure")
+	}
+
+	// A comment should be posted explaining the failure.
+	commentCalls := mock.CallsTo("CreateComment")
+	if len(commentCalls) == 0 {
+		t.Fatal("expected a comment on the PR explaining the merge failure")
+	}
+
+	// Automerge should be cancelled.
+	cancelCalls := mock.CallsTo("CancelAutoMerge")
+	if len(cancelCalls) == 0 {
+		t.Fatal("expected CancelAutoMerge to be called")
+	}
+
+	// The error should still be reported in result.Errors for logging.
+	if len(result.Errors) != 0 && len(result.Dequeued) == 0 {
+		t.Fatal("PR should be dequeued, not just reported as an error")
+	}
+}
+
 // --- Task 5.17: Gitea unavailability ---
 
 func TestPollOnce_GiteaUnavailable_Pauses(t *testing.T) {
