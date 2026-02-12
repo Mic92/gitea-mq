@@ -126,6 +126,7 @@ type PRDetailData struct {
 	EnqueuedAt      time.Time
 	CheckStatuses   []pg.CheckStatus
 	InQueue         bool
+	PRURL           string // link to the PR on Gitea
 	MergeBranchURL  string // link to the merge branch on Gitea
 	RefreshInterval int    // seconds
 }
@@ -365,6 +366,7 @@ func servePRDetail(w http.ResponseWriter, r *http.Request, deps *Deps, owner, na
 			slog.Warn("failed to fetch PR from Gitea", "pr", prNumber, "error", err)
 		} else {
 			data.Title = pr.Title
+			data.PRURL = pr.HTMLURL
 			if pr.User != nil {
 				data.Author = pr.User.Login
 			}
