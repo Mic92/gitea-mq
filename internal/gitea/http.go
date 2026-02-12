@@ -87,6 +87,9 @@ func (c *HTTPClient) decodeJSON(resp *http.Response, v any) error {
 		if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
 			return fmt.Errorf("decode response: %w", err)
 		}
+	} else {
+		// Drain the body so the HTTP client can reuse the connection.
+		_, _ = io.Copy(io.Discard, resp.Body)
 	}
 
 	return nil
@@ -116,6 +119,14 @@ type APIError struct {
 
 func (e *APIError) Error() string {
 	return fmt.Sprintf("gitea API error (status %d): %s", e.StatusCode, e.Body)
+}
+
+// shortSHA truncates a SHA to 8 characters for display purposes.
+func shortSHA(s string) string {
+	if len(s) > 8 {
+		return s[:8]
+	}
+	return s
 }
 
 // IsNotFound returns true if the error is a 404 response.
@@ -215,11 +226,11 @@ func (c *HTTPClient) CreateCommitStatus(ctx context.Context, owner, repo, sha st
 	path := fmt.Sprintf("/repos/%s/%s/statuses/%s", owner, repo, sha)
 
 	if err := c.doDiscard(ctx, http.MethodPost, path, status,
-		fmt.Sprintf("create commit status on %s in %s/%s", sha[:8], owner, repo)); err != nil {
+		fmt.Sprintf("create commit status on %s in %s/%s", shortSHA(sha), owner, repo)); err != nil {
 		return err
 	}
 
-	slog.Debug("created commit status", "owner", owner, "repo", repo, "sha", sha[:8], "context", status.Context, "state", status.State)
+	slog.Debug("created commit status", "owner", owner, "repo", repo, "sha", shortSHA(sha), "context", status.Context, "state", status.State)
 
 	return nil
 }
@@ -397,7 +408,7 @@ func (c *HTTPClient) MergeBranches(ctx context.Context, owner, repo, base, head,
 	}
 	sha := strings.TrimSpace(string(shaOut))
 
-	slog.Debug("created merge branch", "branch", branchName, "sha", sha[:8])
+	slog.Debug("created merge branch", "branch", branchName, "sha", shortSHA(sha))
 
 	return &MergeResult{SHA: sha}, nil
 }
