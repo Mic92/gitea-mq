@@ -96,7 +96,7 @@ func Handler(secret string, repos RepoLookup, queueSvc *queue.Service) http.Hand
 
 		checkState := mapState(event.State)
 
-		if err := monitor.ProcessCheckStatus(r.Context(), rm.Deps, entry, event.Context, checkState); err != nil {
+		if err := monitor.ProcessCheckStatus(r.Context(), rm.Deps, entry, event.Context, checkState, event.TargetURL); err != nil {
 			slog.Error("failed to process check status", "pr", entry.PrNumber, "error", err)
 			// Still return 200 — Gitea will retry on non-2xx, which could
 			// cause duplicate processing.
@@ -111,6 +111,7 @@ type statusEvent struct {
 	SHA        string `json:"sha"`
 	Context    string `json:"context"`
 	State      string `json:"state"` // "pending", "success", "failure", "error"
+	TargetURL  string `json:"target_url"`
 	Repository struct {
 		FullName string `json:"full_name"` // "owner/repo"
 	} `json:"repository"`

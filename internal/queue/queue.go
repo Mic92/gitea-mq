@@ -284,11 +284,12 @@ func (s *Service) GetEntry(ctx context.Context, repoID, prNumber int64) (*pg.Que
 }
 
 // SaveCheckStatus records or updates a check status for an entry.
-func (s *Service) SaveCheckStatus(ctx context.Context, entryID int64, checkContext string, state pg.CheckState) error {
+func (s *Service) SaveCheckStatus(ctx context.Context, entryID int64, checkContext string, state pg.CheckState, targetURL string) error {
 	return s.queries().SaveCheckStatus(ctx, pg.SaveCheckStatusParams{
 		QueueEntryID: entryID,
 		Context:      checkContext,
 		State:        state,
+		TargetUrl:    targetURL,
 	})
 }
 

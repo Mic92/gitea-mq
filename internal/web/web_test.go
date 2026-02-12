@@ -173,17 +173,22 @@ func TestPRDetailHeadOfQueueTesting(t *testing.T) {
 	if err := svc.UpdateState(ctx, repoID, 42, pg.EntryStateTesting); err != nil {
 		t.Fatal(err)
 	}
+	// Set merge branch so the link can be constructed.
+	if err := svc.SetMergeBranch(ctx, repoID, 42, "gitea-mq/abc123", "mergesha"); err != nil {
+		t.Fatal(err)
+	}
 	// Only ci/build has reported — ci/lint and ci/test have not.
-	if err := svc.SaveCheckStatus(ctx, res1.Entry.ID, "ci/build", pg.CheckStateSuccess); err != nil {
+	if err := svc.SaveCheckStatus(ctx, res1.Entry.ID, "ci/build", pg.CheckStateSuccess, "https://ci.example.com/build/1"); err != nil {
 		t.Fatal(err)
 	}
 
 	mock := &gitea.MockClient{}
 	mock.GetPRFn = func(_ context.Context, _, _ string, _ int64) (*gitea.PR, error) {
 		return &gitea.PR{
-			Index: 42,
-			Title: "Fix login bug",
-			User:  &gitea.User{Login: "alice"},
+			Index:   42,
+			Title:   "Fix login bug",
+			User:    &gitea.User{Login: "alice"},
+			HTMLURL: "https://gitea.example.com/org/app/pulls/42",
 		}, nil
 	}
 	// Branch protection requires ci/build, ci/lint, ci/test.
@@ -236,6 +241,21 @@ func TestPRDetailHeadOfQueueTesting(t *testing.T) {
 	}
 	if !strings.Contains(body, "⏳") {
 		t.Error("expected pending check icon for unreported checks")
+	}
+	// Merge branch link derived from PR.HTMLURL.
+	if !strings.Contains(body, `href="https://gitea.example.com/org/app/src/branch/gitea-mq/abc123"`) {
+		t.Errorf("expected merge branch link, got:\n%s", body)
+	}
+	if !strings.Contains(body, "view on Gitea") {
+		t.Error("expected 'view on Gitea' link text")
+	}
+	// ci/build has a target URL — should be a clickable link.
+	if !strings.Contains(body, `href="https://ci.example.com/build/1"`) {
+		t.Errorf("expected clickable check link for ci/build, got:\n%s", body)
+	}
+	// ci/lint has no target URL — should NOT be a link.
+	if strings.Contains(body, `>ci/lint ↗</a>`) {
+		t.Error("ci/lint should not be a link (no target_url)")
 	}
 }
 

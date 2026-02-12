@@ -68,7 +68,7 @@ func TestProcessCheckStatus_AllPass_TriggersSuccess(t *testing.T) {
 
 	entry, _ := svc.GetEntry(ctx, repoID, 42)
 
-	if err := monitor.ProcessCheckStatus(ctx, deps, entry, "ci/build", pg.CheckStateSuccess); err != nil {
+	if err := monitor.ProcessCheckStatus(ctx, deps, entry, "ci/build", pg.CheckStateSuccess, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -101,7 +101,7 @@ func TestProcessCheckStatus_Failure_CancelsAndAdvances(t *testing.T) {
 
 	entry, _ := svc.GetEntry(ctx, repoID, 42)
 
-	if err := monitor.ProcessCheckStatus(ctx, deps, entry, "ci/build", pg.CheckStateFailure); err != nil {
+	if err := monitor.ProcessCheckStatus(ctx, deps, entry, "ci/build", pg.CheckStateFailure, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -134,7 +134,7 @@ func TestProcessCheckStatus_Partial_StaysWaiting(t *testing.T) {
 	entry, _ := svc.GetEntry(ctx, repoID, 42)
 
 	// Only ci/build reported — ci/lint still pending.
-	if err := monitor.ProcessCheckStatus(ctx, deps, entry, "ci/build", pg.CheckStateSuccess); err != nil {
+	if err := monitor.ProcessCheckStatus(ctx, deps, entry, "ci/build", pg.CheckStateSuccess, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -160,7 +160,7 @@ func TestProcessCheckStatus_RetrySuccess(t *testing.T) {
 	entry, _ := svc.GetEntry(ctx, repoID, 42)
 
 	// First: failure.
-	if err := monitor.ProcessCheckStatus(ctx, deps, entry, "ci/build", pg.CheckStateFailure); err != nil {
+	if err := monitor.ProcessCheckStatus(ctx, deps, entry, "ci/build", pg.CheckStateFailure, ""); err != nil {
 		t.Fatal(err)
 	}
 	// This triggers failure handling — reset for the retry test.
@@ -172,8 +172,8 @@ func TestProcessCheckStatus_RetrySuccess(t *testing.T) {
 	entry, _ = svc.GetEntry(ctx, repoID, 42)
 
 	// Record failure, then overwrite with success (simulating retry).
-	_ = svc.SaveCheckStatus(ctx, entry.ID, "ci/build", pg.CheckStateFailure)
-	if err := monitor.ProcessCheckStatus(ctx, deps, entry, "ci/build", pg.CheckStateSuccess); err != nil {
+	_ = svc.SaveCheckStatus(ctx, entry.ID, "ci/build", pg.CheckStateFailure, "")
+	if err := monitor.ProcessCheckStatus(ctx, deps, entry, "ci/build", pg.CheckStateSuccess, ""); err != nil {
 		t.Fatal(err)
 	}
 

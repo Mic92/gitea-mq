@@ -200,17 +200,21 @@ func TestStateLifecycleAndChecks(t *testing.T) {
 	}
 
 	// Record check statuses — latest update wins.
-	if err := svc.SaveCheckStatus(ctx, enq.Entry.ID, "ci/build", pg.CheckStatePending); err != nil {
+	if err := svc.SaveCheckStatus(ctx, enq.Entry.ID, "ci/build", pg.CheckStatePending, ""); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := svc.SaveCheckStatus(ctx, enq.Entry.ID, "ci/build", pg.CheckStateSuccess); err != nil {
+	if err := svc.SaveCheckStatus(ctx, enq.Entry.ID, "ci/build", pg.CheckStateSuccess, "https://ci.example.com/build/1"); err != nil {
 		t.Fatal(err)
 	}
 
 	checks, _ := svc.GetCheckStatuses(ctx, enq.Entry.ID)
 	if len(checks) != 1 || checks[0].State != pg.CheckStateSuccess {
 		t.Fatalf("expected 1 check with state success, got %v", checks)
+	}
+	// Upsert must also update target_url.
+	if checks[0].TargetUrl != "https://ci.example.com/build/1" {
+		t.Fatalf("expected target_url from latest upsert, got %q", checks[0].TargetUrl)
 	}
 }
 

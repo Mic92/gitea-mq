@@ -46,10 +46,10 @@ SET error_message = $3
 WHERE repo_id = $1 AND pr_number = $2;
 
 -- name: SaveCheckStatus :exec
-INSERT INTO check_statuses (queue_entry_id, context, state)
-VALUES ($1, $2, $3)
+INSERT INTO check_statuses (queue_entry_id, context, state, target_url)
+VALUES ($1, $2, $3, $4)
 ON CONFLICT (queue_entry_id, context) DO UPDATE
-SET state = EXCLUDED.state, updated_at = NOW();
+SET state = EXCLUDED.state, target_url = EXCLUDED.target_url, updated_at = NOW();
 
 -- name: GetCheckStatuses :many
 SELECT * FROM check_statuses

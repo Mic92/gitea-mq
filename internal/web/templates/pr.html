@@ -22,6 +22,7 @@
                 <tr><th>State</th><td><span class="state state-{{.State}}">{{.State}}</span></td></tr>
                 <tr><th>Position</th><td>#{{.Position}}</td></tr>
                 <tr><th>Enqueued</th><td>{{relativeTime .EnqueuedAt}}</td></tr>
+                {{if .MergeBranchURL}}<tr><th>Merge Branch</th><td><a href="{{.MergeBranchURL}}">view on Gitea ↗</a></td></tr>{{end}}
             </tbody>
         </table>
     </div>
@@ -40,7 +41,7 @@
                 {{range .CheckStatuses}}
                 <tr>
                     <td class="check-icon">{{checkIcon .State}}</td>
-                    <td>{{.Context}}</td>
+                    <td>{{if .TargetUrl}}<a href="{{.TargetUrl}}">{{.Context}} ↗</a>{{else}}{{.Context}}{{end}}</td>
                 </tr>
                 {{end}}
             </tbody>

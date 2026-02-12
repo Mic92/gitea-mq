@@ -106,6 +106,7 @@ type CheckStatus struct {
 	Context      string             `json:"context"`
 	State        CheckState         `json:"state"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	TargetUrl    string             `json:"target_url"`
 }
 
 type QueueEntry struct {
