@@ -13,6 +13,14 @@ import (
 	"github.com/jogman/gitea-mq/internal/store/pg"
 )
 
+// BranchPrefix is the prefix for temporary merge branches created by gitea-mq.
+const BranchPrefix = "gitea-mq/"
+
+// BranchName returns the merge branch name for a given PR number.
+func BranchName(prNumber int64) string {
+	return fmt.Sprintf("%s%d", BranchPrefix, prNumber)
+}
+
 // StartTestingResult describes the outcome of starting testing for a PR.
 type StartTestingResult struct {
 	MergeBranchName string
@@ -24,7 +32,7 @@ type StartTestingResult struct {
 // transitions it to the "testing" state. If the merge conflicts, the PR
 // is removed from the queue with automerge cancelled and a comment posted.
 func StartTesting(ctx context.Context, giteaClient gitea.Client, svc *queue.Service, owner, repo string, repoID int64, entry *pg.QueueEntry) (*StartTestingResult, error) {
-	branchName := fmt.Sprintf("mq/%d", entry.PrNumber)
+	branchName := BranchName(entry.PrNumber)
 
 	mergeResult, err := giteaClient.MergeBranches(ctx, owner, repo, entry.TargetBranch, entry.PrHeadSha, branchName)
 	if err != nil {
@@ -81,10 +89,10 @@ func CleanupMergeBranch(ctx context.Context, giteaClient gitea.Client, owner, re
 	}
 }
 
-// CleanupStaleBranches scans for orphaned mq/* branches and deletes them.
-// Called on startup to clean up after crashes. A branch is considered stale
-// if its name starts with "mq/" but is not referenced by any active queue
-// entry.
+// CleanupStaleBranches scans for orphaned merge branches (BranchPrefix) and
+// deletes them. Called on startup to clean up after crashes. A branch is
+// considered stale if its name starts with BranchPrefix but is not referenced
+// by any active queue entry.
 func CleanupStaleBranches(ctx context.Context, giteaClient gitea.Client, svc *queue.Service, owner, repo string, repoID int64) error {
 	// Get all active entries to know which merge branches are legitimate.
 	activeEntries, err := svc.ListActiveEntries(ctx, repoID)
@@ -99,7 +107,7 @@ func CleanupStaleBranches(ctx context.Context, giteaClient gitea.Client, svc *qu
 		}
 	}
 
-	// List all branches and find orphaned mq/* ones.
+	// List all branches and find orphaned gitea-mq/* ones.
 	branches, err := giteaClient.ListBranches(ctx, owner, repo)
 	if err != nil {
 		return fmt.Errorf("list branches: %w", err)
@@ -107,7 +115,7 @@ func CleanupStaleBranches(ctx context.Context, giteaClient gitea.Client, svc *qu
 
 	var deleted int
 	for _, b := range branches {
-		if !strings.HasPrefix(b.Name, "mq/") {
+		if !strings.HasPrefix(b.Name, BranchPrefix) {
 			continue
 		}
 

@@ -4,7 +4,7 @@
 The system SHALL monitor commit status updates for the temporary merge branch of the head-of-queue PR. The system SHALL aggregate all reported statuses and compare them against the set of required checks.
 
 #### Scenario: Commit status arrives for merge branch
-- **WHEN** a commit status update arrives for the merge branch `mq/42` with context `ci/build` and state `success`
+- **WHEN** a commit status update arrives for the merge branch `gitea-mq/42` with context `ci/build` and state `success`
 - **THEN** the system records this status and evaluates whether all required checks are now satisfied
 
 #### Scenario: Commit status for unrelated branch
@@ -61,13 +61,13 @@ The system SHALL enforce a configurable timeout (default: 1 hour) for required c
 The system SHALL always use the most recent status for each check context. If a check transitions from `failure` back to `pending` and then to `success` (e.g. CI retry), the final `success` state SHALL be used.
 
 #### Scenario: Check retried after failure
-- **WHEN** check `ci/build` reports `failure` on merge branch `mq/42`
+- **WHEN** check `ci/build` reports `failure` on merge branch `gitea-mq/42`
 - **AND** then `ci/build` reports `pending` (retry started)
 - **AND** then `ci/build` reports `success`
 - **THEN** the system treats `ci/build` as `success`
 
 #### Scenario: Check goes from success to failure
-- **WHEN** check `ci/build` reports `success` on merge branch `mq/42`
+- **WHEN** check `ci/build` reports `success` on merge branch `gitea-mq/42`
 - **AND** then `ci/build` reports `failure` (re-run failed)
 - **THEN** the system treats `ci/build` as `failure`
 
@@ -75,7 +75,7 @@ The system SHALL always use the most recent status for each check context. If a 
 The system SHALL remove the head-of-queue PR when any required check reports a terminal failure state (`failure` or `error`) on the merge branch.
 
 #### Scenario: Required check reports failure
-- **WHEN** check `ci/build` reports `failure` on merge branch `mq/42`
+- **WHEN** check `ci/build` reports `failure` on merge branch `gitea-mq/42`
 - **THEN** the system removes PR #42 from the queue
 - **AND** cancels automerge on PR #42
 - **AND** posts a comment on PR #42 explaining which check failed

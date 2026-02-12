@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jogman/gitea-mq/internal/gitea"
+	"github.com/jogman/gitea-mq/internal/merge"
 	"github.com/jogman/gitea-mq/internal/monitor"
 	"github.com/jogman/gitea-mq/internal/queue"
 	"github.com/jogman/gitea-mq/internal/store/pg"
@@ -44,7 +45,7 @@ func enqueueTesting(t *testing.T, svc *queue.Service, ctx context.Context, repoI
 		t.Fatal(err)
 	}
 
-	if err := svc.SetMergeBranch(ctx, repoID, prNumber, "mq/42", "mergesha"); err != nil {
+	if err := svc.SetMergeBranch(ctx, repoID, prNumber, merge.BranchName(prNumber), "mergesha"); err != nil {
 		t.Fatal(err)
 	}
 }

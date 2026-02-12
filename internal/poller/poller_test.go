@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jogman/gitea-mq/internal/gitea"
+	"github.com/jogman/gitea-mq/internal/merge"
 	"github.com/jogman/gitea-mq/internal/poller"
 	"github.com/jogman/gitea-mq/internal/queue"
 	"github.com/jogman/gitea-mq/internal/store/pg"
@@ -190,7 +191,7 @@ func TestPollOnce_HeadOfQueueCancelled_CleansUpMergeBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = svc.UpdateState(ctx, repoID, 42, pg.EntryStateTesting)
-	_ = svc.SetMergeBranch(ctx, repoID, 42, "mq/42", "mergesha")
+	_ = svc.SetMergeBranch(ctx, repoID, 42, merge.BranchName(42), "mergesha")
 
 	// Enqueue another PR so we can verify advancement.
 	if _, err := svc.Enqueue(ctx, repoID, 43, "sha43", "main"); err != nil {
@@ -220,12 +221,13 @@ func TestPollOnce_HeadOfQueueCancelled_CleansUpMergeBranch(t *testing.T) {
 	}
 
 	// Verify merge branch was deleted.
+	wantBranch := merge.BranchName(42)
 	deleteCalls := mock.CallsTo("DeleteBranch")
 	if len(deleteCalls) != 1 {
 		t.Fatalf("expected 1 DeleteBranch call, got %d", len(deleteCalls))
 	}
-	if deleteCalls[0].Args[2] != "mq/42" {
-		t.Fatalf("expected delete of mq/42, got %v", deleteCalls[0].Args[2])
+	if deleteCalls[0].Args[2] != wantBranch {
+		t.Fatalf("expected delete of %s, got %v", wantBranch, deleteCalls[0].Args[2])
 	}
 }
 
@@ -320,7 +322,7 @@ func TestPollOnce_NewPush_HeadOfQueue_CleansUpMergeBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = svc.UpdateState(ctx, repoID, 42, pg.EntryStateTesting)
-	_ = svc.SetMergeBranch(ctx, repoID, 42, "mq/42", "mergesha")
+	_ = svc.SetMergeBranch(ctx, repoID, 42, merge.BranchName(42), "mergesha")
 
 	mock.ListOpenPRsFn = func(_ context.Context, _, _ string) ([]gitea.PR, error) {
 		return []gitea.PR{makePR(42, "newsha", "main")}, nil
@@ -339,9 +341,10 @@ func TestPollOnce_NewPush_HeadOfQueue_CleansUpMergeBranch(t *testing.T) {
 	}
 
 	// Verify merge branch was deleted.
+	wantBranch := merge.BranchName(42)
 	deleteCalls := mock.CallsTo("DeleteBranch")
-	if len(deleteCalls) != 1 || deleteCalls[0].Args[2] != "mq/42" {
-		t.Fatalf("expected delete of mq/42, got %v", deleteCalls)
+	if len(deleteCalls) != 1 || deleteCalls[0].Args[2] != wantBranch {
+		t.Fatalf("expected delete of %s, got %v", wantBranch, deleteCalls)
 	}
 }
 

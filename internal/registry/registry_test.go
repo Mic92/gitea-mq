@@ -9,6 +9,7 @@ import (
 
 	"github.com/jogman/gitea-mq/internal/config"
 	"github.com/jogman/gitea-mq/internal/gitea"
+	"github.com/jogman/gitea-mq/internal/merge"
 	"github.com/jogman/gitea-mq/internal/queue"
 	"github.com/jogman/gitea-mq/internal/registry"
 	"github.com/jogman/gitea-mq/internal/testutil"
@@ -123,7 +124,8 @@ func TestRemoveCleansUpMergeBranchesAndDBEntries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}
-	if err := queueSvc.SetMergeBranch(ctx, m.RepoID, 42, "mq/42", "merge-sha"); err != nil {
+	wantBranch := merge.BranchName(42)
+	if err := queueSvc.SetMergeBranch(ctx, m.RepoID, 42, wantBranch, "merge-sha"); err != nil {
 		t.Fatalf("SetMergeBranch: %v", err)
 	}
 
@@ -135,8 +137,8 @@ func TestRemoveCleansUpMergeBranchesAndDBEntries(t *testing.T) {
 	if len(deleteCalls) != 1 {
 		t.Fatalf("expected 1 DeleteBranch call, got %d", len(deleteCalls))
 	}
-	if deleteCalls[0].Args[2] != "mq/42" {
-		t.Errorf("expected DeleteBranch for mq/42, got %v", deleteCalls[0].Args[2])
+	if deleteCalls[0].Args[2] != wantBranch {
+		t.Errorf("expected DeleteBranch for %s, got %v", wantBranch, deleteCalls[0].Args[2])
 	}
 
 	// Verify DB entries are gone.

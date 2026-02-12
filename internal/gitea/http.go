@@ -317,14 +317,14 @@ func (c *HTTPClient) DeleteBranch(ctx context.Context, owner, repo, name string)
 }
 
 // MergeBranches creates a merge of head into base and pushes it as branch
-// mq/<head-short>. It shells out to git because Gitea has no API to merge
+// gitea-mq/<head-short>. It shells out to git because Gitea has no API to merge
 // two arbitrary refs into a new branch.
 //
 // Steps:
 //  1. Shallow-clone the repo (base branch only)
 //  2. Fetch the head SHA
 //  3. git merge --no-ff the head SHA into base
-//  4. Push the result as mq/<head-short>
+//  4. Push the result as gitea-mq/<head-short>
 //
 // On conflict git merge exits non-zero and we return a MergeConflictError.
 func (c *HTTPClient) MergeBranches(ctx context.Context, owner, repo, base, head, branchName string) (*MergeResult, error) {

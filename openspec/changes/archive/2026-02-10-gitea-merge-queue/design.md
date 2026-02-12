@@ -51,9 +51,9 @@ Gitea does not expose automerge scheduling via webhook events or the PR API resp
 
 **Design:** The webhook endpoint also serves as a liveness signal — if we stop receiving webhooks, something is wrong. The poller acts as a fallback reconciliation mechanism.
 
-### 4. Merge branch naming: `mq/<pr-number>`
+### 4. Merge branch naming: `gitea-mq/<pr-number>`
 
-**Decision:** Name temporary merge branches `mq/<pr-number>` within each repository.
+**Decision:** Name temporary merge branches `gitea-mq/<pr-number>` within each repository.
 
 **Why:** The branch exists in the PR's own repo, so the repo name is redundant. Short, predictable names make it easy to identify merge queue branches and clean up stale ones.
 
@@ -181,13 +181,13 @@ type GiteaClient interface {
 
 ### 11. Merge branch creation via API
 
-**Decision:** Create the merge branch using Gitea's API. Specifically: use the API to create a temporary merge of the PR head into the target branch and push it as `mq/<pr-number>`.
+**Decision:** Create the merge branch using Gitea's API. Specifically: use the API to create a temporary merge of the PR head into the target branch and push it as `gitea-mq/<pr-number>`.
 
 **Approach:** Gitea doesn't have a direct "merge two refs into a branch" API. We'll use the repository contents/git API:
 1. Get the target branch HEAD SHA
 2. Get the PR head SHA
 3. Use the merge API or create a merge commit via Git operations
-4. Push the result as branch `mq/<pr-number>`
+4. Push the result as branch `gitea-mq/<pr-number>`
 
 **Fallback:** If the Gitea API doesn't support creating a merge commit directly, we may need to use a local git clone or Gitea's "test merge" mechanism. The `GiteaClient` interface abstracts this — the implementation detail can change without affecting queue logic.
 
@@ -211,7 +211,7 @@ type GiteaClient interface {
 
 **[Webhook feedback loop]** → Posting `gitea-mq` commit status triggers a `status` webhook back to us. Mitigation: webhook handler ignores events where context = `gitea-mq`.
 
-**[Merge branch CI runs different checks than the PR's own CI]** → CI systems trigger based on branch patterns. The `mq/*` branches need to be included in CI triggers. Mitigation: document this requirement. Most CI configs can be adjusted to include `mq/**` branches.
+**[Merge branch CI runs different checks than the PR's own CI]** → CI systems trigger based on branch patterns. The `gitea-mq/*` branches need to be included in CI triggers. Mitigation: document this requirement. Most CI configs can be adjusted to include `gitea-mq/**` branches.
 
 **[Timeline comment polling is fragile]** → If Gitea changes the comment type numbers or stops creating these comments, discovery breaks. Mitigation: version-pin Gitea compatibility. The comment types (34, 35) have been stable since v1.17.
 
@@ -225,6 +225,6 @@ type GiteaClient interface {
 
 1. **Merge branch creation mechanism:** Does Gitea's API support creating a merge commit between two refs and pushing it as a branch? Or do we need a local git worktree / bare clone? Need to spike this.
 
-2. **Stale merge branch cleanup:** On startup, should the service scan for orphaned `mq/*` branches (from a previous crash) and delete them?
+2. **Stale merge branch cleanup:** On startup, should the service scan for orphaned `gitea-mq/*` branches (from a previous crash) and delete them?
 
 3. **Branch protection auto-setup:** Should the service automatically add `gitea-mq` to branch protection's required checks on startup, or require manual configuration?
