@@ -364,8 +364,10 @@ func (c *HTTPClient) MergeBranches(ctx context.Context, owner, repo, base, head,
 		return out, nil
 	}
 
-	// Clone base branch only (shallow for speed).
-	if _, err := run("git", "clone", "--depth=1", "--branch", base, authedURL, "."); err != nil {
+	// Full clone of the base branch. We need enough history for git to
+	// find the common ancestor with the PR head, so shallow clones don't
+	// work reliably here.
+	if _, err := run("git", "clone", "--single-branch", "--branch", base, authedURL, "."); err != nil {
 		return nil, fmt.Errorf("clone: %w", err)
 	}
 
