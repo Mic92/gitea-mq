@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -119,11 +120,8 @@ func (e *APIError) Error() string {
 
 // IsNotFound returns true if the error is a 404 response.
 func IsNotFound(err error) bool {
-	if apiErr, ok := err.(*APIError); ok {
-		return apiErr.StatusCode == http.StatusNotFound
-	}
-
-	return false
+	var apiErr *APIError
+	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound
 }
 
 // paginate fetches all pages of a paginated Gitea API endpoint.
@@ -417,8 +415,8 @@ func (e *MergeConflictError) Error() string {
 
 // IsMergeConflict returns true if the error is a merge conflict.
 func IsMergeConflict(err error) bool {
-	_, ok := err.(*MergeConflictError)
-	return ok
+	var mergeErr *MergeConflictError
+	return errors.As(err, &mergeErr)
 }
 
 // ListBranchProtections lists all branch protection rules for a repository.
