@@ -13,6 +13,7 @@ import (
 
 	"github.com/jogman/gitea-mq/internal/config"
 	"github.com/jogman/gitea-mq/internal/gitea"
+	"github.com/jogman/gitea-mq/internal/monitor"
 	"github.com/jogman/gitea-mq/internal/queue"
 	"github.com/jogman/gitea-mq/internal/store/pg"
 )
@@ -94,7 +95,8 @@ type Deps struct {
 	Queue           *queue.Service
 	Repos           RepoLister
 	Gitea           gitea.Client
-	RefreshInterval int // seconds
+	FallbackChecks  []string // from GITEA_MQ_REQUIRED_CHECKS
+	RefreshInterval int      // seconds
 }
 
 // NewMux creates an http.ServeMux with the dashboard routes registered.
@@ -323,13 +325,19 @@ func servePRDetail(w http.ResponseWriter, r *http.Request, deps *Deps, owner, na
 	}
 
 	// Fetch check statuses if head-of-queue in testing state.
+	// Resolve required checks so unreported ones appear as pending.
 	if data.Position == 1 && entry.State == pg.EntryStateTesting {
-		checks, err := deps.Queue.GetCheckStatuses(ctx, entry.ID)
+		recorded, err := deps.Queue.GetCheckStatuses(ctx, entry.ID)
 		if err != nil {
 			slog.Error("failed to get check statuses", "pr", prNumber, "error", err)
-		} else {
-			data.CheckStatuses = checks
 		}
+
+		required, err := monitor.ResolveRequiredChecks(ctx, deps.Gitea, owner, name, entry.TargetBranch, deps.FallbackChecks)
+		if err != nil {
+			slog.Warn("failed to resolve required checks", "pr", prNumber, "error", err)
+		}
+
+		data.CheckStatuses = mergeCheckStatuses(recorded, required)
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -337,4 +345,42 @@ func servePRDetail(w http.ResponseWriter, r *http.Request, deps *Deps, owner, na
 		slog.Error("failed to render PR detail", "error", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 	}
+}
+
+// mergeCheckStatuses combines recorded check statuses with the required checks
+// list. Any required check that hasn't reported yet appears as pending.
+// If required is empty (meaning "any single success"), only recorded statuses
+// are returned.
+func mergeCheckStatuses(recorded []pg.CheckStatus, required []string) []pg.CheckStatus {
+	if len(required) == 0 {
+		return recorded
+	}
+
+	result := make([]pg.CheckStatus, 0, len(required))
+	// Add required checks in order, using recorded state or pending.
+	recordedMap := make(map[string]pg.CheckStatus, len(recorded))
+	for _, s := range recorded {
+		recordedMap[s.Context] = s
+	}
+	for _, ctx := range required {
+		if s, ok := recordedMap[ctx]; ok {
+			result = append(result, s)
+		} else {
+			result = append(result, pg.CheckStatus{Context: ctx, State: pg.CheckStatePending})
+		}
+	}
+	// Append any recorded checks not in the required list (unexpected extras).
+	for _, s := range recorded {
+		found := false
+		for _, req := range required {
+			if s.Context == req {
+				found = true
+				break
+			}
+		}
+		if !found {
+			result = append(result, s)
+		}
+	}
+	return result
 }

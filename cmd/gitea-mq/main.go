@@ -136,6 +136,7 @@ func run() error {
 		Queue:           queueSvc,
 		Repos:           reg,
 		Gitea:           giteaClient,
+		FallbackChecks:  cfg.RequiredChecks,
 		RefreshInterval: int(cfg.RefreshInterval.Seconds()),
 	}
 	dashMux := web.NewMux(webDeps)

@@ -173,10 +173,8 @@ func TestPRDetailHeadOfQueueTesting(t *testing.T) {
 	if err := svc.UpdateState(ctx, repoID, 42, pg.EntryStateTesting); err != nil {
 		t.Fatal(err)
 	}
+	// Only ci/build has reported — ci/lint and ci/test have not.
 	if err := svc.SaveCheckStatus(ctx, res1.Entry.ID, "ci/build", pg.CheckStateSuccess); err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.SaveCheckStatus(ctx, res1.Entry.ID, "ci/lint", pg.CheckStatePending); err != nil {
 		t.Fatal(err)
 	}
 
@@ -186,6 +184,13 @@ func TestPRDetailHeadOfQueueTesting(t *testing.T) {
 			Index: 42,
 			Title: "Fix login bug",
 			User:  &gitea.User{Login: "alice"},
+		}, nil
+	}
+	// Branch protection requires ci/build, ci/lint, ci/test.
+	mock.GetBranchProtectionFn = func(_ context.Context, _, _, _ string) (*gitea.BranchProtection, error) {
+		return &gitea.BranchProtection{
+			EnableStatusCheck:   true,
+			StatusCheckContexts: []string{"gitea-mq", "ci/build", "ci/lint", "ci/test"},
 		}, nil
 	}
 
@@ -215,14 +220,22 @@ func TestPRDetailHeadOfQueueTesting(t *testing.T) {
 	if !strings.Contains(body, "testing") {
 		t.Error("expected testing state")
 	}
+	// ci/build reported success.
 	if !strings.Contains(body, "✅") {
-		t.Error("expected success check icon")
-	}
-	if !strings.Contains(body, "⏳") {
-		t.Error("expected pending check icon")
+		t.Error("expected success check icon for ci/build")
 	}
 	if !strings.Contains(body, "ci/build") {
 		t.Error("expected ci/build check name")
+	}
+	// ci/lint and ci/test haven't reported yet — should appear as pending.
+	if !strings.Contains(body, "ci/lint") {
+		t.Error("expected ci/lint (unreported required check should show as pending)")
+	}
+	if !strings.Contains(body, "ci/test") {
+		t.Error("expected ci/test (unreported required check should show as pending)")
+	}
+	if !strings.Contains(body, "⏳") {
+		t.Error("expected pending check icon for unreported checks")
 	}
 }
 
