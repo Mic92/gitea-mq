@@ -1,6 +1,6 @@
 # gitea-mq
 
-Status: alpha
+Status: beta
 
 A merge queue for [Gitea](https://gitea.com). Serializes PR merges so your main branch stays green.
 
