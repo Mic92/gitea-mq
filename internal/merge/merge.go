@@ -54,7 +54,21 @@ func StartTesting(ctx context.Context, giteaClient gitea.Client, svc *queue.Serv
 			return &StartTestingResult{Conflict: true}, nil
 		}
 
-		return nil, fmt.Errorf("create merge branch for PR #%d: %w", entry.PrNumber, err)
+		// Non-conflict merge failure (e.g. unrelated histories, git error).
+		// Notify the user and remove from queue rather than retrying silently.
+		slog.Error("merge branch creation failed", "pr", entry.PrNumber, "error", err)
+
+		_ = giteaClient.CancelAutoMerge(ctx, owner, repo, entry.PrNumber)
+		_ = giteaClient.CreateCommitStatus(ctx, owner, repo, entry.PrHeadSha,
+			gitea.MQStatus("error", "Failed to create merge branch"))
+		_ = giteaClient.CreateComment(ctx, owner, repo, entry.PrNumber,
+			fmt.Sprintf("❌ Removed from merge queue: failed to create merge branch.\n\n```\n%v\n```", err))
+
+		if _, err := svc.Dequeue(ctx, repoID, entry.PrNumber); err != nil {
+			return nil, fmt.Errorf("dequeue PR #%d after merge error: %w", entry.PrNumber, err)
+		}
+
+		return &StartTestingResult{Conflict: true}, nil
 	}
 
 	// Record merge branch and transition to testing.
