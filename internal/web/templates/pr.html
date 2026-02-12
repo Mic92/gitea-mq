@@ -21,7 +21,7 @@
                 <tr><th>Author</th><td>{{.Author}}</td></tr>
                 <tr><th>State</th><td><span class="state state-{{.State}}">{{.State}}</span></td></tr>
                 <tr><th>Position</th><td>#{{.Position}}</td></tr>
-                <tr><th>Enqueued</th><td>{{.EnqueuedAt}}</td></tr>
+                <tr><th>Enqueued</th><td>{{relativeTime .EnqueuedAt}}</td></tr>
             </tbody>
         </table>
     </div>
