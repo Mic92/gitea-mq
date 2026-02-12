@@ -17,7 +17,7 @@ type Config struct {
 	WebhookSecret     string
 	ListenAddr        string
 	WebhookPath       string
-	ExternalURL       string // optional: external URL for webhook auto-setup
+	ExternalURL       string // required: external URL for webhook auto-setup (GITEA_MQ_EXTERNAL_URL)
 	PollInterval      time.Duration
 	CheckTimeout      time.Duration
 	RequiredChecks    []string
