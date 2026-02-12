@@ -65,13 +65,21 @@ func TestFullMergeQueueFlow(t *testing.T) {
 	api.MustDo(t, "POST", "/repos/testuser/"+repoName+"/contents/README.md",
 		`{"content": "aW5pdA==", "message": "initial commit"}`)
 
-	// Set up branch protection requiring ci/build and gitea-mq.
-	api.MustDo(t, "POST", "/repos/testuser/"+repoName+"/branch_protections",
-		`{"branch_name": "main", "enable_status_check": true, "status_check_contexts": ["ci/build", "gitea-mq"]}`)
-
 	// Create a feature branch with a file change.
 	api.MustDo(t, "POST", "/repos/testuser/"+repoName+"/contents/test.txt",
 		`{"content": "dGVzdA==", "message": "add test file", "new_branch": "feature-1"}`)
+
+	// Push additional commits to main so the branch point is no longer
+	// reachable from a depth-1 shallow clone of main. This reproduces the
+	// "refusing to merge unrelated histories" bug.
+	for i := range 3 {
+		api.MustDo(t, "POST", fmt.Sprintf("/repos/testuser/%s/contents/extra-%d.txt", repoName, i),
+			fmt.Sprintf(`{"content": "ZXh0cmE=", "message": "extra commit %d on main"}`, i))
+	}
+
+	// Set up branch protection requiring ci/build and gitea-mq.
+	api.MustDo(t, "POST", "/repos/testuser/"+repoName+"/branch_protections",
+		`{"branch_name": "main", "enable_status_check": true, "status_check_contexts": ["ci/build", "gitea-mq"]}`)
 
 	// Create a PR from feature-1 → main.
 	prBody := api.MustDo(t, "POST", "/repos/testuser/"+repoName+"/pulls",
@@ -87,9 +95,19 @@ func TestFullMergeQueueFlow(t *testing.T) {
 		t.Fatalf("unmarshal PR: %v", err)
 	}
 
-	// Schedule automerge.
-	api.MustDo(t, "POST", "/repos/testuser/"+repoName+"/pulls/"+itoa(pr.Number)+"/merge",
-		`{"Do": "merge", "merge_when_checks_succeed": true}`)
+	// Schedule automerge. Gitea may return 405 if the PR is still being
+	// processed after recent pushes, so retry a few times.
+	for i := range 10 {
+		status, body := api.Do(t, "POST", "/repos/testuser/"+repoName+"/pulls/"+itoa(pr.Number)+"/merge",
+			`{"Do": "merge", "merge_when_checks_succeed": true}`)
+		if status >= 200 && status < 300 {
+			break
+		}
+		if i == 9 {
+			t.Fatalf("schedule automerge: status %d: %s", status, body)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 
 	// Register repo in DB.
 	repo, err := svc.GetOrCreateRepo(ctx, "testuser", repoName)
