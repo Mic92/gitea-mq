@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jogman/gitea-mq/internal/config"
 	"github.com/jogman/gitea-mq/internal/gitea"
@@ -24,6 +25,9 @@ var templateFS embed.FS
 // funcMap provides template helper functions.
 var funcMap = template.FuncMap{
 	"inc": func(i int) int { return i + 1 },
+	"relativeTime": func(t time.Time) string {
+		return RelativeTime(t, time.Now())
+	},
 	"checkIcon": func(state pg.CheckState) string {
 		switch state {
 		case pg.CheckStateSuccess:
@@ -39,6 +43,48 @@ var funcMap = template.FuncMap{
 var templates = template.Must(
 	template.New("").Funcs(funcMap).ParseFS(templateFS, "templates/*.html"),
 )
+
+// RelativeTime returns a human-readable relative duration between t and now,
+// e.g. "3 minutes ago" for the past or "in 3 minutes" for the future.
+// Exported so it can be unit-tested.
+func RelativeTime(t, now time.Time) string {
+	future := t.After(now)
+	d := now.Sub(t)
+	if d < 0 {
+		d = -d
+	}
+
+	format := func(mag string) string {
+		if future {
+			return "in " + mag
+		}
+		return mag + " ago"
+	}
+
+	switch {
+	case d < 5*time.Second:
+		return "just now"
+	case d < time.Minute:
+		return format(pluralize(int(d.Seconds()), "second"))
+	case d < time.Hour:
+		return format(pluralize(int(d.Minutes()), "minute"))
+	case d < 24*time.Hour:
+		return format(pluralize(int(d.Hours()), "hour"))
+	case d < 30*24*time.Hour:
+		return format(pluralize(int(d.Hours()/24), "day"))
+	case d < 365*24*time.Hour:
+		return format(pluralize(int(d.Hours()/(24*30)), "month"))
+	default:
+		return format(pluralize(int(d.Hours()/(24*365)), "year"))
+	}
+}
+
+func pluralize(n int, unit string) string {
+	if n == 1 {
+		return "1 " + unit
+	}
+	return strconv.Itoa(n) + " " + unit + "s"
+}
 
 // RepoOverview holds the data for one repo in the overview page.
 type RepoOverview struct {
@@ -77,7 +123,7 @@ type PRDetailData struct {
 	Author          string
 	State           string
 	Position        int
-	EnqueuedAt      string
+	EnqueuedAt      time.Time
 	CheckStatuses   []pg.CheckStatus
 	InQueue         bool
 	RefreshInterval int // seconds
@@ -295,7 +341,7 @@ func servePRDetail(w http.ResponseWriter, r *http.Request, deps *Deps, owner, na
 	data.InQueue = true
 	data.State = string(entry.State)
 	if entry.EnqueuedAt.Valid {
-		data.EnqueuedAt = entry.EnqueuedAt.Time.Format("2006-01-02 15:04:05 UTC")
+		data.EnqueuedAt = entry.EnqueuedAt.Time.UTC()
 	}
 
 	// Determine queue position.

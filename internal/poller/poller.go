@@ -301,10 +301,12 @@ func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 			result.Errors = append(result.Errors, fmt.Errorf("start testing for PR #%d: %w", head.PrNumber, err))
 			continue
 		}
-		if startResult.Conflict {
-			// PR was removed due to conflict — the next head (if any)
-			// will be picked up on the next poll cycle.
-			slog.Info("head-of-queue had conflict, will retry next cycle", "pr", head.PrNumber)
+		if startResult.Removed {
+			// PR was removed from the queue (conflict, git error, etc.)
+			// — the next head (if any) will be picked up on the next poll cycle.
+			result.Dequeued = append(result.Dequeued, head.PrNumber)
+			result.Errors = append(result.Errors, fmt.Errorf("removed PR #%d from queue during testing start", head.PrNumber))
+			slog.Info("head-of-queue was removed, will retry next cycle", "pr", head.PrNumber)
 		} else {
 			slog.Info("started testing for head-of-queue", "pr", head.PrNumber, "branch", startResult.MergeBranchName)
 		}

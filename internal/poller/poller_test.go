@@ -524,8 +524,20 @@ func TestPollOnce_MergeBranchError_NotifiesUser(t *testing.T) {
 	}
 
 	// The error should still be reported in result.Errors for logging.
-	if len(result.Errors) != 0 && len(result.Dequeued) == 0 {
-		t.Fatal("PR should be dequeued, not just reported as an error")
+	if len(result.Errors) == 0 {
+		t.Fatal("expected at least one error in result.Errors for logging")
+	}
+
+	// PR #42 must appear in result.Dequeued.
+	foundDequeued := false
+	for _, pr := range result.Dequeued {
+		if pr == 42 {
+			foundDequeued = true
+			break
+		}
+	}
+	if !foundDequeued {
+		t.Fatalf("expected PR #42 in result.Dequeued, got %v", result.Dequeued)
 	}
 }
 

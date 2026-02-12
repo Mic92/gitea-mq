@@ -46,8 +46,8 @@ func TestStartTesting_Success(t *testing.T) {
 
 	wantBranch := merge.BranchName(42)
 
-	if result.Conflict {
-		t.Fatal("expected no conflict")
+	if result.Removed {
+		t.Fatal("expected PR to enter testing, not be removed")
 	}
 	if result.MergeBranchName != wantBranch {
 		t.Fatalf("expected %s, got %s", wantBranch, result.MergeBranchName)
@@ -96,8 +96,8 @@ func TestStartTesting_Conflict(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !result.Conflict {
-		t.Fatal("expected conflict")
+	if !result.Removed {
+		t.Fatal("expected PR to be removed from queue")
 	}
 
 	// PR should be removed from queue.
