@@ -95,7 +95,7 @@ func (q *Queries) EnqueuePR(ctx context.Context, arg EnqueuePRParams) (QueueEntr
 }
 
 const getCheckStatuses = `-- name: GetCheckStatuses :many
-SELECT id, queue_entry_id, context, state, updated_at FROM check_statuses
+SELECT id, queue_entry_id, context, state, updated_at, target_url FROM check_statuses
 WHERE queue_entry_id = $1
 `
 
@@ -114,6 +114,7 @@ func (q *Queries) GetCheckStatuses(ctx context.Context, queueEntryID int64) ([]C
 			&i.Context,
 			&i.State,
 			&i.UpdatedAt,
+			&i.TargetUrl,
 		); err != nil {
 			return nil, err
 		}
@@ -355,20 +356,26 @@ func (q *Queries) LoadActiveQueues(ctx context.Context) ([]LoadActiveQueuesRow, 
 }
 
 const saveCheckStatus = `-- name: SaveCheckStatus :exec
-INSERT INTO check_statuses (queue_entry_id, context, state)
-VALUES ($1, $2, $3)
+INSERT INTO check_statuses (queue_entry_id, context, state, target_url)
+VALUES ($1, $2, $3, $4)
 ON CONFLICT (queue_entry_id, context) DO UPDATE
-SET state = EXCLUDED.state, updated_at = NOW()
+SET state = EXCLUDED.state, target_url = EXCLUDED.target_url, updated_at = NOW()
 `
 
 type SaveCheckStatusParams struct {
 	QueueEntryID int64      `json:"queue_entry_id"`
 	Context      string     `json:"context"`
 	State        CheckState `json:"state"`
+	TargetUrl    string     `json:"target_url"`
 }
 
 func (q *Queries) SaveCheckStatus(ctx context.Context, arg SaveCheckStatusParams) error {
-	_, err := q.db.Exec(ctx, saveCheckStatus, arg.QueueEntryID, arg.Context, arg.State)
+	_, err := q.db.Exec(ctx, saveCheckStatus,
+		arg.QueueEntryID,
+		arg.Context,
+		arg.State,
+		arg.TargetUrl,
+	)
 	return err
 }
 

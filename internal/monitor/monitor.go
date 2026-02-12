@@ -202,9 +202,9 @@ func removeFromQueue(ctx context.Context, deps *Deps, entry *pg.QueueEntry, stat
 // ProcessCheckStatus is the main entry point called when a webhook delivers
 // a commit status event for a merge branch. It records the status, evaluates
 // checks, and triggers success/failure handling as appropriate.
-func ProcessCheckStatus(ctx context.Context, deps *Deps, entry *pg.QueueEntry, checkContext string, checkState pg.CheckState) error {
+func ProcessCheckStatus(ctx context.Context, deps *Deps, entry *pg.QueueEntry, checkContext string, checkState pg.CheckState, targetURL string) error {
 	// Record the check status (latest wins — upsert).
-	if err := deps.Queue.SaveCheckStatus(ctx, entry.ID, checkContext, checkState); err != nil {
+	if err := deps.Queue.SaveCheckStatus(ctx, entry.ID, checkContext, checkState, targetURL); err != nil {
 		return fmt.Errorf("save check status for PR #%d: %w", entry.PrNumber, err)
 	}
 
