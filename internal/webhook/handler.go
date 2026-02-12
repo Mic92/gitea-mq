@@ -134,7 +134,7 @@ func (e *statusEvent) validate() error {
 
 func mapState(s string) pg.CheckState {
 	switch s {
-	case "success":
+	case "success", "warning":
 		return pg.CheckStateSuccess
 	case "failure":
 		return pg.CheckStateFailure
