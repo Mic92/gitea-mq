@@ -23,6 +23,8 @@ type Deps struct {
 	RepoID int64
 	Owner  string
 	Repo   string
+	// ExternalURL is the dashboard base URL for constructing target_url in commit statuses.
+	ExternalURL string
 	// SuccessTimeout is how long a PR can sit in "success" state without
 	// being merged before we consider automerge failed.
 	SuccessTimeout time.Duration
@@ -144,8 +146,9 @@ func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 		if enqResult.IsNew {
 			// Set gitea-mq pending status on the PR's head commit.
 			desc := fmt.Sprintf("Queued (position #%d)", enqResult.Position)
+			targetURL := gitea.DashboardPRURL(deps.ExternalURL, deps.Owner, deps.Repo, pr.Index)
 			if err := deps.Gitea.CreateCommitStatus(ctx, deps.Owner, deps.Repo, headSHA,
-				gitea.MQStatus("pending", desc)); err != nil {
+				gitea.MQStatus("pending", desc, targetURL)); err != nil {
 				result.Errors = append(result.Errors, fmt.Errorf("set pending status for PR #%d: %w", pr.Index, err))
 			}
 
@@ -247,8 +250,9 @@ func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 				completedTime := entry.CompletedAt.Time
 				if time.Since(completedTime) > deps.SuccessTimeout {
 					// PR has been in success state too long — automerge probably failed.
+					targetURL := gitea.DashboardPRURL(deps.ExternalURL, deps.Owner, deps.Repo, entry.PrNumber)
 					_ = deps.Gitea.CreateCommitStatus(ctx, deps.Owner, deps.Repo, entry.PrHeadSha,
-						gitea.MQStatus("error", "Automerge did not complete in time"))
+						gitea.MQStatus("error", "Automerge did not complete in time", targetURL))
 					_ = deps.Queue.SetError(ctx, deps.RepoID, entry.PrNumber, "automerge did not complete in time")
 
 					if err := removePR(ctx, deps, result, &entry, removeOpts{
@@ -292,7 +296,7 @@ func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 			continue
 		}
 
-		startResult, err := merge.StartTesting(ctx, deps.Gitea, deps.Queue, deps.Owner, deps.Repo, deps.RepoID, head)
+		startResult, err := merge.StartTesting(ctx, deps.Gitea, deps.Queue, deps.Owner, deps.Repo, deps.RepoID, head, deps.ExternalURL)
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("start testing for PR #%d: %w", head.PrNumber, err))
 			continue

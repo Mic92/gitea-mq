@@ -21,6 +21,7 @@ type Deps struct {
 	Owner          string
 	Repo           string
 	RepoID         int64
+	ExternalURL    string
 	CheckTimeout   time.Duration
 	FallbackChecks []string // from GITEA_MQ_REQUIRED_CHECKS
 }
@@ -129,9 +130,11 @@ func CheckTimeout(entry *pg.QueueEntry, timeout time.Duration) bool {
 func HandleSuccess(ctx context.Context, deps *Deps, entry *pg.QueueEntry) error {
 	slog.Info("all checks passed", "pr", entry.PrNumber)
 
+	targetURL := gitea.DashboardPRURL(deps.ExternalURL, deps.Owner, deps.Repo, entry.PrNumber)
+
 	// Set gitea-mq commit status to success on the PR's head commit.
 	if err := deps.Gitea.CreateCommitStatus(ctx, deps.Owner, deps.Repo, entry.PrHeadSha,
-		gitea.MQStatus("success", "Merge queue passed")); err != nil {
+		gitea.MQStatus("success", "Merge queue passed", targetURL)); err != nil {
 		return fmt.Errorf("set success status for PR #%d: %w", entry.PrNumber, err)
 	}
 
@@ -169,8 +172,9 @@ func HandleTimeout(ctx context.Context, deps *Deps, entry *pg.QueueEntry) error 
 // It sets the commit status, cancels automerge, posts a comment, cleans up
 // the merge branch, marks the entry as failed, and advances the queue.
 func removeFromQueue(ctx context.Context, deps *Deps, entry *pg.QueueEntry, statusState, statusDesc, comment string) error {
+	targetURL := gitea.DashboardPRURL(deps.ExternalURL, deps.Owner, deps.Repo, entry.PrNumber)
 	if err := deps.Gitea.CreateCommitStatus(ctx, deps.Owner, deps.Repo, entry.PrHeadSha,
-		gitea.MQStatus(statusState, statusDesc)); err != nil {
+		gitea.MQStatus(statusState, statusDesc, targetURL)); err != nil {
 		slog.Warn("failed to set status", "pr", entry.PrNumber, "error", err)
 	}
 

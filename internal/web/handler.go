@@ -8,9 +8,11 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/jogman/gitea-mq/internal/config"
+	"github.com/jogman/gitea-mq/internal/gitea"
 	"github.com/jogman/gitea-mq/internal/queue"
 	"github.com/jogman/gitea-mq/internal/store/pg"
 )
@@ -42,13 +44,6 @@ type RepoOverview struct {
 	Owner     string
 	Name      string
 	QueueSize int
-	Head      *HeadEntry
-}
-
-// HeadEntry is a simplified view of the head-of-queue entry.
-type HeadEntry struct {
-	PrNumber int64
-	State    string
 }
 
 // OverviewData is the template data for the overview page.
@@ -69,8 +64,21 @@ type RepoDetailData struct {
 	Owner           string
 	Name            string
 	Entries         []RepoDetailEntry
-	HeadPR          int64
+	RefreshInterval int // seconds
+}
+
+// PRDetailData is the template data for the PR detail page.
+type PRDetailData struct {
+	Owner           string
+	Name            string
+	PrNumber        int64
+	Title           string
+	Author          string
+	State           string
+	Position        int
+	EnqueuedAt      string
 	CheckStatuses   []pg.CheckStatus
+	InQueue         bool
 	RefreshInterval int // seconds
 }
 
@@ -85,6 +93,7 @@ type RepoLister interface {
 type Deps struct {
 	Queue           *queue.Service
 	Repos           RepoLister
+	Gitea           gitea.Client
 	RefreshInterval int // seconds
 }
 
@@ -141,13 +150,6 @@ func overviewHandler(deps *Deps) http.HandlerFunc {
 			}
 
 			overview.QueueSize = len(entries)
-			if len(entries) > 0 {
-				overview.Head = &HeadEntry{
-					PrNumber: entries[0].PrNumber,
-					State:    string(entries[0].State),
-				}
-			}
-
 			data.Repos = append(data.Repos, overview)
 		}
 
@@ -159,20 +161,38 @@ func overviewHandler(deps *Deps) http.HandlerFunc {
 	}
 }
 
-// repoHandler serves the repo detail page at GET /repo/{owner}/{name}.
+// repoHandler serves repo and PR detail pages:
+//   - GET /repo/{owner}/{name} — repo queue listing
+//   - GET /repo/{owner}/{name}/pr/{number} — PR detail
 func repoHandler(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Parse /repo/{owner}/{name} from path.
+		// Parse /repo/{owner}/{name}[/pr/{number}] from path.
 		path := strings.TrimPrefix(r.URL.Path, "/repo/")
-		owner, name, ok := strings.Cut(path, "/")
-		if !ok || owner == "" || name == "" {
+		owner, rest, ok := strings.Cut(path, "/")
+		if !ok || owner == "" || rest == "" {
 			http.NotFound(w, r)
 			return
 		}
 
-		// Strip any trailing path segments.
-		if idx := strings.Index(name, "/"); idx >= 0 {
-			name = name[:idx]
+		// Split rest into name and optional /pr/{number}.
+		var name string
+		var prNumberStr string
+		if idx := strings.Index(rest, "/"); idx >= 0 {
+			name = rest[:idx]
+			suffix := rest[idx+1:] // e.g. "pr/42"
+			prPrefix, numStr, hasPR := strings.Cut(suffix, "/")
+			if !hasPR || prPrefix != "pr" || numStr == "" {
+				http.NotFound(w, r)
+				return
+			}
+			prNumberStr = numStr
+		} else {
+			name = rest
+		}
+
+		if name == "" {
+			http.NotFound(w, r)
+			return
 		}
 
 		// Check if this is a managed repo.
@@ -181,54 +201,140 @@ func repoHandler(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		ctx := r.Context()
-		repo, err := deps.Queue.GetOrCreateRepo(ctx, owner, name)
-		if err != nil {
-			slog.Error("failed to get repo", "owner", owner, "name", name, "error", err)
+		if prNumberStr != "" {
+			servePRDetail(w, r, deps, owner, name, prNumberStr)
+		} else {
+			serveRepoDetail(w, r, deps, owner, name)
+		}
+	}
+}
+
+// serveRepoDetail renders the repo queue listing page.
+func serveRepoDetail(w http.ResponseWriter, r *http.Request, deps *Deps, owner, name string) {
+	ctx := r.Context()
+	repo, err := deps.Queue.GetOrCreateRepo(ctx, owner, name)
+	if err != nil {
+		slog.Error("failed to get repo", "owner", owner, "name", name, "error", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	entries, err := deps.Queue.ListActiveEntries(ctx, repo.ID)
+	if err != nil {
+		slog.Error("failed to list active entries", "owner", owner, "name", name, "error", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	data := RepoDetailData{
+		Owner:           owner,
+		Name:            name,
+		RefreshInterval: deps.RefreshInterval,
+	}
+
+	for _, e := range entries {
+		data.Entries = append(data.Entries, RepoDetailEntry{
+			PrNumber:     e.PrNumber,
+			TargetBranch: e.TargetBranch,
+			State:        string(e.State),
+		})
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := templates.ExecuteTemplate(w, "repo.html", data); err != nil {
+		slog.Error("failed to render repo detail", "error", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+	}
+}
+
+// servePRDetail renders the PR detail page.
+func servePRDetail(w http.ResponseWriter, r *http.Request, deps *Deps, owner, name, prNumberStr string) {
+	prNumber, err := strconv.ParseInt(prNumberStr, 10, 64)
+	if err != nil || prNumber <= 0 {
+		http.NotFound(w, r)
+		return
+	}
+
+	ctx := r.Context()
+	repo, err := deps.Queue.GetOrCreateRepo(ctx, owner, name)
+	if err != nil {
+		slog.Error("failed to get repo", "owner", owner, "name", name, "error", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	entry, err := deps.Queue.GetEntry(ctx, repo.ID, prNumber)
+	if err != nil {
+		slog.Error("failed to get entry", "pr", prNumber, "error", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	data := PRDetailData{
+		Owner:           owner,
+		Name:            name,
+		PrNumber:        prNumber,
+		Title:           "—",
+		Author:          "—",
+		RefreshInterval: deps.RefreshInterval,
+	}
+
+	if entry == nil {
+		// PR not in queue — render friendly page.
+		data.InQueue = false
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := templates.ExecuteTemplate(w, "pr.html", data); err != nil {
+			slog.Error("failed to render PR detail", "error", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
-			return
 		}
+		return
+	}
 
-		entries, err := deps.Queue.ListActiveEntries(ctx, repo.ID)
-		if err != nil {
-			slog.Error("failed to list active entries", "owner", owner, "name", name, "error", err)
-			http.Error(w, "internal server error", http.StatusInternalServerError)
-			return
-		}
+	data.InQueue = true
+	data.State = string(entry.State)
+	if entry.EnqueuedAt.Valid {
+		data.EnqueuedAt = entry.EnqueuedAt.Time.Format("2006-01-02 15:04:05 UTC")
+	}
 
-		data := RepoDetailData{
-			Owner:           owner,
-			Name:            name,
-			RefreshInterval: deps.RefreshInterval,
-		}
-
-		for _, e := range entries {
-			data.Entries = append(data.Entries, RepoDetailEntry{
-				PrNumber:     e.PrNumber,
-				TargetBranch: e.TargetBranch,
-				State:        string(e.State),
-			})
-		}
-
-		// Get check statuses for head-of-queue.
-		if len(entries) > 0 {
-			head := entries[0]
-			data.HeadPR = head.PrNumber
-
-			if head.State == pg.EntryStateTesting {
-				checks, err := deps.Queue.GetCheckStatuses(ctx, head.ID)
-				if err != nil {
-					slog.Error("failed to get check statuses", "pr", head.PrNumber, "error", err)
-				} else {
-					data.CheckStatuses = checks
-				}
+	// Determine queue position.
+	entries, err := deps.Queue.ListActiveEntries(ctx, repo.ID)
+	if err != nil {
+		slog.Error("failed to list active entries", "error", err)
+	} else {
+		for i, e := range entries {
+			if e.PrNumber == prNumber {
+				data.Position = i + 1
+				break
 			}
 		}
+	}
 
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := templates.ExecuteTemplate(w, "repo.html", data); err != nil {
-			slog.Error("failed to render repo detail", "error", err)
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+	// Fetch PR title/author from Gitea API (graceful degradation).
+	if deps.Gitea != nil {
+		pr, err := deps.Gitea.GetPR(ctx, owner, name, prNumber)
+		if err != nil {
+			slog.Warn("failed to fetch PR from Gitea", "pr", prNumber, "error", err)
+		} else {
+			data.Title = pr.Title
+			if pr.User != nil {
+				data.Author = pr.User.Login
+			}
 		}
+	}
+
+	// Fetch check statuses if head-of-queue in testing state.
+	if data.Position == 1 && entry.State == pg.EntryStateTesting {
+		checks, err := deps.Queue.GetCheckStatuses(ctx, entry.ID)
+		if err != nil {
+			slog.Error("failed to get check statuses", "pr", prNumber, "error", err)
+		} else {
+			data.CheckStatuses = checks
+		}
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := templates.ExecuteTemplate(w, "pr.html", data); err != nil {
+		slog.Error("failed to render PR detail", "error", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 	}
 }

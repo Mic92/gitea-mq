@@ -31,8 +31,9 @@ type StartTestingResult struct {
 // StartTesting creates a merge branch for the head-of-queue PR and
 // transitions it to the "testing" state. If the merge conflicts, the PR
 // is removed from the queue with automerge cancelled and a comment posted.
-func StartTesting(ctx context.Context, giteaClient gitea.Client, svc *queue.Service, owner, repo string, repoID int64, entry *pg.QueueEntry) (*StartTestingResult, error) {
+func StartTesting(ctx context.Context, giteaClient gitea.Client, svc *queue.Service, owner, repo string, repoID int64, entry *pg.QueueEntry, externalURL string) (*StartTestingResult, error) {
 	branchName := BranchName(entry.PrNumber)
+	targetURL := gitea.DashboardPRURL(externalURL, owner, repo, entry.PrNumber)
 
 	mergeResult, err := giteaClient.MergeBranches(ctx, owner, repo, entry.TargetBranch, entry.PrHeadSha, branchName)
 	if err != nil {
@@ -42,7 +43,7 @@ func StartTesting(ctx context.Context, giteaClient gitea.Client, svc *queue.Serv
 			// Cancel automerge and notify.
 			_ = giteaClient.CancelAutoMerge(ctx, owner, repo, entry.PrNumber)
 			_ = giteaClient.CreateCommitStatus(ctx, owner, repo, entry.PrHeadSha,
-				gitea.MQStatus("failure", "Merge conflict with target branch"))
+				gitea.MQStatus("failure", "Merge conflict with target branch", targetURL))
 			_ = giteaClient.CreateComment(ctx, owner, repo, entry.PrNumber,
 				"❌ Removed from merge queue: merge conflict with target branch. Please rebase and re-schedule automerge.")
 
@@ -60,7 +61,7 @@ func StartTesting(ctx context.Context, giteaClient gitea.Client, svc *queue.Serv
 
 		_ = giteaClient.CancelAutoMerge(ctx, owner, repo, entry.PrNumber)
 		_ = giteaClient.CreateCommitStatus(ctx, owner, repo, entry.PrHeadSha,
-			gitea.MQStatus("error", "Failed to create merge branch"))
+			gitea.MQStatus("error", "Failed to create merge branch", targetURL))
 		_ = giteaClient.CreateComment(ctx, owner, repo, entry.PrNumber,
 			fmt.Sprintf("❌ Removed from merge queue: failed to create merge branch.\n\n```\n%v\n```", err))
 
@@ -82,7 +83,7 @@ func StartTesting(ctx context.Context, giteaClient gitea.Client, svc *queue.Serv
 
 	// Update the pending status to indicate testing.
 	_ = giteaClient.CreateCommitStatus(ctx, owner, repo, entry.PrHeadSha,
-		gitea.MQStatus("pending", "Testing merge result"))
+		gitea.MQStatus("pending", "Testing merge result", targetURL))
 
 	slog.Info("started testing", "pr", entry.PrNumber, "branch", branchName, "sha", mergeResult.SHA)
 

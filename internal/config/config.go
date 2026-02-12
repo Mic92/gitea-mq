@@ -88,6 +88,12 @@ func Load() (*Config, error) {
 		missing = append(missing, "GITEA_MQ_WEBHOOK_SECRET")
 	}
 
+	cfg.ExternalURL = os.Getenv("GITEA_MQ_EXTERNAL_URL")
+	if cfg.ExternalURL == "" {
+		missing = append(missing, "GITEA_MQ_EXTERNAL_URL")
+	}
+	cfg.ExternalURL = strings.TrimRight(cfg.ExternalURL, "/")
+
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))
 	}
@@ -132,9 +138,6 @@ func Load() (*Config, error) {
 			}
 		}
 	}
-
-	// Optional: external URL for webhook auto-setup
-	cfg.ExternalURL = os.Getenv("GITEA_MQ_EXTERNAL_URL")
 
 	// Optional: log level
 	cfg.LogLevel = envOrDefault("GITEA_MQ_LOG_LEVEL", "info")
