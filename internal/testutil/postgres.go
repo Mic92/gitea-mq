@@ -48,12 +48,12 @@ func terminateProcess(cmd *exec.Cmd) {
 	}
 
 	time.AfterFunc(10*time.Second, func() {
-		if err := syscall.Kill(pgid, syscall.SIGKILL); err != nil {
+		if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil {
 			slog.Error("failed to kill process", "error", err)
 		}
 	})
 
-	if err := syscall.Kill(pgid, syscall.SIGTERM); err != nil {
+	if err := syscall.Kill(-pgid, syscall.SIGTERM); err != nil {
 		slog.Error("failed to terminate process", "error", err)
 	}
 
