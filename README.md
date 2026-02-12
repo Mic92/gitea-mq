@@ -10,7 +10,7 @@ gitea-mq hooks into Gitea's existing **"Merge when checks succeed"** (automerge)
 
 1. User clicks "Merge when checks succeed" on a PR
 2. gitea-mq detects the automerge via polling and enqueues the PR
-3. For the head-of-queue PR, gitea-mq creates a temporary merge branch (`mq/<pr>`) merging the PR into the latest target branch
+3. For the head-of-queue PR, gitea-mq creates a temporary merge branch (`gitea-mq/<pr>`) merging the PR into the latest target branch
 4. CI runs on the merge branch
 5. If all required checks pass → gitea-mq sets its status to `success` → Gitea's automerge performs the actual merge
 6. If checks fail or timeout → gitea-mq cancels automerge and posts a comment explaining why
@@ -57,13 +57,13 @@ but you must create the webhook manually in each repo (event type: `status`, poi
 
 ## CI configuration
 
-Your CI must run on `mq/*` branches. For example, in a Woodpecker/Drone pipeline:
+Your CI must run on `gitea-mq/*` branches. For example, in a Woodpecker/Drone pipeline:
 
 ```yaml
 when:
   branch:
     - main
-    - mq/*
+    - gitea-mq/*
 ```
 
 gitea-mq needs to know which CI checks must pass on the merge branch before it allows a merge. It resolves this in order:

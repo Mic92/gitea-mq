@@ -196,17 +196,17 @@ pkgs.testers.runNixOSTest {
     )
 
     # Wait for the poller to create the merge branch (state=testing).
-    # The merge branch mq/<pr> appears in Gitea when the poller calls
+    # The merge branch gitea-mq/<pr> appears in Gitea when the poller calls
     # StartTesting via git push.
     merge_branch_sha = ""
     machine.wait_until_succeeds(
-        f"curl -sf 'http://localhost:3000/api/v1/repos/testuser/testrepo/branches/mq/{pr_number}' "
+        f"curl -sf 'http://localhost:3000/api/v1/repos/testuser/testrepo/branches/gitea-mq/{pr_number}' "
         f"-H 'Authorization: token {token}' "
         f"| jq -e '.commit.id'",
         timeout=30,
     )
     merge_branch_json = machine.succeed(
-        f"curl -sf 'http://localhost:3000/api/v1/repos/testuser/testrepo/branches/mq/{pr_number}' "
+        f"curl -sf 'http://localhost:3000/api/v1/repos/testuser/testrepo/branches/gitea-mq/{pr_number}' "
         f"-H 'Authorization: token {token}'"
     )
     merge_branch_sha = json.loads(merge_branch_json)["commit"]["id"]

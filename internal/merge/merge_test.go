@@ -44,11 +44,13 @@ func TestStartTesting_Success(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	wantBranch := merge.BranchName(42)
+
 	if result.Conflict {
 		t.Fatal("expected no conflict")
 	}
-	if result.MergeBranchName != "mq/42" {
-		t.Fatalf("expected mq/42, got %s", result.MergeBranchName)
+	if result.MergeBranchName != wantBranch {
+		t.Fatalf("expected %s, got %s", wantBranch, result.MergeBranchName)
 	}
 	if result.MergeBranchSHA != "mergesha123" {
 		t.Fatalf("expected mergesha123, got %s", result.MergeBranchSHA)
@@ -59,8 +61,8 @@ func TestStartTesting_Success(t *testing.T) {
 	if updated.State != pg.EntryStateTesting {
 		t.Fatalf("expected testing state, got %s", updated.State)
 	}
-	if updated.MergeBranchName.String != "mq/42" {
-		t.Fatalf("expected merge branch mq/42 recorded, got %s", updated.MergeBranchName.String)
+	if updated.MergeBranchName.String != wantBranch {
+		t.Fatalf("expected merge branch %s recorded, got %s", wantBranch, updated.MergeBranchName.String)
 	}
 }
 
@@ -108,24 +110,27 @@ func TestStartTesting_Conflict(t *testing.T) {
 	}
 }
 
-// CleanupStaleBranches deletes mq/* branches that have no active queue entry.
+// CleanupStaleBranches deletes gitea-mq/* branches that have no active queue entry.
 func TestCleanupStaleBranches_DeletesOrphans(t *testing.T) {
 	mock, svc, ctx, repoID := setup(t)
+
+	branch10 := merge.BranchName(10)
+	branch99 := merge.BranchName(99)
 
 	// Create one active entry with a merge branch.
 	if _, err := svc.Enqueue(ctx, repoID, 10, "sha10", "main"); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.SetMergeBranch(ctx, repoID, 10, "mq/10", "mergesha10"); err != nil {
+	if err := svc.SetMergeBranch(ctx, repoID, 10, branch10, "mergesha10"); err != nil {
 		t.Fatal(err)
 	}
 
-	// Simulate branches on the remote: mq/10 (active), mq/99 (stale), main (non-mq).
+	// Simulate branches on the remote: gitea-mq/10 (active), gitea-mq/99 (stale), main (non-mq).
 	mock.ListBranchesFn = func(_ context.Context, _, _ string) ([]gitea.Branch, error) {
 		return []gitea.Branch{
 			{Name: "main"},
-			{Name: "mq/10"},
-			{Name: "mq/99"},
+			{Name: branch10},
+			{Name: branch99},
 		}, nil
 	}
 
@@ -133,13 +138,13 @@ func TestCleanupStaleBranches_DeletesOrphans(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Only mq/99 should be deleted — mq/10 is active, main is not an mq branch.
+	// Only gitea-mq/99 should be deleted — gitea-mq/10 is active, main is not an mq branch.
 	deletes := mock.CallsTo("DeleteBranch")
 	if len(deletes) != 1 {
 		t.Fatalf("expected 1 delete call, got %d", len(deletes))
 	}
-	if deletes[0].Args[2] != "mq/99" {
-		t.Fatalf("expected mq/99 deleted, got %s", deletes[0].Args[2])
+	if deletes[0].Args[2] != branch99 {
+		t.Fatalf("expected %s deleted, got %s", branch99, deletes[0].Args[2])
 	}
 }
 
@@ -147,17 +152,20 @@ func TestCleanupStaleBranches_DeletesOrphans(t *testing.T) {
 func TestCleanupStaleBranches_DeleteErrorContinues(t *testing.T) {
 	mock, svc, ctx, repoID := setup(t)
 
+	branch1 := merge.BranchName(1)
+	branch2 := merge.BranchName(2)
+
 	mock.ListBranchesFn = func(_ context.Context, _, _ string) ([]gitea.Branch, error) {
 		return []gitea.Branch{
-			{Name: "mq/1"},
-			{Name: "mq/2"},
+			{Name: branch1},
+			{Name: branch2},
 		}, nil
 	}
 
 	callCount := 0
 	mock.DeleteBranchFn = func(_ context.Context, _, _, name string) error {
 		callCount++
-		if name == "mq/1" {
+		if name == branch1 {
 			return fmt.Errorf("permission denied")
 		}
 		return nil
@@ -167,7 +175,7 @@ func TestCleanupStaleBranches_DeleteErrorContinues(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Both branches should be attempted even though mq/1 fails.
+	// Both branches should be attempted even though gitea-mq/1 fails.
 	if callCount != 2 {
 		t.Fatalf("expected 2 delete attempts, got %d", callCount)
 	}

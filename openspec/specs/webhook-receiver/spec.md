@@ -40,7 +40,7 @@ The system SHALL ignore commit status webhook events where the context is `gitea
 The system SHALL handle duplicate webhook deliveries idempotently. Processing the same event multiple times SHALL have no additional effect beyond the first processing.
 
 #### Scenario: Duplicate status event
-- **WHEN** a commit status event for `ci/build` = `success` on merge branch `mq/42` is delivered twice
+- **WHEN** a commit status event for `ci/build` = `success` on merge branch `gitea-mq/42` is delivered twice
 - **THEN** the second delivery has no additional effect — the check is already recorded as `success`
 
 ### Requirement: Route commit_status events

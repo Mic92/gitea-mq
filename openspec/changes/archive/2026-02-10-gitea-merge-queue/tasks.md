@@ -48,7 +48,7 @@ NOTE: Covered by section 2 — queue.Service operates directly on PostgreSQL via
 - [x] 4.7 Implement HTTP `GiteaClient`: `CancelAutoMerge` (`DELETE /repos/{owner}/{repo}/pulls/{index}/merge`)
 - [x] 4.8 Implement HTTP `GiteaClient`: `GetBranchProtection` (extract `status_check_contexts`, filter out `gitea-mq`)
 - [x] 4.9 Implement HTTP `GiteaClient`: `CreateBranch`, `DeleteBranch`
-- [x] 4.10 Spike: determine how to create merge branch via Gitea API (merge two refs → push as `mq/<pr>`) and implement `MergeBranches`
+- [x] 4.10 Spike: determine how to create merge branch via Gitea API (merge two refs → push as `gitea-mq/<pr>`) and implement `MergeBranches`
 - [x] 4.11 Implement HTTP `GiteaClient`: `ListBranchProtections`, `EditBranchProtection` (for auto-setup)
 - [x] 4.12 Implement HTTP `GiteaClient`: `ListWebhooks`, `CreateWebhook` (for auto-setup)
 
@@ -108,7 +108,7 @@ NOTE: Covered by section 2 — queue.Service operates directly on PostgreSQL via
 - [x] 8.2 Implement `queue.StartTesting` (create merge branch, update state)
 - [x] 8.3 Write tests for merge branch cleanup: delete branch on success/failure/cancel
 - [x] 8.4 Implement `queue.CleanupMergeBranch`
-- [x] 8.5 Write tests for stale merge branch detection on startup: orphaned `mq/*` branches → cleaned up
+- [x] 8.5 Write tests for stale merge branch detection on startup: orphaned `gitea-mq/*` branches → cleaned up
 - [x] 8.6 Implement startup cleanup scan
 
 ## 9. Web Dashboard

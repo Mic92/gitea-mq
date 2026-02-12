@@ -8,7 +8,7 @@ Gitea lacks a built-in merge queue. Without one, maintainers must manually seria
 - Integrates with Gitea's existing **"Merge when checks succeed"** (automerge) feature — no bot commands needed
 - The service registers `gitea-mq` as a required status check on branch protection; this gates Gitea's automerge
 - Discovers PRs entering automerge state by polling the Gitea API (PR timeline comments of type `pull_scheduled_merge` / `pull_cancel_scheduled_merge`)
-- For the head-of-queue PR, pushes a temporary merge branch (e.g. `mq/<pr-number>`) merging the PR into the latest target branch, and CI runs on that branch
+- For the head-of-queue PR, pushes a temporary merge branch (e.g. `gitea-mq/<pr-number>`) merging the PR into the latest target branch, and CI runs on that branch
 - When all required checks pass on the merge branch, sets the `gitea-mq` commit status to `success` on the PR's head commit — Gitea's automerge then performs the actual merge
 - On failure (check failure, timeout, merge conflict): sets `gitea-mq` to `failure`, cancels the PR's automerge via `DELETE /repos/{owner}/{repo}/pulls/{index}/merge`, and posts a comment explaining why
 - Enforces a configurable check timeout (default: 1 hour) — PRs exceeding it are removed from the queue

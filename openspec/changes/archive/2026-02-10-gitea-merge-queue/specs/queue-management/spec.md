@@ -22,7 +22,7 @@ The system SHALL remove a PR from its repository's merge queue when automerge is
 #### Scenario: Dequeue the head-of-queue PR
 - **WHEN** automerge is cancelled for PR #42 which is head-of-queue and being tested
 - **THEN** PR #42 is removed from the queue
-- **AND** the temporary merge branch `mq/42` is deleted
+- **AND** the temporary merge branch `gitea-mq/42` is deleted
 - **AND** the system advances to the next PR in the queue
 
 ### Requirement: FIFO ordering
@@ -42,16 +42,16 @@ The system SHALL test at most one PR per repository at any given time. The next 
 - **THEN** PR #20 remains in `queued` state and is not tested until PR #10 completes
 
 ### Requirement: Temporary merge branch for testing
-The system SHALL create a temporary merge branch by merging the PR's head into the latest target branch. The branch SHALL be named `mq/<pr-number>`. CI runs on this branch. The system SHALL delete the merge branch after the PR is merged, removed, or fails.
+The system SHALL create a temporary merge branch by merging the PR's head into the latest target branch. The branch SHALL be named `gitea-mq/<pr-number>`. CI runs on this branch. The system SHALL delete the merge branch after the PR is merged, removed, or fails.
 
 #### Scenario: Create merge branch for head-of-queue PR
 - **WHEN** PR #42 targeting `main` becomes head-of-queue in repo `org/app`
 - **THEN** the system fetches the latest `main` ref
-- **AND** creates branch `mq/42` containing the merge of PR #42's head into `main`
+- **AND** creates branch `gitea-mq/42` containing the merge of PR #42's head into `main`
 - **AND** the system updates the `gitea-mq` commit status to `pending` with description "Testing merge result"
 
 #### Scenario: Merge branch deleted externally during testing
-- **WHEN** the merge branch `mq/42` is deleted by someone while CI is running
+- **WHEN** the merge branch `gitea-mq/42` is deleted by someone while CI is running
 - **THEN** the system treats this as a failure
 - **AND** removes PR #42 from the queue
 - **AND** cancels automerge on PR #42
@@ -71,9 +71,9 @@ The system SHALL create a temporary merge branch by merging the PR's head into t
 The system SHALL set the `gitea-mq` commit status to `success` on the PR's head commit when all required checks pass on the merge branch. The PR SHALL remain as head-of-queue until the poller confirms Gitea has actually merged it. The system SHALL NOT advance to the next PR until the merge is confirmed.
 
 #### Scenario: All required checks pass on merge branch
-- **WHEN** all required checks for the merge branch `mq/42` report `success`
+- **WHEN** all required checks for the merge branch `gitea-mq/42` report `success`
 - **THEN** the system posts a `gitea-mq` commit status of `success` with description "Merge queue passed"
-- **AND** deletes the temporary merge branch `mq/42`
+- **AND** deletes the temporary merge branch `gitea-mq/42`
 - **AND** the PR remains head-of-queue in `success` state, waiting for Gitea's automerge to complete
 
 #### Scenario: Gitea's automerge succeeds
@@ -109,7 +109,7 @@ The system SHALL remove a PR from the merge queue when new commits are pushed to
 - **WHEN** PR #42 is head-of-queue and being tested
 - **AND** new commits are pushed to PR #42's head branch (head SHA changes)
 - **THEN** the system removes PR #42 from the queue
-- **AND** deletes the temporary merge branch `mq/42`
+- **AND** deletes the temporary merge branch `gitea-mq/42`
 - **AND** cancels automerge on PR #42
 - **AND** posts a comment explaining the PR was removed due to new commits
 - **AND** sets `gitea-mq` commit status to `error` with description "New commits pushed"

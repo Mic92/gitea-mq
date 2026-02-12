@@ -3,6 +3,7 @@ package queue_test
 import (
 	"testing"
 
+	"github.com/jogman/gitea-mq/internal/merge"
 	"github.com/jogman/gitea-mq/internal/queue"
 	"github.com/jogman/gitea-mq/internal/store/pg"
 	"github.com/jogman/gitea-mq/internal/testutil"
@@ -183,7 +184,9 @@ func TestStateLifecycleAndChecks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := svc.SetMergeBranch(ctx, repoID, 42, "mq/42", "mergesha"); err != nil {
+	wantBranch := merge.BranchName(42)
+
+	if err := svc.SetMergeBranch(ctx, repoID, 42, wantBranch, "mergesha"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -192,8 +195,8 @@ func TestStateLifecycleAndChecks(t *testing.T) {
 		t.Fatalf("expected testing state, got %s", entry.State)
 	}
 
-	if entry.MergeBranchName.String != "mq/42" {
-		t.Fatalf("expected merge branch mq/42, got %s", entry.MergeBranchName.String)
+	if entry.MergeBranchName.String != wantBranch {
+		t.Fatalf("expected merge branch %s, got %s", wantBranch, entry.MergeBranchName.String)
 	}
 
 	// Record check statuses — latest update wins.
