@@ -219,6 +219,10 @@ func TestPRDetailHeadOfQueueTesting(t *testing.T) {
 	if !strings.Contains(body, "Fix login bug") {
 		t.Error("expected PR title")
 	}
+	// PR number in h1 should link to Gitea.
+	if !strings.Contains(body, `<a href="https://gitea.example.com/org/app/pulls/42">PR #42</a>`) {
+		t.Errorf("expected PR link in heading, got:\n%s", body)
+	}
 	if !strings.Contains(body, "alice") {
 		t.Error("expected PR author")
 	}

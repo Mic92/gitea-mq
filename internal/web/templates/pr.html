@@ -14,7 +14,7 @@
     <h1>PR #{{.PrNumber}}</h1>
     <p class="empty">PR #{{.PrNumber}} is not in the merge queue.</p>
     {{else}}
-    <h1>PR #{{.PrNumber}}: {{.Title}}</h1>
+    <h1>{{if .PRURL}}<a href="{{.PRURL}}">PR #{{.PrNumber}}</a>{{else}}PR #{{.PrNumber}}{{end}}: {{.Title}}</h1>
     <div class="section">
         <table>
             <tbody>
