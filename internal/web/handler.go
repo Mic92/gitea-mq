@@ -45,33 +45,37 @@ var templates = template.Must(
 )
 
 // RelativeTime returns a human-readable relative duration between t and now,
-// e.g. "3 minutes ago". Exported so it can be unit-tested.
+// e.g. "3 minutes ago" for the past or "in 3 minutes" for the future.
+// Exported so it can be unit-tested.
 func RelativeTime(t, now time.Time) string {
+	future := t.After(now)
 	d := now.Sub(t)
 	if d < 0 {
 		d = -d
 	}
+
+	format := func(mag string) string {
+		if future {
+			return "in " + mag
+		}
+		return mag + " ago"
+	}
+
 	switch {
 	case d < 5*time.Second:
 		return "just now"
 	case d < time.Minute:
-		n := int(d.Seconds())
-		return pluralize(n, "second") + " ago"
+		return format(pluralize(int(d.Seconds()), "second"))
 	case d < time.Hour:
-		n := int(d.Minutes())
-		return pluralize(n, "minute") + " ago"
+		return format(pluralize(int(d.Minutes()), "minute"))
 	case d < 24*time.Hour:
-		n := int(d.Hours())
-		return pluralize(n, "hour") + " ago"
+		return format(pluralize(int(d.Hours()), "hour"))
 	case d < 30*24*time.Hour:
-		n := int(d.Hours() / 24)
-		return pluralize(n, "day") + " ago"
+		return format(pluralize(int(d.Hours()/24), "day"))
 	case d < 365*24*time.Hour:
-		n := int(d.Hours() / (24 * 30))
-		return pluralize(n, "month") + " ago"
+		return format(pluralize(int(d.Hours()/(24*30)), "month"))
 	default:
-		n := int(d.Hours() / (24 * 365))
-		return pluralize(n, "year") + " ago"
+		return format(pluralize(int(d.Hours()/(24*365)), "year"))
 	}
 }
 
