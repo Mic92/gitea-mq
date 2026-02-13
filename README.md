@@ -31,29 +31,52 @@ All configuration is via environment variables:
 |---|---|---|---|
 | `GITEA_MQ_GITEA_URL` | yes | — | Gitea instance URL |
 | `GITEA_MQ_GITEA_TOKEN` | yes | — | API token with repo scope |
-| `GITEA_MQ_REPOS` | yes | — | Comma-separated `owner/repo` list |
+| `GITEA_MQ_REPOS` | yes* | — | Comma-separated `owner/repo` list (not required when `GITEA_MQ_TOPIC` is set) |
+| `GITEA_MQ_TOPIC` | no | — | Discover repos by Gitea topic instead of (or in addition to) a static list |
 | `GITEA_MQ_DATABASE_URL` | yes | — | PostgreSQL connection string |
 | `GITEA_MQ_WEBHOOK_SECRET` | yes | — | Shared secret for webhook HMAC |
 | `GITEA_MQ_LISTEN_ADDR` | no | `:8080` | HTTP listen address |
 | `GITEA_MQ_WEBHOOK_PATH` | no | `/webhook` | Webhook endpoint path |
-| `GITEA_MQ_EXTERNAL_URL` | no | — | URL where Gitea can reach this service (for webhook auto-setup; without it, you must create webhooks manually) |
+| `GITEA_MQ_EXTERNAL_URL` | yes | — | URL where Gitea can reach this service (used for webhook auto-setup and commit status target URLs) |
 | `GITEA_MQ_POLL_INTERVAL` | no | `30s` | Automerge discovery poll interval |
 | `GITEA_MQ_CHECK_TIMEOUT` | no | `1h` | Timeout for required checks |
 | `GITEA_MQ_REQUIRED_CHECKS` | no | — | Fallback required CI contexts when branch protection has none (comma-separated) |
 | `GITEA_MQ_REFRESH_INTERVAL` | no | `10s` | Dashboard auto-refresh interval |
+| `GITEA_MQ_DISCOVERY_INTERVAL` | no | `5m` | How often to re-discover repos by topic (only used when `GITEA_MQ_TOPIC` is set) |
 | `GITEA_MQ_LOG_LEVEL` | no | `info` | Log level: debug, info, warn, error |
+
+## Repo selection
+
+You can tell gitea-mq which repos to manage in three ways:
+
+**Static list** — enumerate repos explicitly:
+
+```bash
+GITEA_MQ_REPOS=org/app,org/lib
+```
+
+**Topic discovery** — tag repos in Gitea with a topic (e.g. `merge-queue`) and let gitea-mq find them automatically. Any repo the API token has admin access to and that carries the topic will be picked up. Repos are re-discovered periodically, so adding or removing the topic on a repo is all you need to do.
+
+```bash
+GITEA_MQ_TOPIC=merge-queue
+```
+
+**Both** — combine a static list with topic discovery. Explicitly listed repos are always managed regardless of their topics.
+
+```bash
+GITEA_MQ_REPOS=org/critical-service
+GITEA_MQ_TOPIC=merge-queue
+```
 
 ## Auto-setup
 
 On startup, gitea-mq automatically configures each managed repository:
 
-- **Branch protection**: Adds `gitea-mq` as a required status check to all existing branch protection rules (always runs)
-- **Webhook**: Creates a webhook for `status` events pointed at the service (only if `GITEA_MQ_EXTERNAL_URL` is set)
+- **Branch protection**: Adds `gitea-mq` as a required status check to all existing branch protection rules
+- **Webhook**: Creates a webhook for `status` events pointed at the service
 
-If you set `GITEA_MQ_EXTERNAL_URL`, gitea-mq will auto-create webhooks so Gitea can push `status` events back.
-This is the externally-reachable URL of gitea-mq (e.g. `https://mq.example.com`), **not** the Gitea URL.
-Without it, branch protection is still auto-configured,
-but you must create the webhook manually in each repo (event type: `status`, pointing at `<your-mq-url>/webhook`).
+`GITEA_MQ_EXTERNAL_URL` is the externally-reachable URL of gitea-mq (e.g. `https://mq.example.com`), **not** the Gitea URL.
+It is used for webhook auto-setup and as the target URL in commit statuses (linking to the dashboard).
 
 ## CI configuration
 
@@ -74,13 +97,7 @@ gitea-mq needs to know which CI checks must pass on the merge branch before it a
 
 ## Dashboard
 
-A minimal web dashboard is served at the root path:
-
-- **`/`** — Overview of all repos and queue sizes
-- **`/repo/{owner}/{name}`** — Queue detail with PR states and check status
-- **`/healthz`** — Health check endpoint
-
-Auto-refreshes via `<meta http-equiv="refresh">` (works without JavaScript).
+A lightweight web dashboard shows queue status across all managed repos, lets you drill into individual repos to see queued PRs, and inspect check results for each PR. Auto-refreshes without JavaScript. A `/healthz` endpoint is available for monitoring.
 
 ## NixOS module
 
@@ -110,16 +127,18 @@ Auto-refreshes via `<meta http-equiv="refresh">` (works without JavaScript).
 | `package` | package | `pkgs.gitea-mq` | Package to use |
 | `giteaUrl` | string | — | Gitea instance URL |
 | `giteaTokenFile` | path | — | File containing the API token |
-| `repos` | list of strings | — | Repos to manage (`owner/name`) |
+| `repos` | list of strings | `[]` | Repos to manage (`owner/name`); optional when `topic` is set |
+| `topic` | string or null | `null` | Discover repos by Gitea topic |
 | `databaseUrl` | string | `postgres:///gitea-mq?host=/run/postgresql` | PostgreSQL connection string |
 | `webhookSecretFile` | path | — | File containing the webhook secret |
 | `listenAddr` | string | `:8080` | HTTP listen address |
 | `webhookPath` | string | `/webhook` | Webhook endpoint path |
-| `externalUrl` | string | — | URL where Gitea can reach this service (for webhook auto-setup) |
+| `externalUrl` | string | — | URL where Gitea can reach this service (for webhook auto-setup and commit status links) |
 | `pollInterval` | string | `30s` | Poll interval |
 | `checkTimeout` | string | `1h` | Check timeout |
 | `requiredChecks` | list of strings | `[]` | Fallback required CI contexts when branch protection has none |
 | `refreshInterval` | string | `10s` | Dashboard refresh interval |
+| `discoveryInterval` | string | `5m` | How often to re-discover repos by topic |
 | `logLevel` | enum | `info` | Log level |
 
 ## Development
