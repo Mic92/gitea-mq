@@ -45,6 +45,29 @@ All configuration is via environment variables:
 | `GITEA_MQ_DISCOVERY_INTERVAL` | no | `5m` | How often to re-discover repos by topic (only used when `GITEA_MQ_TOPIC` is set) |
 | `GITEA_MQ_LOG_LEVEL` | no | `info` | Log level: debug, info, warn, error |
 
+## Repo selection
+
+You can tell gitea-mq which repos to manage in three ways:
+
+**Static list** — enumerate repos explicitly:
+
+```bash
+GITEA_MQ_REPOS=org/app,org/lib
+```
+
+**Topic discovery** — tag repos in Gitea with a topic (e.g. `merge-queue`) and let gitea-mq find them automatically. Any repo the API token has admin access to and that carries the topic will be picked up. Repos are re-discovered periodically, so adding or removing the topic on a repo is all you need to do.
+
+```bash
+GITEA_MQ_TOPIC=merge-queue
+```
+
+**Both** — combine a static list with topic discovery. Explicitly listed repos are always managed regardless of their topics.
+
+```bash
+GITEA_MQ_REPOS=org/critical-service
+GITEA_MQ_TOPIC=merge-queue
+```
+
 ## Auto-setup
 
 On startup, gitea-mq automatically configures each managed repository:
