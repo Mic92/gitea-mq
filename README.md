@@ -31,7 +31,8 @@ All configuration is via environment variables:
 |---|---|---|---|
 | `GITEA_MQ_GITEA_URL` | yes | — | Gitea instance URL |
 | `GITEA_MQ_GITEA_TOKEN` | yes | — | API token with repo scope |
-| `GITEA_MQ_REPOS` | yes | — | Comma-separated `owner/repo` list |
+| `GITEA_MQ_REPOS` | yes* | — | Comma-separated `owner/repo` list (not required when `GITEA_MQ_TOPIC` is set) |
+| `GITEA_MQ_TOPIC` | no | — | Discover repos by Gitea topic instead of (or in addition to) a static list |
 | `GITEA_MQ_DATABASE_URL` | yes | — | PostgreSQL connection string |
 | `GITEA_MQ_WEBHOOK_SECRET` | yes | — | Shared secret for webhook HMAC |
 | `GITEA_MQ_LISTEN_ADDR` | no | `:8080` | HTTP listen address |
@@ -41,6 +42,7 @@ All configuration is via environment variables:
 | `GITEA_MQ_CHECK_TIMEOUT` | no | `1h` | Timeout for required checks |
 | `GITEA_MQ_REQUIRED_CHECKS` | no | — | Fallback required CI contexts when branch protection has none (comma-separated) |
 | `GITEA_MQ_REFRESH_INTERVAL` | no | `10s` | Dashboard auto-refresh interval |
+| `GITEA_MQ_DISCOVERY_INTERVAL` | no | `5m` | How often to re-discover repos by topic (only used when `GITEA_MQ_TOPIC` is set) |
 | `GITEA_MQ_LOG_LEVEL` | no | `info` | Log level: debug, info, warn, error |
 
 ## Auto-setup
@@ -76,6 +78,7 @@ A minimal web dashboard is served at the root path:
 
 - **`/`** — Overview of all repos and queue sizes
 - **`/repo/{owner}/{name}`** — Queue detail with PR states and check status
+- **`/repo/{owner}/{name}/pr/{number}`** — PR detail with check results
 - **`/healthz`** — Health check endpoint
 
 Auto-refreshes via `<meta http-equiv="refresh">` (works without JavaScript).
@@ -108,7 +111,8 @@ Auto-refreshes via `<meta http-equiv="refresh">` (works without JavaScript).
 | `package` | package | `pkgs.gitea-mq` | Package to use |
 | `giteaUrl` | string | — | Gitea instance URL |
 | `giteaTokenFile` | path | — | File containing the API token |
-| `repos` | list of strings | — | Repos to manage (`owner/name`) |
+| `repos` | list of strings | `[]` | Repos to manage (`owner/name`); optional when `topic` is set |
+| `topic` | string or null | `null` | Discover repos by Gitea topic |
 | `databaseUrl` | string | `postgres:///gitea-mq?host=/run/postgresql` | PostgreSQL connection string |
 | `webhookSecretFile` | path | — | File containing the webhook secret |
 | `listenAddr` | string | `:8080` | HTTP listen address |
@@ -118,6 +122,7 @@ Auto-refreshes via `<meta http-equiv="refresh">` (works without JavaScript).
 | `checkTimeout` | string | `1h` | Check timeout |
 | `requiredChecks` | list of strings | `[]` | Fallback required CI contexts when branch protection has none |
 | `refreshInterval` | string | `10s` | Dashboard refresh interval |
+| `discoveryInterval` | string | `5m` | How often to re-discover repos by topic |
 | `logLevel` | enum | `info` | Log level |
 
 ## Development
