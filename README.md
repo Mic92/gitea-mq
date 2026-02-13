@@ -36,7 +36,7 @@ All configuration is via environment variables:
 | `GITEA_MQ_WEBHOOK_SECRET` | yes | — | Shared secret for webhook HMAC |
 | `GITEA_MQ_LISTEN_ADDR` | no | `:8080` | HTTP listen address |
 | `GITEA_MQ_WEBHOOK_PATH` | no | `/webhook` | Webhook endpoint path |
-| `GITEA_MQ_EXTERNAL_URL` | no | — | URL where Gitea can reach this service (for webhook auto-setup; without it, you must create webhooks manually) |
+| `GITEA_MQ_EXTERNAL_URL` | yes | — | URL where Gitea can reach this service (used for webhook auto-setup and commit status target URLs) |
 | `GITEA_MQ_POLL_INTERVAL` | no | `30s` | Automerge discovery poll interval |
 | `GITEA_MQ_CHECK_TIMEOUT` | no | `1h` | Timeout for required checks |
 | `GITEA_MQ_REQUIRED_CHECKS` | no | — | Fallback required CI contexts when branch protection has none (comma-separated) |
@@ -47,13 +47,11 @@ All configuration is via environment variables:
 
 On startup, gitea-mq automatically configures each managed repository:
 
-- **Branch protection**: Adds `gitea-mq` as a required status check to all existing branch protection rules (always runs)
-- **Webhook**: Creates a webhook for `status` events pointed at the service (only if `GITEA_MQ_EXTERNAL_URL` is set)
+- **Branch protection**: Adds `gitea-mq` as a required status check to all existing branch protection rules
+- **Webhook**: Creates a webhook for `status` events pointed at the service
 
-If you set `GITEA_MQ_EXTERNAL_URL`, gitea-mq will auto-create webhooks so Gitea can push `status` events back.
-This is the externally-reachable URL of gitea-mq (e.g. `https://mq.example.com`), **not** the Gitea URL.
-Without it, branch protection is still auto-configured,
-but you must create the webhook manually in each repo (event type: `status`, pointing at `<your-mq-url>/webhook`).
+`GITEA_MQ_EXTERNAL_URL` is the externally-reachable URL of gitea-mq (e.g. `https://mq.example.com`), **not** the Gitea URL.
+It is used for webhook auto-setup and as the target URL in commit statuses (linking to the dashboard).
 
 ## CI configuration
 
@@ -115,7 +113,7 @@ Auto-refreshes via `<meta http-equiv="refresh">` (works without JavaScript).
 | `webhookSecretFile` | path | — | File containing the webhook secret |
 | `listenAddr` | string | `:8080` | HTTP listen address |
 | `webhookPath` | string | `/webhook` | Webhook endpoint path |
-| `externalUrl` | string | — | URL where Gitea can reach this service (for webhook auto-setup) |
+| `externalUrl` | string | — | URL where Gitea can reach this service (for webhook auto-setup and commit status links) |
 | `pollInterval` | string | `30s` | Poll interval |
 | `checkTimeout` | string | `1h` | Check timeout |
 | `requiredChecks` | list of strings | `[]` | Fallback required CI contexts when branch protection has none |
