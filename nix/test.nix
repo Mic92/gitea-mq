@@ -264,6 +264,14 @@ pkgs.testers.runNixOSTest {
         timeout=30,
     )
 
+    # --- Verify uploadpack.hideRefs is configured ---
+    machine.succeed(
+        "su -l gitea -s /bin/sh -c '"
+        "export HOME=/var/lib/gitea GIT_CONFIG_NOSYSTEM=1; "
+        "${pkgs.git}/bin/git config --global --get uploadpack.hideRefs | grep -q refs/heads/gitea-mq/"
+        "'"
+    )
+
     # --- Topic-based discovery test ---
     # Create a second repo with the merge-queue topic and verify it gets discovered.
     machine.succeed(
