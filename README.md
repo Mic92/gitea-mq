@@ -74,14 +74,7 @@ gitea-mq needs to know which CI checks must pass on the merge branch before it a
 
 ## Dashboard
 
-A minimal web dashboard is served at the root path:
-
-- **`/`** — Overview of all repos and queue sizes
-- **`/repo/{owner}/{name}`** — Queue detail with PR states and check status
-- **`/repo/{owner}/{name}/pr/{number}`** — PR detail with check results
-- **`/healthz`** — Health check endpoint
-
-Auto-refreshes via `<meta http-equiv="refresh">` (works without JavaScript).
+A lightweight web dashboard shows queue status across all managed repos, lets you drill into individual repos to see queued PRs, and inspect check results for each PR. Auto-refreshes without JavaScript. A `/healthz` endpoint is available for monitoring.
 
 ## NixOS module
 
