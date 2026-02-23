@@ -220,6 +220,24 @@ func (c *HTTPClient) GetPRTimeline(ctx context.Context, owner, repo string, inde
 		fmt.Sprintf("get PR #%d timeline in %s/%s", index, owner, repo))
 }
 
+// GetCombinedCommitStatus returns the combined status for a commit ref.
+// GET /repos/{owner}/{repo}/commits/{ref}/status
+func (c *HTTPClient) GetCombinedCommitStatus(ctx context.Context, owner, repo, ref string) (*CombinedStatus, error) {
+	path := fmt.Sprintf("/repos/%s/%s/commits/%s/status", owner, repo, ref)
+
+	resp, err := c.do(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var cs CombinedStatus
+	if err := c.decodeJSON(resp, &cs); err != nil {
+		return nil, fmt.Errorf("get combined status for %s in %s/%s: %w", shortSHA(ref), owner, repo, err)
+	}
+
+	return &cs, nil
+}
+
 // CreateCommitStatus posts a commit status on a specific SHA.
 // POST /repos/{owner}/{repo}/statuses/{sha}
 func (c *HTTPClient) CreateCommitStatus(ctx context.Context, owner, repo, sha string, status CommitStatus) error {

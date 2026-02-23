@@ -11,6 +11,7 @@ import (
 
 	"github.com/jogman/gitea-mq/internal/gitea"
 	"github.com/jogman/gitea-mq/internal/merge"
+	"github.com/jogman/gitea-mq/internal/monitor"
 	"github.com/jogman/gitea-mq/internal/queue"
 	"github.com/jogman/gitea-mq/internal/store/pg"
 )
@@ -25,6 +26,9 @@ type Deps struct {
 	Repo   string
 	// ExternalURL is the dashboard base URL for constructing target_url in commit statuses.
 	ExternalURL string
+	// FallbackChecks is the list of CI check contexts to require when
+	// branch protection doesn't specify any. Used to gate enqueue.
+	FallbackChecks []string
 	// SuccessTimeout is how long a PR can sit in "success" state without
 	// being merged before we consider automerge failed.
 	SuccessTimeout time.Duration
@@ -80,10 +84,56 @@ func removePR(ctx context.Context, deps *Deps, result *PollResult, entry *pg.Que
 	return nil
 }
 
+// prChecksGreen checks whether the CI statuses on a PR's head commit
+// are passing. It resolves the required checks from branch protection (or
+// fallback config), fetches the combined commit status, and evaluates them.
+// Returns true if all required checks pass, or if no CI is configured.
+func prChecksGreen(ctx context.Context, deps *Deps, pr *gitea.PR) (bool, error) {
+	targetBranch := ""
+	if pr.Base != nil {
+		targetBranch = pr.Base.Ref
+	}
+
+	requiredChecks, err := monitor.ResolveRequiredChecks(ctx, deps.Gitea, deps.Owner, deps.Repo, targetBranch, deps.FallbackChecks)
+	if err != nil {
+		return false, fmt.Errorf("resolve required checks for PR #%d: %w", pr.Index, err)
+	}
+
+	headSHA := ""
+	if pr.Head != nil {
+		headSHA = pr.Head.Sha
+	}
+
+	combined, err := deps.Gitea.GetCombinedCommitStatus(ctx, deps.Owner, deps.Repo, headSHA)
+	if err != nil {
+		return false, fmt.Errorf("get combined status for PR #%d: %w", pr.Index, err)
+	}
+
+	// Filter out gitea-mq's own statuses — we shouldn't gate on ourselves.
+	var externalStatuses []pg.CheckStatus
+	for _, s := range combined.Statuses {
+		if s.Context == "gitea-mq" {
+			continue
+		}
+		externalStatuses = append(externalStatuses, pg.CheckStatus{
+			Context: s.Context,
+			State:   gitea.MapState(s.Status),
+		})
+	}
+
+	// No required checks and no external statuses → no CI configured, allow enqueue.
+	if len(requiredChecks) == 0 && len(externalStatuses) == 0 {
+		return true, nil
+	}
+
+	result, _ := monitor.EvaluateChecks(externalStatuses, requiredChecks)
+	return result == monitor.CheckSuccess, nil
+}
+
 // PollOnce runs a single poll cycle for one repository:
 //
 //  1. Fetch all open PRs
-//  2. For each open PR: check timeline → enqueue if automerge scheduled
+//  2. For each open PR: check timeline → enqueue if automerge scheduled and CI is green
 //  3. For each queued PR: check if automerge cancelled → dequeue
 //  4. For each queued PR: check if merged → remove + advance
 //  5. For each queued PR: check if head SHA changed → remove + cancel automerge
@@ -125,6 +175,16 @@ func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 		}
 		if existing != nil {
 			continue // Already queued, no-op.
+		}
+
+		// Gate on CI checks: only enqueue once the PR's own checks are green.
+		green, err := prChecksGreen(ctx, deps, &pr)
+		if err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("check CI status for PR #%d: %w", pr.Index, err))
+			continue
+		}
+		if !green {
+			continue
 		}
 
 		// Enqueue the PR.

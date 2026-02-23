@@ -21,23 +21,24 @@ type MockClient struct {
 	// Response configurators. Set these before calling the method under test.
 	// Each returns (result, error). If nil, the method returns zero value + nil.
 
-	ListUserReposFn         func(ctx context.Context) ([]Repo, error)
-	GetRepoTopicsFn         func(ctx context.Context, owner, repo string) ([]string, error)
-	ListOpenPRsFn           func(ctx context.Context, owner, repo string) ([]PR, error)
-	GetPRFn                 func(ctx context.Context, owner, repo string, index int64) (*PR, error)
-	GetPRTimelineFn         func(ctx context.Context, owner, repo string, index int64) ([]TimelineComment, error)
-	CreateCommitStatusFn    func(ctx context.Context, owner, repo, sha string, status CommitStatus) error
-	CreateCommentFn         func(ctx context.Context, owner, repo string, index int64, body string) error
-	CancelAutoMergeFn       func(ctx context.Context, owner, repo string, index int64) error
-	GetBranchProtectionFn   func(ctx context.Context, owner, repo, branch string) (*BranchProtection, error)
-	ListBranchesFn          func(ctx context.Context, owner, repo string) ([]Branch, error)
-	CreateBranchFn          func(ctx context.Context, owner, repo, name, target string) error
-	DeleteBranchFn          func(ctx context.Context, owner, repo, name string) error
-	MergeBranchesFn         func(ctx context.Context, owner, repo, base, head, branchName string) (*MergeResult, error)
-	ListBranchProtectionsFn func(ctx context.Context, owner, repo string) ([]BranchProtection, error)
-	EditBranchProtectionFn  func(ctx context.Context, owner, repo, name string, opts EditBranchProtectionOpts) error
-	ListWebhooksFn          func(ctx context.Context, owner, repo string) ([]Webhook, error)
-	CreateWebhookFn         func(ctx context.Context, owner, repo string, opts CreateWebhookOpts) error
+	ListUserReposFn           func(ctx context.Context) ([]Repo, error)
+	GetRepoTopicsFn           func(ctx context.Context, owner, repo string) ([]string, error)
+	ListOpenPRsFn             func(ctx context.Context, owner, repo string) ([]PR, error)
+	GetPRFn                   func(ctx context.Context, owner, repo string, index int64) (*PR, error)
+	GetPRTimelineFn           func(ctx context.Context, owner, repo string, index int64) ([]TimelineComment, error)
+	GetCombinedCommitStatusFn func(ctx context.Context, owner, repo, ref string) (*CombinedStatus, error)
+	CreateCommitStatusFn      func(ctx context.Context, owner, repo, sha string, status CommitStatus) error
+	CreateCommentFn           func(ctx context.Context, owner, repo string, index int64, body string) error
+	CancelAutoMergeFn         func(ctx context.Context, owner, repo string, index int64) error
+	GetBranchProtectionFn     func(ctx context.Context, owner, repo, branch string) (*BranchProtection, error)
+	ListBranchesFn            func(ctx context.Context, owner, repo string) ([]Branch, error)
+	CreateBranchFn            func(ctx context.Context, owner, repo, name, target string) error
+	DeleteBranchFn            func(ctx context.Context, owner, repo, name string) error
+	MergeBranchesFn           func(ctx context.Context, owner, repo, base, head, branchName string) (*MergeResult, error)
+	ListBranchProtectionsFn   func(ctx context.Context, owner, repo string) ([]BranchProtection, error)
+	EditBranchProtectionFn    func(ctx context.Context, owner, repo, name string, opts EditBranchProtectionOpts) error
+	ListWebhooksFn            func(ctx context.Context, owner, repo string) ([]Webhook, error)
+	CreateWebhookFn           func(ctx context.Context, owner, repo string, opts CreateWebhookOpts) error
 }
 
 // Ensure MockClient implements Client at compile time.
@@ -121,6 +122,16 @@ func (m *MockClient) GetPRTimeline(ctx context.Context, owner, repo string, inde
 	}
 
 	return nil, nil
+}
+
+func (m *MockClient) GetCombinedCommitStatus(ctx context.Context, owner, repo, ref string) (*CombinedStatus, error) {
+	m.record("GetCombinedCommitStatus", owner, repo, ref)
+
+	if m.GetCombinedCommitStatusFn != nil {
+		return m.GetCombinedCommitStatusFn(ctx, owner, repo, ref)
+	}
+
+	return &CombinedStatus{State: "pending", SHA: ref}, nil
 }
 
 func (m *MockClient) CreateCommitStatus(ctx context.Context, owner, repo, sha string, status CommitStatus) error {

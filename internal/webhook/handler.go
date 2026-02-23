@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/jogman/gitea-mq/internal/gitea"
 	"github.com/jogman/gitea-mq/internal/monitor"
 	"github.com/jogman/gitea-mq/internal/queue"
 	"github.com/jogman/gitea-mq/internal/store/pg"
@@ -94,7 +95,7 @@ func Handler(secret string, repos RepoLookup, queueSvc *queue.Service) http.Hand
 			return
 		}
 
-		checkState := mapState(event.State)
+		checkState := gitea.MapState(event.State)
 
 		if err := monitor.ProcessCheckStatus(r.Context(), rm.Deps, entry, event.Context, checkState, event.TargetURL); err != nil {
 			slog.Error("failed to process check status", "pr", entry.PrNumber, "error", err)
@@ -131,19 +132,6 @@ func (e *statusEvent) validate() error {
 		return fmt.Errorf("missing repository")
 	}
 	return nil
-}
-
-func mapState(s string) pg.CheckState {
-	switch s {
-	case "success", "warning":
-		return pg.CheckStateSuccess
-	case "failure":
-		return pg.CheckStateFailure
-	case "error":
-		return pg.CheckStateError
-	default:
-		return pg.CheckStatePending
-	}
 }
 
 // findEntryForCommit looks up a queue entry by merge branch SHA. This is how

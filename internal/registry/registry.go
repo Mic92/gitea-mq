@@ -124,6 +124,7 @@ func (r *RepoRegistry) Add(ctx context.Context, ref config.RepoRef) error {
 		Owner:          ref.Owner,
 		Repo:           ref.Name,
 		ExternalURL:    r.deps.ExternalURL,
+		FallbackChecks: r.deps.FallbackChecks,
 		SuccessTimeout: r.deps.SuccessTimeout,
 	}
 	go poller.Run(pollerCtx, pollerDeps, r.deps.PollInterval)

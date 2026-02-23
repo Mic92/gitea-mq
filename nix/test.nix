@@ -188,6 +188,14 @@ pkgs.testers.runNixOSTest {
         f"-d '{{\"Do\": \"merge\", \"merge_when_checks_succeed\": true}}'"
     )
 
+    # Set ci/build=success on the PR head so the poller's CI gate allows enqueue.
+    machine.succeed(
+        f"curl -sf -X POST 'http://localhost:3000/api/v1/repos/testuser/testrepo/statuses/{pr_sha}' "
+        f"-H 'Authorization: token {token}' "
+        f"-H 'Content-Type: application/json' "
+        f"-d '{{\"context\": \"ci/build\", \"state\": \"success\", \"description\": \"build passed\"}}'"
+    )
+
     # Wait for the poller to detect automerge and enqueue the PR.
     # The dashboard repo page should show the PR.
     machine.wait_until_succeeds(

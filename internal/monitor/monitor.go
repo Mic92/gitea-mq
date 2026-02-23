@@ -109,6 +109,10 @@ func EvaluateChecks(statuses []pg.CheckStatus, requiredChecks []string) (CheckRe
 			return CheckWaiting, ""
 		case pg.CheckStateSuccess:
 			continue
+		default:
+			// Unknown state (e.g. empty string from deserialization bug) —
+			// treat as waiting rather than silently passing.
+			return CheckWaiting, ""
 		}
 	}
 

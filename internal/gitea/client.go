@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/jogman/gitea-mq/internal/store/pg"
 )
 
 // PR represents a pull request from the Gitea API.
@@ -142,6 +144,38 @@ type RepoPermissions struct {
 	Pull  bool `json:"pull"`
 }
 
+// CombinedStatus is the response from GET /repos/{owner}/{repo}/commits/{ref}/status.
+// Contains the latest status per context (already deduplicated by the API).
+type CombinedStatus struct {
+	State    string               `json:"state"`
+	Statuses []CommitStatusResult `json:"statuses"`
+	SHA      string               `json:"sha"`
+}
+
+// CommitStatusResult is a single status entry within a CombinedStatus response.
+type CommitStatusResult struct {
+	Context     string `json:"context"`
+	Status      string `json:"status"`
+	Description string `json:"description"`
+	TargetURL   string `json:"target_url"`
+}
+
+// MapState maps Gitea's API status strings to internal CheckState values.
+// Gitea uses states like "warning" and "skipped" that don't exist in our DB
+// enum but are passing states.
+func MapState(s string) pg.CheckState {
+	switch s {
+	case "success", "warning", "skipped":
+		return pg.CheckStateSuccess
+	case "failure":
+		return pg.CheckStateFailure
+	case "error":
+		return pg.CheckStateError
+	default:
+		return pg.CheckStatePending
+	}
+}
+
 // Client defines the Gitea API surface used by gitea-mq.
 // All methods accept a context for cancellation and return an error on failure.
 type Client interface {
@@ -164,6 +198,10 @@ type Client interface {
 	// Used to detect automerge scheduling via "pull_scheduled_merge" /
 	// "pull_cancel_scheduled_merge" comment types.
 	GetPRTimeline(ctx context.Context, owner, repo string, index int64) ([]TimelineComment, error)
+
+	// GetCombinedCommitStatus returns the combined status for a commit ref.
+	// GET /repos/{owner}/{repo}/commits/{ref}/status
+	GetCombinedCommitStatus(ctx context.Context, owner, repo, ref string) (*CombinedStatus, error)
 
 	// CreateCommitStatus posts a commit status on a specific SHA.
 	// POST /repos/{owner}/{repo}/statuses/{sha}

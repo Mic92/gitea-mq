@@ -144,10 +144,23 @@ func TestFullMergeQueueFlow(t *testing.T) {
 	webhookSecret := "test-secret"
 	webhookHandler := webhook.Handler(webhookSecret, repoMonitors, svc)
 
-	// --- Step 1: Poll detects automerge → enqueues PR, creates merge branch ---
+	// --- Step 1a: Poll while CI is still pending → PR is NOT enqueued ---
 	result, err := poller.PollOnce(ctx, pollerDeps)
 	if err != nil {
-		t.Fatalf("PollOnce: %v", err)
+		t.Fatalf("PollOnce (CI pending): %v", err)
+	}
+	if len(result.Enqueued) != 0 {
+		t.Fatalf("expected no enqueue while CI is pending, got %v", result.Enqueued)
+	}
+
+	// Set ci/build=success on PR head — CI passes after the first poll.
+	api.MustDo(t, "POST", "/repos/testuser/"+repoName+"/statuses/"+pr.Head.SHA,
+		`{"context": "ci/build", "state": "success", "description": "build passed"}`)
+
+	// --- Step 1b: Poll again with green CI → enqueues PR, creates merge branch ---
+	result, err = poller.PollOnce(ctx, pollerDeps)
+	if err != nil {
+		t.Fatalf("PollOnce (CI green): %v", err)
 	}
 	if len(result.Enqueued) != 1 || result.Enqueued[0] != pr.Number {
 		t.Fatalf("expected PR #%d enqueued, got %v (errors: %v)", pr.Number, result.Enqueued, result.Errors)

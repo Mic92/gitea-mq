@@ -541,6 +541,151 @@ func TestPollOnce_MergeBranchError_NotifiesUser(t *testing.T) {
 	}
 }
 
+// --- CI gating ---
+
+func TestPollOnce_CIPending_DoesNotEnqueue(t *testing.T) {
+	deps, mock, svc, ctx, repoID := setupPollerTest(t)
+	deps.FallbackChecks = []string{"ci/build"}
+
+	mock.ListOpenPRsFn = func(_ context.Context, _, _ string) ([]gitea.PR, error) {
+		return []gitea.PR{makePR(42, "sha42", "main")}, nil
+	}
+	mock.GetPRTimelineFn = func(_ context.Context, _, _ string, _ int64) ([]gitea.TimelineComment, error) {
+		return automergeTimeline(), nil
+	}
+	mock.GetCombinedCommitStatusFn = func(_ context.Context, _, _, _ string) (*gitea.CombinedStatus, error) {
+		return &gitea.CombinedStatus{
+			State:    "pending",
+			Statuses: []gitea.CommitStatusResult{{Context: "ci/build", Status: "pending"}},
+		}, nil
+	}
+
+	result, err := poller.PollOnce(ctx, deps)
+	if err != nil {
+		t.Fatalf("PollOnce: %v", err)
+	}
+
+	if len(result.Enqueued) != 0 {
+		t.Fatalf("expected no enqueue while CI pending, got %v", result.Enqueued)
+	}
+
+	// No status or comment should be posted when the PR was never enqueued.
+	if len(mock.CallsTo("CreateCommitStatus")) != 0 {
+		t.Fatal("should not post status for unenqueued PR")
+	}
+
+	entry, _ := svc.GetEntry(ctx, repoID, 42)
+	if entry != nil {
+		t.Fatal("PR should not be in queue while CI is pending")
+	}
+}
+
+func TestPollOnce_CIFailing_DoesNotEnqueue(t *testing.T) {
+	deps, mock, svc, ctx, repoID := setupPollerTest(t)
+	deps.FallbackChecks = []string{"ci/build"}
+
+	mock.ListOpenPRsFn = func(_ context.Context, _, _ string) ([]gitea.PR, error) {
+		return []gitea.PR{makePR(42, "sha42", "main")}, nil
+	}
+	mock.GetPRTimelineFn = func(_ context.Context, _, _ string, _ int64) ([]gitea.TimelineComment, error) {
+		return automergeTimeline(), nil
+	}
+	mock.GetCombinedCommitStatusFn = func(_ context.Context, _, _, _ string) (*gitea.CombinedStatus, error) {
+		return &gitea.CombinedStatus{
+			State:    "failure",
+			Statuses: []gitea.CommitStatusResult{{Context: "ci/build", Status: "failure"}},
+		}, nil
+	}
+
+	result, err := poller.PollOnce(ctx, deps)
+	if err != nil {
+		t.Fatalf("PollOnce: %v", err)
+	}
+
+	if len(result.Enqueued) != 0 {
+		t.Fatalf("expected no enqueue while CI failing, got %v", result.Enqueued)
+	}
+
+	// No status or comment should be posted when the PR was never enqueued.
+	if len(mock.CallsTo("CreateCommitStatus")) != 0 {
+		t.Fatal("should not post status for unenqueued PR")
+	}
+
+	entry, _ := svc.GetEntry(ctx, repoID, 42)
+	if entry != nil {
+		t.Fatal("PR should not be in queue while CI is failing")
+	}
+}
+
+func TestPollOnce_CIGreen_Enqueues(t *testing.T) {
+	deps, mock, svc, ctx, repoID := setupPollerTest(t)
+	deps.FallbackChecks = []string{"ci/build"}
+
+	mock.ListOpenPRsFn = func(_ context.Context, _, _ string) ([]gitea.PR, error) {
+		return []gitea.PR{makePR(42, "sha42", "main")}, nil
+	}
+	mock.GetPRTimelineFn = func(_ context.Context, _, _ string, _ int64) ([]gitea.TimelineComment, error) {
+		return automergeTimeline(), nil
+	}
+	mock.GetCombinedCommitStatusFn = func(_ context.Context, _, _, _ string) (*gitea.CombinedStatus, error) {
+		return &gitea.CombinedStatus{
+			State:    "success",
+			Statuses: []gitea.CommitStatusResult{{Context: "ci/build", Status: "success"}},
+		}, nil
+	}
+	mock.MergeBranchesFn = func(_ context.Context, _, _, _, _, _ string) (*gitea.MergeResult, error) {
+		return &gitea.MergeResult{SHA: "mock-merge-sha"}, nil
+	}
+
+	result, err := poller.PollOnce(ctx, deps)
+	if err != nil {
+		t.Fatalf("PollOnce: %v", err)
+	}
+	if len(result.Enqueued) != 1 || result.Enqueued[0] != 42 {
+		t.Fatalf("expected PR #42 enqueued, got %v", result.Enqueued)
+	}
+
+	entry, _ := svc.GetEntry(ctx, repoID, 42)
+	if entry == nil {
+		t.Fatal("PR #42 should be in queue")
+	}
+	if entry.State != pg.EntryStateTesting {
+		t.Fatalf("expected state=testing, got %s", entry.State)
+	}
+}
+
+func TestPollOnce_NoCIStatuses_NoBranchProtection_Enqueues(t *testing.T) {
+	deps, mock, svc, ctx, repoID := setupPollerTest(t)
+
+	mock.ListOpenPRsFn = func(_ context.Context, _, _ string) ([]gitea.PR, error) {
+		return []gitea.PR{makePR(42, "sha42", "main")}, nil
+	}
+	mock.GetPRTimelineFn = func(_ context.Context, _, _ string, _ int64) ([]gitea.TimelineComment, error) {
+		return automergeTimeline(), nil
+	}
+	// No CI statuses and no branch protection (default mock returns nil for both).
+	mock.GetCombinedCommitStatusFn = func(_ context.Context, _, _, _ string) (*gitea.CombinedStatus, error) {
+		return &gitea.CombinedStatus{State: "pending", Statuses: nil}, nil
+	}
+	mock.MergeBranchesFn = func(_ context.Context, _, _, _, _, _ string) (*gitea.MergeResult, error) {
+		return &gitea.MergeResult{SHA: "mock-merge-sha"}, nil
+	}
+
+	result, err := poller.PollOnce(ctx, deps)
+	if err != nil {
+		t.Fatalf("PollOnce: %v", err)
+	}
+
+	if len(result.Enqueued) != 1 || result.Enqueued[0] != 42 {
+		t.Fatalf("expected PR #42 enqueued when no CI configured, got %v", result.Enqueued)
+	}
+
+	entry, _ := svc.GetEntry(ctx, repoID, 42)
+	if entry == nil {
+		t.Fatal("PR #42 should be in queue when no CI is configured")
+	}
+}
+
 // --- Task 5.17: Gitea unavailability ---
 
 func TestPollOnce_GiteaUnavailable_Pauses(t *testing.T) {
