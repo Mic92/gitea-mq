@@ -78,6 +78,24 @@ On startup, gitea-mq automatically configures each managed repository:
 `GITEA_MQ_EXTERNAL_URL` is the externally-reachable URL of gitea-mq (e.g. `https://mq.example.com`), **not** the Gitea URL.
 It is used for webhook auto-setup and as the target URL in commit statuses (linking to the dashboard).
 
+## Hiding merge branches from git clients
+
+gitea-mq creates temporary branches under `gitea-mq/*` for CI testing. By default, these branches are visible to git clients and will be fetched by `git fetch`. To prevent this, you can configure Gitea's git to hide them from the ref advertisement.
+
+**NixOS**: When `services.gitea` is enabled on the same host, the NixOS module automatically configures `uploadpack.hideRefs` for you. To disable this, set:
+
+```nix
+services.gitea-mq.hideRefFromClients = false;
+```
+
+**Non-NixOS**: Run the following as the Gitea system user (the user that owns the Gitea data directory):
+
+```bash
+git config --global uploadpack.hideRefs refs/heads/gitea-mq/
+```
+
+This hides the branches from `git fetch` and `git ls-remote` but does not affect the Gitea web UI, API, or webhook-driven CI. CI systems that need to check out merge branches can still fetch them with an explicit refspec (e.g., `git fetch origin gitea-mq/123`).
+
 ## CI configuration
 
 Your CI must run on `gitea-mq/*` branches. For example, in a Woodpecker/Drone pipeline:

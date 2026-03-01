@@ -115,6 +115,24 @@ in
       default = "info";
       description = "Log level.";
     };
+
+    hideRefFromClients = lib.mkOption {
+      type = lib.types.bool;
+      default = config.services.gitea.enable;
+      defaultText = lib.literalExpression "config.services.gitea.enable";
+      description = ''
+        Hide gitea-mq/* merge branches from git client fetches by setting
+        `uploadpack.hideRefs` in Gitea's global git config.
+
+        This prevents git clients from downloading temporary merge queue
+        branches during `git fetch`. Only effective when Gitea runs on
+        the same host. Enabled automatically when `services.gitea` is enabled.
+
+        For non-NixOS deployments, run manually:
+          git config --global uploadpack.hideRefs refs/heads/gitea-mq/
+        as the Gitea system user.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -124,6 +142,28 @@ in
         message = "services.gitea-mq: at least one of 'topic' or 'repos' must be set.";
       }
     ];
+
+    # Hide gitea-mq/* branches from git fetch by configuring uploadpack.hideRefs
+    # in Gitea's global git config. This runs as the gitea user before Gitea
+    # starts, so that Gitea's git upload-pack won't advertise these refs.
+    systemd.services.gitea = lib.mkIf cfg.hideRefFromClients {
+      serviceConfig.ExecStartPre = lib.mkAfter [
+        (
+          let
+            giteaCfg = config.services.gitea;
+            hideRef = "refs/heads/gitea-mq/";
+          in
+          pkgs.writeShellScript "gitea-mq-hide-refs" ''
+            export HOME=${lib.escapeShellArg giteaCfg.stateDir}
+            export GIT_CONFIG_NOSYSTEM=1
+            # Add hideRefs if not already present (idempotent).
+            if ! ${pkgs.git}/bin/git config --global --get uploadpack.hideRefs '^${hideRef}$' >/dev/null 2>&1; then
+              ${pkgs.git}/bin/git config --global --add uploadpack.hideRefs ${hideRef}
+            fi
+          ''
+        )
+      ];
+    };
 
     systemd.services.gitea-mq = {
       description = "gitea-mq merge queue for Gitea";
