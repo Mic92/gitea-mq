@@ -121,6 +121,19 @@ pkgs.testers.runNixOSTest {
         f"-d '{{\"name\": \"testrepo\", \"auto_init\": true, \"default_branch\": \"main\"}}'"
     )
 
+    # Create a file with many lines up front (before branch protection blocks
+    # direct pushes to main). Used later by the long-timeline regression test.
+    import base64
+    big_content = base64.b64encode(
+        "\n".join(f"line {i}" for i in range(1, 101)).encode()
+    ).decode()
+    machine.succeed(
+        f"curl -sf -X POST 'http://localhost:3000/api/v1/repos/testuser/testrepo/contents/big.txt' "
+        f"-H 'Authorization: token {token}' "
+        f"-H 'Content-Type: application/json' "
+        f"-d '{{\"content\": \"{big_content}\", \"message\": \"add big file\"}}'"
+    )
+
     machine.succeed(
         f"curl -sf -X POST http://localhost:3000/api/v1/repos/testuser/testrepo/branch_protections "
         f"-H 'Authorization: token {token}' "
@@ -278,6 +291,109 @@ pkgs.testers.runNixOSTest {
         "export HOME=/var/lib/gitea GIT_CONFIG_NOSYSTEM=1; "
         "${pkgs.git}/bin/git config --global --get uploadpack.hideRefs | grep -q refs/heads/gitea-mq/"
         "'"
+    )
+
+    # --- Regression test: long timeline with filtered events ---
+    # Gitea's timeline API filters CommentTypeCode entries (inline code review
+    # comments) AFTER applying the SQL LIMIT. This means a page can return
+    # fewer items than the limit even when more pages exist. If the paginator
+    # uses len(items) < limit as its stop condition, it will miss later pages
+    # containing the automerge event.
+    #
+    # This test creates a PR with many inline code review comments so that the
+    # automerge event lands on a later page, then verifies the poller still
+    # picks it up.
+
+    # Create a branch that modifies big.txt (created during setup above).
+    modified_content = base64.b64encode(
+        "\n".join(f"modified line {i}" for i in range(1, 101)).encode()
+    ).decode()
+    file_info = json.loads(machine.succeed(
+        f"curl -sf 'http://localhost:3000/api/v1/repos/testuser/testrepo/contents/big.txt' "
+        f"-H 'Authorization: token {token}'"
+    ))
+    file_sha = file_info["sha"]
+    machine.succeed(
+        f"curl -sf -X PUT 'http://localhost:3000/api/v1/repos/testuser/testrepo/contents/big.txt' "
+        f"-H 'Authorization: token {token}' "
+        f"-H 'Content-Type: application/json' "
+        f"-d '{{\"content\": \"{modified_content}\", \"message\": \"modify big file\", \"sha\": \"{file_sha}\", \"new_branch\": \"long-timeline\"}}'"
+    )
+
+    # Create PR from long-timeline → main.
+    pr2_json = machine.succeed(
+        f"curl -sf -X POST 'http://localhost:3000/api/v1/repos/testuser/testrepo/pulls' "
+        f"-H 'Authorization: token {token}' "
+        f"-H 'Content-Type: application/json' "
+        f"-d '{{\"title\": \"Long timeline PR\", \"head\": \"long-timeline\", \"base\": \"main\"}}'"
+    )
+    pr2 = json.loads(pr2_json)
+    pr2_number = pr2["number"]
+    pr2_sha = pr2["head"]["sha"]
+
+    # Submit a code review with many inline comments to generate
+    # CommentTypeCode timeline entries that Gitea filters from the API
+    # response (producing short pages in the paginated timeline).
+    review_comments = [
+        {
+            "path": "big.txt",
+            "body": f"review comment on line {i}",
+            "new_position": i,
+            "old_position": 0,
+        }
+        for i in range(1, 61)
+    ]
+    import json as json_mod
+    review_body = json_mod.dumps({
+        "event": "COMMENT",
+        "body": "Code review with many inline comments",
+        "commit_id": pr2_sha,
+        "comments": review_comments,
+    })
+    machine.succeed(
+        f"curl -sf -X POST 'http://localhost:3000/api/v1/repos/testuser/testrepo/pulls/{pr2_number}/reviews' "
+        f"-H 'Authorization: token {token}' "
+        f"-H 'Content-Type: application/json' "
+        f"-d '{review_body}'"
+    )
+
+    # Verify the timeline has many entries but the paginated first page
+    # returns fewer than 50 (confirming the filtering is active).
+    unpaginated = json.loads(machine.succeed(
+        f"curl -sf 'http://localhost:3000/api/v1/repos/testuser/testrepo/issues/{pr2_number}/timeline' "
+        f"-H 'Authorization: token {token}'"
+    ))
+    page1 = json.loads(machine.succeed(
+        f"curl -sf 'http://localhost:3000/api/v1/repos/testuser/testrepo/issues/{pr2_number}/timeline?page=1&limit=50' "
+        f"-H 'Authorization: token {token}'"
+    ))
+    assert len(page1) < 50, (
+        f"expected page 1 to have fewer than 50 items due to CommentTypeCode "
+        f"filtering, got {len(page1)} (total unpaginated: {len(unpaginated)})"
+    )
+
+    # NOW schedule automerge — the automerge event will be at the end of the
+    # timeline, past the filtered code review entries.
+    machine.succeed(
+        f"curl -sf -X POST 'http://localhost:3000/api/v1/repos/testuser/testrepo/pulls/{pr2_number}/merge' "
+        f"-H 'Authorization: token {token}' "
+        f"-H 'Content-Type: application/json' "
+        f"-d '{{\"Do\": \"merge\", \"merge_when_checks_succeed\": true}}'"
+    )
+
+    # Set ci/build=success on PR head so the poller's CI gate allows enqueue.
+    machine.succeed(
+        f"curl -sf -X POST 'http://localhost:3000/api/v1/repos/testuser/testrepo/statuses/{pr2_sha}' "
+        f"-H 'Authorization: token {token}' "
+        f"-H 'Content-Type: application/json' "
+        f"-d '{{\"context\": \"ci/build\", \"state\": \"success\", \"description\": \"build passed\"}}'"
+    )
+
+    # The poller must find the automerge event despite it being on a later
+    # page of the timeline. Wait for the PR to appear on the dashboard.
+    machine.wait_until_succeeds(
+        f"curl -sf http://localhost:8080/repo/testuser/testrepo | grep -q 'PR #{pr2_number}'",
+        timeout=30,
     )
 
     # --- Topic-based discovery test ---

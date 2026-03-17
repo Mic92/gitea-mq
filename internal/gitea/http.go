@@ -137,6 +137,7 @@ func IsNotFound(err error) bool {
 
 // paginate fetches all pages of a paginated Gitea API endpoint.
 // pathFmt must contain a single %d verb for the page number (e.g. "/user/repos?page=%d&limit=50").
+// Stops when a page returns fewer items than the limit (50).
 func paginate[T any](ctx context.Context, c *HTTPClient, pathFmt, errLabel string) ([]T, error) {
 	var all []T
 
@@ -158,6 +159,34 @@ func paginate[T any](ctx context.Context, c *HTTPClient, pathFmt, errLabel strin
 		if len(items) < 50 {
 			return all, nil
 		}
+	}
+}
+
+// paginateAll is like paginate but keeps fetching until an empty page is
+// returned. Use this for endpoints where Gitea filters items after applying
+// the SQL LIMIT (e.g. the timeline endpoint filters CommentTypeCode entries),
+// which can return fewer items than the limit on non-final pages.
+func paginateAll[T any](ctx context.Context, c *HTTPClient, pathFmt, errLabel string) ([]T, error) {
+	var all []T
+
+	for page := 1; ; page++ {
+		path := fmt.Sprintf(pathFmt, page)
+
+		resp, err := c.do(ctx, http.MethodGet, path, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		var items []T
+		if err := c.decodeJSON(resp, &items); err != nil {
+			return nil, fmt.Errorf("%s: %w", errLabel, err)
+		}
+
+		if len(items) == 0 {
+			return all, nil
+		}
+
+		all = append(all, items...)
 	}
 }
 
@@ -215,7 +244,7 @@ func (c *HTTPClient) GetPR(ctx context.Context, owner, repo string, index int64)
 // GetPRTimeline returns timeline comments for a pull request.
 // Handles pagination. The endpoint is GET /repos/{owner}/{repo}/issues/{index}/timeline.
 func (c *HTTPClient) GetPRTimeline(ctx context.Context, owner, repo string, index int64) ([]TimelineComment, error) {
-	return paginate[TimelineComment](ctx, c,
+	return paginateAll[TimelineComment](ctx, c,
 		fmt.Sprintf("/repos/%s/%s/issues/%d/timeline?page=%%d&limit=50", owner, repo, index),
 		fmt.Sprintf("get PR #%d timeline in %s/%s", index, owner, repo))
 }
