@@ -261,6 +261,15 @@ pkgs.testers.runNixOSTest {
         timeout=30,
     )
 
+    # Verify the merge branch CI status was mirrored to the PR head
+    # with a prefixed context.
+    machine.wait_until_succeeds(
+        f"curl -sf 'http://localhost:3000/api/v1/repos/testuser/testrepo/statuses/{pr_sha}' "
+        f"-H 'Authorization: token {token}' "
+        f"| jq -e '.[] | select(.context == \"gitea-mq/ci/build\" and .status == \"success\" and .description == \"build passed\")'",
+        timeout=30,
+    )
+
     # Also set ci/build=success on the PR head so Gitea's automerge sees
     # all required checks passing on the PR itself.
     machine.succeed(
