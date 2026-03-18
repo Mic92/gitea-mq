@@ -1,5 +1,6 @@
 {
   lib,
+  stdenv,
   buildGoModule,
   postgresql,
   gitea,
@@ -20,9 +21,10 @@ buildGoModule {
       ./../internal
     ];
   };
-  subPackages = [ "cmd/gitea-mq" ];
+  # Don't run E2E tests on macOS
+  subPackages = lib.optionals stdenv.hostPlatform.isDarwin [ "cmd/gitea-mq" ];
   inherit vendorHash;
-  nativeCheckInputs = [
+  nativeCheckInputs = lib.optionals stdenv.hostPlatform.isLinux [
     postgresql
     gitea
     git
