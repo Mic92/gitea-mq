@@ -95,6 +95,18 @@ func Handler(secret string, repos RepoLookup, queueSvc *queue.Service) http.Hand
 			return
 		}
 
+		// Mirror the status to the PR head commit with a prefixed context
+		// so users can see merge queue CI progress directly on the PR page.
+		mirrorStatus := gitea.CommitStatus{
+			Context:     "gitea-mq/" + event.Context,
+			State:       event.State,
+			Description: event.Description,
+			TargetURL:   event.TargetURL,
+		}
+		if err := rm.Deps.Gitea.CreateCommitStatus(r.Context(), rm.Deps.Owner, rm.Deps.Repo, entry.PrHeadSha, mirrorStatus); err != nil {
+			slog.Warn("failed to mirror status to PR head", "pr", entry.PrNumber, "context", mirrorStatus.Context, "error", err)
+		}
+
 		checkState := gitea.MapState(event.State)
 
 		if err := monitor.ProcessCheckStatus(r.Context(), rm.Deps, entry, event.Context, checkState, event.TargetURL); err != nil {
@@ -109,11 +121,12 @@ func Handler(secret string, repos RepoLookup, queueSvc *queue.Service) http.Hand
 
 // statusEvent is the subset of Gitea's commit_status webhook payload we need.
 type statusEvent struct {
-	SHA        string `json:"sha"`
-	Context    string `json:"context"`
-	State      string `json:"state"` // "pending", "success", "failure", "error"
-	TargetURL  string `json:"target_url"`
-	Repository struct {
+	SHA         string `json:"sha"`
+	Context     string `json:"context"`
+	State       string `json:"state"` // "pending", "success", "failure", "error"
+	Description string `json:"description"`
+	TargetURL   string `json:"target_url"`
+	Repository  struct {
 		FullName string `json:"full_name"` // "owner/repo"
 	} `json:"repository"`
 }
