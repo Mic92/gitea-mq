@@ -75,48 +75,49 @@ func ResolveRequiredChecks(ctx context.Context, giteaClient gitea.Client, owner,
 
 // EvaluateChecks compares recorded check statuses against required checks.
 // Returns CheckSuccess if all required pass, CheckFailure if any required
-// failed, CheckWaiting otherwise.
+// failed, CheckWaiting otherwise. The second string is the failed check name,
+// and the third is its target URL (both empty when result is not CheckFailure).
 //
 // If requiredChecks is empty, any single success status is sufficient.
-func EvaluateChecks(statuses []pg.CheckStatus, requiredChecks []string) (CheckResult, string) {
+func EvaluateChecks(statuses []pg.CheckStatus, requiredChecks []string) (CheckResult, string, string) {
 	if len(requiredChecks) == 0 {
 		// Any single success suffices.
 		for _, s := range statuses {
 			if s.State == pg.CheckStateSuccess {
-				return CheckSuccess, ""
+				return CheckSuccess, "", ""
 			}
 		}
 
-		return CheckWaiting, ""
+		return CheckWaiting, "", ""
 	}
 
 	// Build a lookup of latest status per context.
-	statusMap := make(map[string]pg.CheckState, len(statuses))
+	statusMap := make(map[string]pg.CheckStatus, len(statuses))
 	for _, s := range statuses {
-		statusMap[s.Context] = s.State
+		statusMap[s.Context] = s
 	}
 
 	for _, req := range requiredChecks {
-		state, ok := statusMap[req]
+		cs, ok := statusMap[req]
 		if !ok {
-			return CheckWaiting, "" // Not yet reported.
+			return CheckWaiting, "", "" // Not yet reported.
 		}
 
-		switch state {
+		switch cs.State {
 		case pg.CheckStateFailure, pg.CheckStateError:
-			return CheckFailure, req
+			return CheckFailure, req, cs.TargetUrl
 		case pg.CheckStatePending:
-			return CheckWaiting, ""
+			return CheckWaiting, "", ""
 		case pg.CheckStateSuccess:
 			continue
 		default:
 			// Unknown state (e.g. empty string from deserialization bug) —
 			// treat as waiting rather than silently passing.
-			return CheckWaiting, ""
+			return CheckWaiting, "", ""
 		}
 	}
 
-	return CheckSuccess, ""
+	return CheckSuccess, "", ""
 }
 
 // CheckTimeout returns true if the entry has exceeded the check timeout.
@@ -155,13 +156,19 @@ func HandleSuccess(ctx context.Context, deps *Deps, entry *pg.QueueEntry) error 
 
 // HandleFailure processes a check failure for the head-of-queue.
 // Sets gitea-mq to failure, cancels automerge, posts comment, deletes merge branch, advances.
-func HandleFailure(ctx context.Context, deps *Deps, entry *pg.QueueEntry, failedCheck string) error {
+// When targetURL is non-empty, the check name in the comment is formatted as a markdown link.
+func HandleFailure(ctx context.Context, deps *Deps, entry *pg.QueueEntry, failedCheck, targetURL string) error {
 	slog.Info("check failed", "pr", entry.PrNumber, "check", failedCheck)
 
 	desc := fmt.Sprintf("Check failed: %s", failedCheck)
 
+	checkRef := failedCheck
+	if targetURL != "" {
+		checkRef = fmt.Sprintf("[%s](%s)", failedCheck, targetURL)
+	}
+
 	return removeFromQueue(ctx, deps, entry, "failure", desc,
-		fmt.Sprintf("❌ Removed from merge queue: %s", desc))
+		fmt.Sprintf("❌ Removed from merge queue: Check failed: %s", checkRef))
 }
 
 // HandleTimeout processes a check timeout for the head-of-queue.
@@ -225,13 +232,13 @@ func ProcessCheckStatus(ctx context.Context, deps *Deps, entry *pg.QueueEntry, c
 	}
 
 	// Evaluate.
-	result, failedCheck := EvaluateChecks(statuses, requiredChecks)
+	result, failedCheck, failedURL := EvaluateChecks(statuses, requiredChecks)
 
 	switch result {
 	case CheckSuccess:
 		return HandleSuccess(ctx, deps, entry)
 	case CheckFailure:
-		return HandleFailure(ctx, deps, entry, failedCheck)
+		return HandleFailure(ctx, deps, entry, failedCheck, failedURL)
 	case CheckWaiting:
 		// Still waiting for more checks. Check timeout.
 		if CheckTimeout(entry, deps.CheckTimeout) {

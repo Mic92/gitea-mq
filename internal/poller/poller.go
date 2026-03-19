@@ -126,7 +126,7 @@ func prChecksGreen(ctx context.Context, deps *Deps, pr *gitea.PR) (bool, error) 
 		return true, nil
 	}
 
-	result, _ := monitor.EvaluateChecks(externalStatuses, requiredChecks)
+	result, _, _ := monitor.EvaluateChecks(externalStatuses, requiredChecks)
 	return result == monitor.CheckSuccess, nil
 }
 
