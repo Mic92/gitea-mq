@@ -3,7 +3,7 @@ module github.com/jogman/gitea-mq
 go 1.25.5
 
 require (
-	github.com/jackc/pgx/v5 v5.8.0
+	github.com/jackc/pgx/v5 v5.9.1
 	github.com/pressly/goose/v3 v3.27.0
 )
 
