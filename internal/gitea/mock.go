@@ -21,8 +21,7 @@ type MockClient struct {
 	// Response configurators. Set these before calling the method under test.
 	// Each returns (result, error). If nil, the method returns zero value + nil.
 
-	ListUserReposFn           func(ctx context.Context) ([]Repo, error)
-	GetRepoTopicsFn           func(ctx context.Context, owner, repo string) ([]string, error)
+	SearchReposByTopicFn      func(ctx context.Context, topic string) ([]Repo, error)
 	ListOpenPRsFn             func(ctx context.Context, owner, repo string) ([]PR, error)
 	GetPRFn                   func(ctx context.Context, owner, repo string, index int64) (*PR, error)
 	GetPRTimelineFn           func(ctx context.Context, owner, repo string, index int64) ([]TimelineComment, error)
@@ -74,21 +73,11 @@ func (m *MockClient) Reset() {
 	m.Calls = nil
 }
 
-func (m *MockClient) ListUserRepos(ctx context.Context) ([]Repo, error) {
-	m.record("ListUserRepos")
+func (m *MockClient) SearchReposByTopic(ctx context.Context, topic string) ([]Repo, error) {
+	m.record("SearchReposByTopic", topic)
 
-	if m.ListUserReposFn != nil {
-		return m.ListUserReposFn(ctx)
-	}
-
-	return nil, nil
-}
-
-func (m *MockClient) GetRepoTopics(ctx context.Context, owner, repo string) ([]string, error) {
-	m.record("GetRepoTopics", owner, repo)
-
-	if m.GetRepoTopicsFn != nil {
-		return m.GetRepoTopicsFn(ctx, owner, repo)
+	if m.SearchReposByTopicFn != nil {
+		return m.SearchReposByTopicFn(ctx, topic)
 	}
 
 	return nil, nil

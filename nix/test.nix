@@ -414,5 +414,36 @@ pkgs.testers.runNixOSTest {
         "curl -sf http://localhost:8080/ | grep -q 'testuser/discovered-repo'",
         timeout=30,
     )
+
+    # When gitea-mq is a Gitea site admin, it should discover all repos
+    # with the configured topic — even ones it isn't a collaborator on.
+    #
+    # This test creates a repo owned by a different user with the
+    # merge-queue topic and verifies discovery picks it up.
+
+    # Create a second (non-admin) user via the Gitea CLI.
+    machine.succeed(
+        "su -l gitea -c '"
+        "GITEA_WORK_DIR=/var/lib/gitea gitea admin user create --username otheruser --password otherpass123 --email other@test.com"
+        "'"
+    )
+
+    # Admin creates a repo under otheruser via the admin API.
+    machine.succeed(
+        f"curl -sf -X POST http://localhost:3000/api/v1/admin/users/otheruser/repos "
+        f"-H 'Authorization: token {token}' "
+        f"-H 'Content-Type: application/json' "
+        f"-d '{{\"name\": \"other-repo\", \"auto_init\": true, \"default_branch\": \"main\"}}'"
+    )
+    machine.succeed(
+        f"curl -sf -X PUT 'http://localhost:3000/api/v1/repos/otheruser/other-repo/topics/merge-queue' "
+        f"-H 'Authorization: token {token}'"
+    )
+
+    # The admin's gitea-mq should discover otheruser/other-repo via the topic.
+    machine.wait_until_succeeds(
+        "curl -sf http://localhost:8080/ | grep -q 'otheruser/other-repo'",
+        timeout=60,
+    )
   '';
 }
