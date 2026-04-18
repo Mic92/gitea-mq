@@ -190,30 +190,35 @@ func paginateAll[T any](ctx context.Context, c *HTTPClient, pathFmt, errLabel st
 	}
 }
 
-// ListUserRepos returns all repositories accessible to the authenticated user.
-// Handles pagination.
-func (c *HTTPClient) ListUserRepos(ctx context.Context) ([]Repo, error) {
-	return paginate[Repo](ctx, c, "/user/repos?page=%d&limit=50", "list user repos")
-}
+// SearchReposByTopic returns all repositories with the given topic.
+// Uses the search endpoint which, for site admins, returns repos across the
+// entire instance — not just repos the user owns or collaborates on.
+// The /repos/search endpoint wraps results in {"ok": true, "data": [...]},
+// so we can't use the generic paginate helper.
+func (c *HTTPClient) SearchReposByTopic(ctx context.Context, topic string) ([]Repo, error) {
+	var all []Repo
 
-// GetRepoTopics returns the topics for a repository.
-// Gitea doesn't include topics in the repo listing, so this needs a separate call.
-func (c *HTTPClient) GetRepoTopics(ctx context.Context, owner, repo string) ([]string, error) {
-	path := fmt.Sprintf("/repos/%s/%s/topics", owner, repo)
+	for page := 1; ; page++ {
+		path := fmt.Sprintf("/repos/search?q=%s&topic=true&page=%d&limit=50", topic, page)
 
-	resp, err := c.do(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
+		resp, err := c.do(ctx, http.MethodGet, path, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		var result struct {
+			Data []Repo `json:"data"`
+		}
+		if err := c.decodeJSON(resp, &result); err != nil {
+			return nil, fmt.Errorf("search repos by topic %s: %w", topic, err)
+		}
+
+		if len(result.Data) == 0 {
+			return all, nil
+		}
+
+		all = append(all, result.Data...)
 	}
-
-	var result struct {
-		Topics []string `json:"topics"`
-	}
-	if err := c.decodeJSON(resp, &result); err != nil {
-		return nil, fmt.Errorf("get topics for %s/%s: %w", owner, repo, err)
-	}
-
-	return result.Topics, nil
 }
 
 // ListOpenPRs returns all open pull requests for a repository.

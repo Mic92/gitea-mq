@@ -179,14 +179,11 @@ func MapState(s string) pg.CheckState {
 // Client defines the Gitea API surface used by gitea-mq.
 // All methods accept a context for cancellation and return an error on failure.
 type Client interface {
-	// ListUserRepos returns all repositories accessible to the authenticated user.
-	// Handles pagination internally.
-	// GET /user/repos
-	ListUserRepos(ctx context.Context) ([]Repo, error)
-
-	// GetRepoTopics returns the topics for a repository.
-	// GET /repos/{owner}/{repo}/topics
-	GetRepoTopics(ctx context.Context, owner, repo string) ([]string, error)
+	// SearchReposByTopic returns all repositories with the given topic.
+	// Uses the search endpoint which, for site admins, returns repos across the
+	// entire instance — not just repos the user owns or collaborates on.
+	// GET /repos/search?q={topic}&topic=true
+	SearchReposByTopic(ctx context.Context, topic string) ([]Repo, error)
 
 	// ListOpenPRs returns all open pull requests for a repository.
 	ListOpenPRs(ctx context.Context, owner, repo string) ([]PR, error)

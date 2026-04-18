@@ -6,7 +6,6 @@ package discovery
 import (
 	"context"
 	"log/slog"
-	"slices"
 	"time"
 
 	"github.com/jogman/gitea-mq/internal/config"
@@ -22,38 +21,23 @@ type Deps struct {
 	ExplicitRepos []config.RepoRef
 }
 
-// DiscoverOnce runs a single discovery cycle: lists repos, fetches topics,
-// filters by topic + admin access, merges with explicit repos, and reconciles
+// DiscoverOnce runs a single discovery cycle: searches repos by topic,
+// filters by admin access, merges with explicit repos, and reconciles
 // the registry.
 func DiscoverOnce(ctx context.Context, deps *Deps) error {
-	repos, err := deps.Gitea.ListUserRepos(ctx)
+	repos, err := deps.Gitea.SearchReposByTopic(ctx, deps.Topic)
 	if err != nil {
-		slog.Warn("discovery: failed to list user repos", "error", err)
+		slog.Warn("discovery: failed to search repos by topic", "error", err)
 		return err
 	}
 
 	// Build the desired set from topic-discovered repos.
-	// Track repos where topic fetch failed so we don't remove them
-	// from the managed set (conservative: keep on partial failure).
 	desired := make(map[string]config.RepoRef)
-	topicFetchFailed := make(map[string]struct{})
 
 	for _, repo := range repos {
 		if !repo.Permissions.Admin {
 			slog.Debug("discovery: skipping repo without admin access",
 				"repo", repo.FullName)
-			continue
-		}
-
-		topics, err := deps.Gitea.GetRepoTopics(ctx, repo.Owner.Login, repo.Name)
-		if err != nil {
-			slog.Warn("discovery: failed to fetch topics, skipping repo",
-				"repo", repo.FullName, "error", err)
-			topicFetchFailed[repo.FullName] = struct{}{}
-			continue
-		}
-
-		if !slices.Contains(topics, deps.Topic) {
 			continue
 		}
 
@@ -85,12 +69,6 @@ func DiscoverOnce(ctx context.Context, deps *Deps) error {
 	for key := range deps.Registry.Keys() {
 		if _, inDesired := desired[key]; !inDesired {
 			if _, isExplicit := explicitSet[key]; isExplicit {
-				continue
-			}
-			// Don't remove repos whose topic fetch failed — they might
-			// still have the topic, we just couldn't verify.
-			if _, failed := topicFetchFailed[key]; failed {
-				slog.Debug("discovery: keeping repo with failed topic fetch", "repo", key)
 				continue
 			}
 			slog.Info("discovery: removing repo", "repo", key)
