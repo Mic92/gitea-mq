@@ -126,6 +126,135 @@ func TestStartTesting_Conflict(t *testing.T) {
 	}
 }
 
+// StartTesting clears stale gitea-mq/* mirrored statuses from a previous merge
+// queue attempt so they don't show outdated results while new CI runs.
+func TestStartTesting_ClearsStaleStatuses(t *testing.T) {
+	mock, svc, ctx, repoID := setup(t)
+
+	mock.MergeBranchesFn = func(_ context.Context, _, _, _, _, _ string) (*gitea.MergeResult, error) {
+		return &gitea.MergeResult{SHA: "mergesha456"}, nil
+	}
+
+	// Simulate stale gitea-mq/* statuses from a previous merge queue attempt.
+	mock.GetCombinedCommitStatusFn = func(_ context.Context, _, _, ref string) (*gitea.CombinedStatus, error) {
+		return &gitea.CombinedStatus{
+			SHA:   ref,
+			State: "failure",
+			Statuses: []gitea.CommitStatusResult{
+				{Context: "gitea-mq/ci/build", Status: "success"},
+				{Context: "gitea-mq/ci/lint", Status: "failure"},
+				{Context: "gitea-mq/ci/test", Status: "pending", Description: "test running"}, // already pending with different desc
+				{Context: "gitea-mq", Status: "failure"},                                      // overwritten by StartTesting's own status
+				{Context: "ci/build", Status: "success"},                                      // non-MQ status, should be left alone
+			},
+		}, nil
+	}
+
+	if _, err := svc.Enqueue(ctx, repoID, 42, "prsha", "main"); err != nil {
+		t.Fatal(err)
+	}
+	entry, _ := svc.GetEntry(ctx, repoID, 42)
+
+	result, err := merge.StartTesting(ctx, mock, svc, "org", "app", repoID, entry, "https://mq.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Removed {
+		t.Fatal("expected PR to enter testing, not be removed")
+	}
+
+	statusCalls := mock.CallsTo("CreateCommitStatus")
+
+	clearedContexts := make(map[string]bool)
+	var testingStatusPosted bool
+	for _, call := range statusCalls {
+		sha := call.Args[2].(string)
+		status := call.Args[3].(gitea.CommitStatus)
+
+		if sha != "prsha" {
+			t.Fatalf("expected status on prsha, got %s", sha)
+		}
+
+		if status.Context == "gitea-mq" && status.Description == "Testing merge result" {
+			testingStatusPosted = true
+			continue
+		}
+
+		if status.State == "pending" && status.Description == "From a previous merge queue attempt" {
+			clearedContexts[status.Context] = true
+		}
+	}
+
+	if !testingStatusPosted {
+		t.Fatal("expected 'Testing merge result' status to be posted")
+	}
+	if !clearedContexts["gitea-mq/ci/build"] {
+		t.Fatal("expected stale gitea-mq/ci/build to be reset to pending")
+	}
+	if !clearedContexts["gitea-mq/ci/lint"] {
+		t.Fatal("expected stale gitea-mq/ci/lint to be reset to pending")
+	}
+	if !clearedContexts["gitea-mq/ci/test"] {
+		t.Fatal("expected stale gitea-mq/ci/test to be reset to pending even though it was already pending")
+	}
+
+	// Non-MQ statuses must not be touched.
+	for _, call := range statusCalls {
+		status := call.Args[3].(gitea.CommitStatus)
+		if status.Context == "ci/build" {
+			t.Fatal("should not touch non-MQ status ci/build")
+		}
+	}
+}
+
+// StartTesting works normally when there are no stale gitea-mq/* statuses to clear.
+func TestStartTesting_NoStaleStatuses(t *testing.T) {
+	mock, svc, ctx, repoID := setup(t)
+
+	mock.MergeBranchesFn = func(_ context.Context, _, _, _, _, _ string) (*gitea.MergeResult, error) {
+		return &gitea.MergeResult{SHA: "mergesha789"}, nil
+	}
+
+	// No gitea-mq/* statuses exist — fresh PR entering the queue for the first time.
+	mock.GetCombinedCommitStatusFn = func(_ context.Context, _, _, ref string) (*gitea.CombinedStatus, error) {
+		return &gitea.CombinedStatus{
+			SHA:   ref,
+			State: "success",
+			Statuses: []gitea.CommitStatusResult{
+				{Context: "ci/build", Status: "success"},
+			},
+		}, nil
+	}
+
+	if _, err := svc.Enqueue(ctx, repoID, 42, "prsha", "main"); err != nil {
+		t.Fatal(err)
+	}
+	entry, _ := svc.GetEntry(ctx, repoID, 42)
+
+	result, err := merge.StartTesting(ctx, mock, svc, "org", "app", repoID, entry, "https://mq.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Removed {
+		t.Fatal("expected PR to enter testing, not be removed")
+	}
+
+	// Verify GetCombinedCommitStatus was called to check for stale statuses.
+	if len(mock.CallsTo("GetCombinedCommitStatus")) != 1 {
+		t.Fatalf("expected GetCombinedCommitStatus to be called, got %d calls", len(mock.CallsTo("GetCombinedCommitStatus")))
+	}
+
+	// Only the normal "Testing merge result" status should be posted.
+	statusCalls := mock.CallsTo("CreateCommitStatus")
+	if len(statusCalls) != 1 {
+		t.Fatalf("expected 1 CreateCommitStatus call, got %d", len(statusCalls))
+	}
+	status := statusCalls[0].Args[3].(gitea.CommitStatus)
+	if status.Context != "gitea-mq" || status.Description != "Testing merge result" {
+		t.Fatalf("expected 'Testing merge result' status, got %+v", status)
+	}
+}
+
 // CleanupStaleBranches deletes gitea-mq/* branches that have no active queue entry.
 func TestCleanupStaleBranches_DeletesOrphans(t *testing.T) {
 	mock, svc, ctx, repoID := setup(t)

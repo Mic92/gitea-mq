@@ -156,6 +156,56 @@ func TestProcessCheckStatus_Partial_StaysWaiting(t *testing.T) {
 	}
 }
 
+// On success, stale gitea-mq/* statuses (pending with the StaleMirrorDescription)
+// are set to skipped, while other pending statuses and non-pending statuses are
+// left alone.
+func TestProcessCheckStatus_Success_SkipsStaleMirroredStatuses(t *testing.T) {
+	deps, mock, svc, ctx, repoID := setupMonitorTest(t)
+	withBranchProtection(mock, "gitea-mq", "ci/build")
+	enqueueTesting(t, svc, ctx, repoID, 42)
+
+	// Simulate stale gitea-mq/* statuses on the PR head from a previous attempt.
+	mock.GetCombinedCommitStatusFn = func(_ context.Context, _, _, _ string) (*gitea.CombinedStatus, error) {
+		return &gitea.CombinedStatus{
+			Statuses: []gitea.CommitStatusResult{
+				{Context: "gitea-mq/ci/old-check", Status: "pending", Description: "From a previous merge queue attempt"},
+				{Context: "gitea-mq/ci/build", Status: "success", Description: "build passed"},               // not pending — leave alone
+				{Context: "gitea-mq/ci/other", Status: "pending", Description: "some other description"},     // wrong description — leave alone
+				{Context: "ci/build", Status: "pending", Description: "From a previous merge queue attempt"}, // not gitea-mq/* — leave alone
+			},
+		}, nil
+	}
+
+	entry, _ := svc.GetEntry(ctx, repoID, 42)
+
+	if err := monitor.ProcessCheckStatus(ctx, deps, entry, "ci/build", pg.CheckStateSuccess, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	statusCalls := mock.CallsTo("CreateCommitStatus")
+
+	// Find the skipped call — should only be gitea-mq/ci/old-check.
+	var skippedContexts []string
+	for _, call := range statusCalls {
+		status := call.Args[3].(gitea.CommitStatus)
+		if status.State == "skipped" {
+			skippedContexts = append(skippedContexts, status.Context)
+		}
+	}
+
+	if len(skippedContexts) != 1 || skippedContexts[0] != "gitea-mq/ci/old-check" {
+		t.Fatalf("expected only gitea-mq/ci/old-check to be skipped, got %v", skippedContexts)
+	}
+
+	// Verify the skipped status has the right description.
+	for _, call := range statusCalls {
+		status := call.Args[3].(gitea.CommitStatus)
+		if status.State == "skipped" && status.Description != "From a previous merge queue attempt" {
+			t.Fatalf("expected skipped status description 'From a previous merge queue attempt', got %q", status.Description)
+		}
+	}
+}
+
 // A check retries: failure → pending → success. The latest state (success)
 // is what counts because SaveCheckStatus upserts.
 func TestProcessCheckStatus_RetrySuccess(t *testing.T) {

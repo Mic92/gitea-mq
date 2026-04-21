@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"github.com/jogman/gitea-mq/internal/gitea"
+	"github.com/jogman/gitea-mq/internal/merge"
 	"github.com/jogman/gitea-mq/internal/monitor"
 	"github.com/jogman/gitea-mq/internal/queue"
+	"github.com/jogman/gitea-mq/internal/store/pg"
 	"github.com/jogman/gitea-mq/internal/testutil"
 	"github.com/jogman/gitea-mq/internal/webhook"
 )
@@ -93,6 +95,24 @@ func doRequest(handler http.Handler, body []byte, sig string) *httptest.Response
 	return rec
 }
 
+// enqueueTesting enqueues a PR and transitions it to testing with a merge branch,
+// which is the precondition for the webhook handler to find the entry.
+func enqueueTesting(t *testing.T, svc *queue.Service, ctx context.Context, repoID, prNumber int64, prHeadSHA, mergeSHA string) {
+	t.Helper()
+
+	if _, err := svc.Enqueue(ctx, repoID, prNumber, prHeadSHA, "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.UpdateState(ctx, repoID, prNumber, pg.EntryStateTesting); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.SetMergeBranch(ctx, repoID, prNumber, merge.BranchName(prNumber), mergeSHA); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // HMAC is the security boundary — verify valid/missing/invalid signatures.
 func TestHandler_SignatureValidation(t *testing.T) {
 	env := setup(t)
@@ -117,5 +137,60 @@ func TestHandler_IgnoresOwnStatus(t *testing.T) {
 
 	if len(env.mock.CallsTo("CreateCommitStatus")) != 0 {
 		t.Fatal("should not process own status — feedback loop risk")
+	}
+}
+
+// Verifies that a CI status on the merge branch is mirrored to the PR head
+// with a "gitea-mq/" prefix so users see queue progress on their PR.
+func TestHandler_MirrorsStatusToPRHead(t *testing.T) {
+	env := setup(t)
+
+	const (
+		prHeadSHA = "pr-head-abc"
+		mergeSHA  = "merge-branch-def"
+		prNumber  = int64(7)
+	)
+
+	enqueueTesting(t, env.svc, env.ctx, env.repoID, prNumber, prHeadSHA, mergeSHA)
+
+	payload := map[string]any{
+		"sha":         mergeSHA,
+		"context":     "ci/build",
+		"state":       "success",
+		"description": "build passed",
+		"target_url":  "https://ci.example.com/build/1",
+		"repository":  map[string]string{"full_name": "org/app"},
+	}
+	body, _ := json.Marshal(payload)
+
+	rec := doRequest(env.handler, body, sign(body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	// Find the mirror call: CreateCommitStatus on the PR head with prefixed context.
+	var mirror *gitea.MockCall
+	for _, c := range env.mock.CallsTo("CreateCommitStatus") {
+		sha := c.Args[2].(string)
+		status := c.Args[3].(gitea.CommitStatus)
+		if sha == prHeadSHA && status.Context == "gitea-mq/ci/build" {
+			mirror = &c
+			break
+		}
+	}
+
+	if mirror == nil {
+		t.Fatal("expected CreateCommitStatus mirror call on PR head, not found")
+	}
+
+	status := mirror.Args[3].(gitea.CommitStatus)
+	if status.State != "success" {
+		t.Errorf("mirror state = %q, want %q", status.State, "success")
+	}
+	if status.Description != "build passed" {
+		t.Errorf("mirror description = %q, want %q", status.Description, "build passed")
+	}
+	if status.TargetURL != "https://ci.example.com/build/1" {
+		t.Errorf("mirror target_url = %q, want %q", status.TargetURL, "https://ci.example.com/build/1")
 	}
 }

@@ -195,6 +195,7 @@ func TestFullMergeQueueFlow(t *testing.T) {
 		"sha": %q,
 		"context": "ci/build",
 		"state": "success",
+		"description": "build passed",
 		"repository": {"full_name": %q}
 	}`, mergeBranchSHA, repoKey)
 
@@ -209,6 +210,28 @@ func TestFullMergeQueueFlow(t *testing.T) {
 	webhookHandler.ServeHTTP(recorder, webhookReq)
 	if recorder.statusCode != http.StatusOK {
 		t.Fatalf("webhook returned %d", recorder.statusCode)
+	}
+
+	// --- Step 3b: Verify mirrored status gitea-mq/ci/build on PR head ---
+	_, mirrorStatusBody := api.Do(t, "GET", "/repos/testuser/"+repoName+"/statuses/"+pr.Head.SHA, "")
+
+	var mirrorStatuses []struct {
+		Context     string `json:"context"`
+		Status      string `json:"status"`
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal(mirrorStatusBody, &mirrorStatuses); err != nil {
+		t.Fatalf("unmarshal mirror statuses: %v", err)
+	}
+
+	foundMirror := false
+	for _, s := range mirrorStatuses {
+		if s.Context == "gitea-mq/ci/build" && s.Status == "success" && s.Description == "build passed" {
+			foundMirror = true
+		}
+	}
+	if !foundMirror {
+		t.Fatalf("expected gitea-mq/ci/build=success with description 'build passed' mirrored on PR head, got: %s", mirrorStatusBody)
 	}
 
 	// --- Step 4: Verify monitor set gitea-mq=success on PR head ---

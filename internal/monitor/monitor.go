@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jogman/gitea-mq/internal/gitea"
@@ -143,6 +144,11 @@ func HandleSuccess(ctx context.Context, deps *Deps, entry *pg.QueueEntry) error 
 		return fmt.Errorf("set success status for PR #%d: %w", entry.PrNumber, err)
 	}
 
+	// Skip any gitea-mq/* mirrored statuses still pending so the overall
+	// commit status is green. These are from checks that weren't reported
+	// on the merge branch (e.g. cleared from a previous attempt).
+	skipPendingMirroredStatuses(ctx, deps.Gitea, deps.Owner, deps.Repo, entry.PrHeadSha)
+
 	// Delete the merge branch — CI is done, no longer needed.
 	merge.CleanupMergeBranch(ctx, deps.Gitea, deps.Owner, deps.Repo, entry)
 
@@ -152,6 +158,31 @@ func HandleSuccess(ctx context.Context, deps *Deps, entry *pg.QueueEntry) error 
 	}
 
 	return nil
+}
+
+// skipPendingMirroredStatuses sets any gitea-mq/* mirrored statuses that are
+// still pending to skipped. Called on success so leftover pending statuses
+// (e.g. from a previous attempt that were cleared) don't block the green result.
+func skipPendingMirroredStatuses(ctx context.Context, giteaClient gitea.Client, owner, repo, sha string) {
+	combined, err := giteaClient.GetCombinedCommitStatus(ctx, owner, repo, sha)
+	if err != nil {
+		slog.Warn("failed to fetch commit statuses for skip cleanup", "sha", sha, "error", err)
+		return
+	}
+
+	for _, s := range combined.Statuses {
+		if !strings.HasPrefix(s.Context, merge.BranchPrefix) {
+			continue
+		}
+		if s.Status != "pending" || s.Description != merge.StaleMirrorDescription {
+			continue
+		}
+		_ = giteaClient.CreateCommitStatus(ctx, owner, repo, sha, gitea.CommitStatus{
+			Context:     s.Context,
+			State:       "skipped",
+			Description: merge.StaleMirrorDescription,
+		})
+	}
 }
 
 // HandleFailure processes a check failure for the head-of-queue.

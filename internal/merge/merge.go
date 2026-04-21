@@ -16,6 +16,11 @@ import (
 // BranchPrefix is the prefix for temporary merge branches created by gitea-mq.
 const BranchPrefix = "gitea-mq/"
 
+// StaleMirrorDescription is the description set on gitea-mq/* mirrored statuses
+// when they are cleared. Gitea doesn't support deleting commit statuses, so we
+// overwrite them with this description instead.
+const StaleMirrorDescription = "From a previous merge queue attempt"
+
 // BranchName returns the merge branch name for a given PR number.
 func BranchName(prNumber int64) string {
 	return fmt.Sprintf("%s%d", BranchPrefix, prNumber)
@@ -81,6 +86,10 @@ func StartTesting(ctx context.Context, giteaClient gitea.Client, svc *queue.Serv
 		return nil, fmt.Errorf("update state to testing for PR #%d: %w", entry.PrNumber, err)
 	}
 
+	// Clear stale gitea-mq/* mirrored statuses from a previous merge queue
+	// attempt so they don't show outdated results while new CI runs.
+	clearStaleMirroredStatuses(ctx, giteaClient, owner, repo, entry.PrHeadSha)
+
 	// Update the pending status to indicate testing.
 	_ = giteaClient.CreateCommitStatus(ctx, owner, repo, entry.PrHeadSha,
 		gitea.MQStatus("pending", "Testing merge result", targetURL))
@@ -91,6 +100,28 @@ func StartTesting(ctx context.Context, giteaClient gitea.Client, svc *queue.Serv
 		MergeBranchName: branchName,
 		MergeBranchSHA:  mergeResult.SHA,
 	}, nil
+}
+
+// clearStaleMirroredStatuses resets any gitea-mq/* mirrored statuses on the
+// PR head to pending. These are left over from a previous merge queue attempt
+// and would otherwise show stale success/failure until new CI results arrive.
+func clearStaleMirroredStatuses(ctx context.Context, giteaClient gitea.Client, owner, repo, sha string) {
+	combined, err := giteaClient.GetCombinedCommitStatus(ctx, owner, repo, sha)
+	if err != nil {
+		slog.Warn("failed to fetch commit statuses for stale cleanup", "sha", sha, "error", err)
+		return
+	}
+
+	for _, s := range combined.Statuses {
+		if !strings.HasPrefix(s.Context, BranchPrefix) {
+			continue
+		}
+		_ = giteaClient.CreateCommitStatus(ctx, owner, repo, sha, gitea.CommitStatus{
+			Context:     s.Context,
+			State:       "pending",
+			Description: StaleMirrorDescription,
+		})
+	}
 }
 
 // CleanupMergeBranch deletes a merge branch if it exists.
