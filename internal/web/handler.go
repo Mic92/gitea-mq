@@ -19,7 +19,7 @@ import (
 	"github.com/jogman/gitea-mq/internal/store/pg"
 )
 
-//go:embed templates/*.html
+//go:embed templates/*.html templates/*.css
 var templateFS embed.FS
 
 // funcMap provides template helper functions.
