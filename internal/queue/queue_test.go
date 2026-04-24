@@ -3,10 +3,10 @@ package queue_test
 import (
 	"testing"
 
-	"github.com/jogman/gitea-mq/internal/merge"
-	"github.com/jogman/gitea-mq/internal/queue"
-	"github.com/jogman/gitea-mq/internal/store/pg"
-	"github.com/jogman/gitea-mq/internal/testutil"
+	"github.com/Mic92/gitea-mq/internal/merge"
+	"github.com/Mic92/gitea-mq/internal/queue"
+	"github.com/Mic92/gitea-mq/internal/store/pg"
+	"github.com/Mic92/gitea-mq/internal/testutil"
 )
 
 // Tests the core enqueue→head→advance→empty cycle that every PR goes through.

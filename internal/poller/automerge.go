@@ -3,7 +3,7 @@
 // comment types.
 package poller
 
-import "github.com/jogman/gitea-mq/internal/gitea"
+import "github.com/Mic92/gitea-mq/internal/gitea"
 
 // automergeCommentType is the timeline comment type for scheduling automerge.
 const automergeCommentType = "pull_scheduled_merge"

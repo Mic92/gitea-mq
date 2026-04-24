@@ -8,9 +8,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/jogman/gitea-mq/internal/config"
-	"github.com/jogman/gitea-mq/internal/gitea"
-	"github.com/jogman/gitea-mq/internal/registry"
+	"github.com/Mic92/gitea-mq/internal/config"
+	"github.com/Mic92/gitea-mq/internal/gitea"
+	"github.com/Mic92/gitea-mq/internal/registry"
 )
 
 // Deps holds the dependencies the discovery loop needs.

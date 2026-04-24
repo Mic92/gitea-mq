@@ -6,11 +6,11 @@ import (
 	"os"
 	"testing"
 
-	"github.com/jogman/gitea-mq/internal/gitea"
-	"github.com/jogman/gitea-mq/internal/merge"
-	"github.com/jogman/gitea-mq/internal/queue"
-	"github.com/jogman/gitea-mq/internal/store/pg"
-	"github.com/jogman/gitea-mq/internal/testutil"
+	"github.com/Mic92/gitea-mq/internal/gitea"
+	"github.com/Mic92/gitea-mq/internal/merge"
+	"github.com/Mic92/gitea-mq/internal/queue"
+	"github.com/Mic92/gitea-mq/internal/store/pg"
+	"github.com/Mic92/gitea-mq/internal/testutil"
 )
 
 func TestMain(m *testing.M) {

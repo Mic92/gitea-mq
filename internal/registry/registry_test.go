@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jogman/gitea-mq/internal/config"
-	"github.com/jogman/gitea-mq/internal/gitea"
-	"github.com/jogman/gitea-mq/internal/merge"
-	"github.com/jogman/gitea-mq/internal/queue"
-	"github.com/jogman/gitea-mq/internal/registry"
-	"github.com/jogman/gitea-mq/internal/testutil"
+	"github.com/Mic92/gitea-mq/internal/config"
+	"github.com/Mic92/gitea-mq/internal/gitea"
+	"github.com/Mic92/gitea-mq/internal/merge"
+	"github.com/Mic92/gitea-mq/internal/queue"
+	"github.com/Mic92/gitea-mq/internal/registry"
+	"github.com/Mic92/gitea-mq/internal/testutil"
 )
 
 func newTestRegistry(t *testing.T) (*registry.RepoRegistry, context.Context) {

@@ -9,11 +9,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jogman/gitea-mq/internal/config"
-	"github.com/jogman/gitea-mq/internal/gitea"
-	"github.com/jogman/gitea-mq/internal/store/pg"
-	"github.com/jogman/gitea-mq/internal/testutil"
-	"github.com/jogman/gitea-mq/internal/web"
+	"github.com/Mic92/gitea-mq/internal/config"
+	"github.com/Mic92/gitea-mq/internal/gitea"
+	"github.com/Mic92/gitea-mq/internal/store/pg"
+	"github.com/Mic92/gitea-mq/internal/testutil"
+	"github.com/Mic92/gitea-mq/internal/web"
 )
 
 // staticRepoLister implements web.RepoLister for tests.

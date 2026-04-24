@@ -5,8 +5,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/jogman/gitea-mq/internal/gitea"
-	"github.com/jogman/gitea-mq/internal/setup"
+	"github.com/Mic92/gitea-mq/internal/gitea"
+	"github.com/Mic92/gitea-mq/internal/setup"
 )
 
 func TestEnsureBranchProtection_AddsMissing(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/jogman/gitea-mq/internal/testutil"
+	"github.com/Mic92/gitea-mq/internal/testutil"
 )
 
 func TestMain(m *testing.M) {

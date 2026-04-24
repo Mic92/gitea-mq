@@ -10,14 +10,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jogman/gitea-mq/internal/config"
-	"github.com/jogman/gitea-mq/internal/gitea"
-	"github.com/jogman/gitea-mq/internal/merge"
-	"github.com/jogman/gitea-mq/internal/monitor"
-	"github.com/jogman/gitea-mq/internal/poller"
-	"github.com/jogman/gitea-mq/internal/queue"
-	"github.com/jogman/gitea-mq/internal/setup"
-	"github.com/jogman/gitea-mq/internal/webhook"
+	"github.com/Mic92/gitea-mq/internal/config"
+	"github.com/Mic92/gitea-mq/internal/gitea"
+	"github.com/Mic92/gitea-mq/internal/merge"
+	"github.com/Mic92/gitea-mq/internal/monitor"
+	"github.com/Mic92/gitea-mq/internal/poller"
+	"github.com/Mic92/gitea-mq/internal/queue"
+	"github.com/Mic92/gitea-mq/internal/setup"
+	"github.com/Mic92/gitea-mq/internal/webhook"
 )
 
 // ManagedRepo holds the per-repo state for a managed repository.

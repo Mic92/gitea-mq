@@ -11,14 +11,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jogman/gitea-mq/internal/config"
-	"github.com/jogman/gitea-mq/internal/discovery"
-	"github.com/jogman/gitea-mq/internal/gitea"
-	"github.com/jogman/gitea-mq/internal/queue"
-	"github.com/jogman/gitea-mq/internal/registry"
-	"github.com/jogman/gitea-mq/internal/store/pg"
-	"github.com/jogman/gitea-mq/internal/web"
-	"github.com/jogman/gitea-mq/internal/webhook"
+	"github.com/Mic92/gitea-mq/internal/config"
+	"github.com/Mic92/gitea-mq/internal/discovery"
+	"github.com/Mic92/gitea-mq/internal/gitea"
+	"github.com/Mic92/gitea-mq/internal/queue"
+	"github.com/Mic92/gitea-mq/internal/registry"
+	"github.com/Mic92/gitea-mq/internal/store/pg"
+	"github.com/Mic92/gitea-mq/internal/web"
+	"github.com/Mic92/gitea-mq/internal/webhook"
 )
 
 func main() {

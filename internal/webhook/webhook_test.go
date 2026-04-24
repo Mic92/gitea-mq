@@ -12,13 +12,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jogman/gitea-mq/internal/gitea"
-	"github.com/jogman/gitea-mq/internal/merge"
-	"github.com/jogman/gitea-mq/internal/monitor"
-	"github.com/jogman/gitea-mq/internal/queue"
-	"github.com/jogman/gitea-mq/internal/store/pg"
-	"github.com/jogman/gitea-mq/internal/testutil"
-	"github.com/jogman/gitea-mq/internal/webhook"
+	"github.com/Mic92/gitea-mq/internal/gitea"
+	"github.com/Mic92/gitea-mq/internal/merge"
+	"github.com/Mic92/gitea-mq/internal/monitor"
+	"github.com/Mic92/gitea-mq/internal/queue"
+	"github.com/Mic92/gitea-mq/internal/store/pg"
+	"github.com/Mic92/gitea-mq/internal/testutil"
+	"github.com/Mic92/gitea-mq/internal/webhook"
 )
 
 const testSecret = "test-secret"

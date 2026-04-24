@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jogman/gitea-mq/internal/store/pg"
+	"github.com/Mic92/gitea-mq/internal/store/pg"
 )
 
 // PR represents a pull request from the Gitea API.

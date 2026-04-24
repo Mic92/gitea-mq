@@ -121,7 +121,7 @@ A lightweight web dashboard shows queue status across all managed repos, lets yo
 
 ```nix
 {
-  inputs.gitea-mq.url = "github:jogman/gitea-mq";
+  inputs.gitea-mq.url = "github:Mic92/gitea-mq";
 
   # In your NixOS configuration:
   imports = [ inputs.gitea-mq.nixosModules.default ];

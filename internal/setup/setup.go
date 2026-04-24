@@ -9,7 +9,7 @@ import (
 	"log/slog"
 	"slices"
 
-	"github.com/jogman/gitea-mq/internal/gitea"
+	"github.com/Mic92/gitea-mq/internal/gitea"
 )
 
 // EnsureBranchProtection checks all branch protection rules for a repo and

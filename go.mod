@@ -1,4 +1,4 @@
-module github.com/jogman/gitea-mq
+module github.com/Mic92/gitea-mq
 
 go 1.25.5
 
