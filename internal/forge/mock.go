@@ -12,11 +12,7 @@ type MockCall struct {
 }
 
 // MockForge is a test double for Forge. Each method delegates to the matching
-// `*Fn` field if set, otherwise returns a zero value and nil error. All calls
-// are recorded in order; safe for concurrent use.
-//
-// Pattern mirrors gitea.MockClient so test authors can move between layers
-// without cognitive overhead.
+// *Fn field if set, else returns zero value and nil. Safe for concurrent use.
 type MockForge struct {
 	mu    sync.Mutex
 	Calls []MockCall

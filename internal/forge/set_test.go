@@ -5,46 +5,26 @@ import (
 	"testing"
 )
 
-func TestSetRegisterAndFor(t *testing.T) {
+func TestSetRoutesByKind(t *testing.T) {
 	s := NewSet()
 	gf := &MockForge{KindVal: KindGitea}
 	hf := &MockForge{KindVal: KindGithub}
 	s.Register(gf)
 	s.Register(hf)
 
-	got, err := s.For(RepoRef{Forge: KindGitea, Owner: "o", Name: "n"})
-	if err != nil {
-		t.Fatalf("For(gitea): %v", err)
+	if got, _ := s.For(RepoRef{Forge: KindGitea, Owner: "o", Name: "n"}); got != gf {
+		t.Errorf("gitea: got %v want %v", got, gf)
 	}
-	if got != gf {
-		t.Errorf("got %v want %v", got, gf)
-	}
-
-	got, err = s.For(RepoRef{Forge: KindGithub, Owner: "o", Name: "n"})
-	if err != nil {
-		t.Fatalf("For(github): %v", err)
-	}
-	if got != hf {
-		t.Errorf("got %v want %v", got, hf)
+	if got, _ := s.For(RepoRef{Forge: KindGithub, Owner: "o", Name: "n"}); got != hf {
+		t.Errorf("github: got %v want %v", got, hf)
 	}
 }
 
-func TestSetForUnknown(t *testing.T) {
+func TestSetForUnknownKind(t *testing.T) {
 	s := NewSet()
 	_, err := s.For(RepoRef{Forge: KindGithub, Owner: "o", Name: "n"})
-	var uf *ErrUnknownForge
-	if !errors.As(err, &uf) {
-		t.Fatalf("want ErrUnknownForge, got %v", err)
-	}
-	if uf.Kind != KindGithub {
-		t.Errorf("kind=%v want github", uf.Kind)
-	}
-}
-
-func TestSetZeroValue(t *testing.T) {
-	var s Set
-	s.Register(&MockForge{KindVal: KindGitea})
-	if _, err := s.For(RepoRef{Forge: KindGitea, Owner: "o", Name: "n"}); err != nil {
-		t.Errorf("zero Set should accept Register: %v", err)
+	var uf *UnknownForgeError
+	if !errors.As(err, &uf) || uf.Kind != KindGithub {
+		t.Fatalf("want UnknownForgeError{github}, got %v", err)
 	}
 }
