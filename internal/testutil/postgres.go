@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/Mic92/gitea-mq/internal/queue"
 	"github.com/Mic92/gitea-mq/internal/store/pg"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // PostgresServer wraps a temporary postgres instance.

@@ -1,11 +1,11 @@
 ## 1. Forge abstraction package
 
-- [ ] 1.1 Write `internal/forge/forge_test.go`: table tests for `RepoRef.String()`/`ParseRepoRef()` (`gitea:o/n`, `github:o/n`, invalid) and `Kind` constants — RED
-- [ ] 1.2 Implement `internal/forge/forge.go`: `Kind`, `RepoRef`, `PR`, `MQStatus`, `CheckState`, `SetupConfig`, `Forge` interface — GREEN
-- [ ] 1.3 Write `internal/forge/set_test.go`: `Set.Register`/`Set.For(ref)` returns correct forge, error when kind missing — RED
-- [ ] 1.4 Implement `internal/forge/set.go` — GREEN
-- [ ] 1.5 Write `internal/forge/mock.go` (`MockForge` with `Fn` fields, mirrors `gitea.MockClient` style) — no test, this is test infra
-- [ ] 1.6 `flake-fmt` + `go vet ./...`
+- [x] 1.1 Write `internal/forge/forge_test.go`: table tests for `RepoRef.String()`/`ParseRepoRef()` (`gitea:o/n`, `github:o/n`, invalid) and `Kind` constants — RED
+- [x] 1.2 Implement `internal/forge/forge.go`: `Kind`, `RepoRef`, `PR`, `MQStatus`, `CheckState`, `SetupConfig`, `Forge` interface — GREEN
+- [x] 1.3 Write `internal/forge/set_test.go`: `Set.Register`/`Set.For(ref)` returns correct forge, error when kind missing — RED
+- [x] 1.4 Implement `internal/forge/set.go` — GREEN
+- [x] 1.5 Write `internal/forge/mock.go` (`MockForge` with `Fn` fields, mirrors `gitea.MockClient` style) — no test, this is test infra
+- [x] 1.6 `flake-fmt` + `go vet ./...`
 
 ## 2. Gitea adapter implements Forge
 

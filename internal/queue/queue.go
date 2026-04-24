@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/Mic92/gitea-mq/internal/store/pg"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/Mic92/gitea-mq/internal/store/pg"
 )
 
 // EnqueueResult describes what happened when enqueueing a PR.
