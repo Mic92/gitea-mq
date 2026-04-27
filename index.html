@@ -308,6 +308,7 @@
     <h2>Permissions</h2>
     <div class="pill-grid">
       <div class="pill"><b>Checks</b><span class="lvl">write</span></div>
+      <div class="pill"><b>Commit statuses</b><span class="lvl read">read</span></div>
       <div class="pill"><b>Contents</b><span class="lvl">write</span></div>
       <div class="pill"><b>Pull requests</b><span class="lvl">write</span></div>
       <div class="pill"><b>Administration</b><span class="lvl">write</span></div>
@@ -359,6 +360,7 @@ GITEA_MQ_EXTERNAL_URL=…</pre>
   const $ = (id) => document.getElementById(id);
   const PERMS = {
     checks: "write",
+    statuses: "read",
     contents: "write",
     pull_requests: "write",
     administration: "write",
