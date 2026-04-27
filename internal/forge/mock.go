@@ -20,11 +20,9 @@ type MockForge struct {
 	KindVal Kind
 
 	RepoHTMLURLFn       func(owner, name string) string
-	PRHTMLURLFn         func(owner, name string, number int64) string
 	BranchHTMLURLFn     func(owner, name, branch string) string
 	ListOpenPRsFn       func(ctx context.Context, owner, name string) ([]PR, error)
 	GetPRFn             func(ctx context.Context, owner, name string, number int64) (*PR, error)
-	ListAutoMergePRsFn  func(ctx context.Context, owner, name string) ([]PR, error)
 	SetMQStatusFn       func(ctx context.Context, owner, name, sha string, st MQStatus) error
 	MirrorCheckFn       func(ctx context.Context, owner, name, sha, checkContext, state, description, targetURL string) error
 	GetRequiredChecksFn func(ctx context.Context, owner, name, branch string) ([]string, error)
@@ -73,14 +71,6 @@ func (m *MockForge) RepoHTMLURL(owner, name string) string {
 	return ""
 }
 
-func (m *MockForge) PRHTMLURL(owner, name string, number int64) string {
-	m.record("PRHTMLURL", owner, name, number)
-	if m.PRHTMLURLFn != nil {
-		return m.PRHTMLURLFn(owner, name, number)
-	}
-	return ""
-}
-
 func (m *MockForge) BranchHTMLURL(owner, name, branch string) string {
 	m.record("BranchHTMLURL", owner, name, branch)
 	if m.BranchHTMLURLFn != nil {
@@ -101,14 +91,6 @@ func (m *MockForge) GetPR(ctx context.Context, owner, name string, number int64)
 	m.record("GetPR", owner, name, number)
 	if m.GetPRFn != nil {
 		return m.GetPRFn(ctx, owner, name, number)
-	}
-	return nil, nil
-}
-
-func (m *MockForge) ListAutoMergePRs(ctx context.Context, owner, name string) ([]PR, error) {
-	m.record("ListAutoMergePRs", owner, name)
-	if m.ListAutoMergePRsFn != nil {
-		return m.ListAutoMergePRsFn(ctx, owner, name)
 	}
 	return nil, nil
 }

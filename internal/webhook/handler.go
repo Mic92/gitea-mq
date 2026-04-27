@@ -19,8 +19,7 @@ import (
 
 // RepoMonitor holds the per-repo deps webhook handlers need to route events.
 type RepoMonitor struct {
-	Deps   *monitor.Deps
-	RepoID int64
+	Deps *monitor.Deps
 	// TriggerPoll fires an immediate reconcile of the repo's poller. Used
 	// for PR-level webhooks (auto-merge toggle, close, push) where the
 	// poller already owns the correct enqueue/dequeue logic.
@@ -101,7 +100,7 @@ func Handler(secret string, repos RepoLookup, queueSvc *queue.Service) http.Hand
 // Returning 200 even on internal errors avoids forge retries causing duplicate
 // processing.
 func routeCheck(ctx context.Context, rm *RepoMonitor, svc *queue.Service, sha, checkCtx string, state pg.CheckState, rawState, desc, targetURL string) {
-	entry := findEntryForCommit(ctx, svc, rm.RepoID, sha)
+	entry := findEntryForCommit(ctx, svc, rm.Deps.RepoID, sha)
 	if entry == nil {
 		return
 	}

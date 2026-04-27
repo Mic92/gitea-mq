@@ -138,8 +138,7 @@ func TestFullMergeQueueFlow(t *testing.T) {
 	repoKey := "gitea:testuser/" + repoName
 	repoMonitors := webhook.MapRepoLookup{
 		repoKey: {
-			Deps:   monDeps,
-			RepoID: repo.ID,
+			Deps: monDeps,
 		},
 	}
 	webhookSecret := "test-secret"

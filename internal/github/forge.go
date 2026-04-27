@@ -37,10 +37,6 @@ func (f *githubForge) RepoHTMLURL(owner, name string) string {
 	return fmt.Sprintf("%s/%s/%s", f.htmlURL, owner, name)
 }
 
-func (f *githubForge) PRHTMLURL(owner, name string, number int64) string {
-	return fmt.Sprintf("%s/%s/%s/pull/%d", f.htmlURL, owner, name, number)
-}
-
 func (f *githubForge) BranchHTMLURL(owner, name, branch string) string {
 	return fmt.Sprintf("%s/%s/%s/tree/%s", f.htmlURL, owner, name, branch)
 }
@@ -49,7 +45,6 @@ func toForgePR(p *gh.PullRequest) forge.PR {
 	return forge.PR{
 		Number:           int64(p.GetNumber()),
 		Title:            p.GetTitle(),
-		Body:             p.GetBody(),
 		State:            p.GetState(),
 		Merged:           p.GetMerged(),
 		AuthorLogin:      p.GetUser().GetLogin(),
@@ -58,7 +53,6 @@ func toForgePR(p *gh.PullRequest) forge.PR {
 		BaseBranch:       p.GetBase().GetRef(),
 		HTMLURL:          p.GetHTMLURL(),
 		AutoMergeEnabled: p.GetAutoMerge() != nil,
-		NodeID:           p.GetNodeID(),
 	}
 }
 
@@ -89,20 +83,6 @@ func (f *githubForge) GetPR(ctx context.Context, owner, name string, number int6
 	}
 	fp := toForgePR(p)
 	return &fp, nil
-}
-
-func (f *githubForge) ListAutoMergePRs(ctx context.Context, owner, name string) ([]forge.PR, error) {
-	prs, err := f.ListOpenPRs(ctx, owner, name)
-	if err != nil {
-		return nil, err
-	}
-	var out []forge.PR
-	for _, pr := range prs {
-		if pr.AutoMergeEnabled {
-			out = append(out, pr)
-		}
-	}
-	return out, nil
 }
 
 func (f *githubForge) SetMQStatus(ctx context.Context, owner, name, sha string, st forge.MQStatus) error {

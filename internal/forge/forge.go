@@ -69,11 +69,9 @@ func ParseRepoRef(s string) (RepoRef, bool) {
 //
 // AutoMergeEnabled normalises forge-specific signals (Gitea timeline comments,
 // GitHub auto_merge field) so callers do not handle forge internals.
-// NodeID carries the GitHub GraphQL node id when available; empty for Gitea.
 type PR struct {
 	Number           int64
 	Title            string
-	Body             string
 	State            string // "open", "closed"
 	Merged           bool
 	AuthorLogin      string
@@ -82,7 +80,6 @@ type PR struct {
 	BaseBranch       string
 	HTMLURL          string
 	AutoMergeEnabled bool
-	NodeID           string
 }
 
 // MQStatus is the lifecycle state reported by gitea-mq for a head SHA.
@@ -118,13 +115,10 @@ type SetupConfig struct {
 type Forge interface {
 	Kind() Kind
 	RepoHTMLURL(owner, name string) string
-	PRHTMLURL(owner, name string, number int64) string
 	BranchHTMLURL(owner, name, branch string) string
 
 	ListOpenPRs(ctx context.Context, owner, name string) ([]PR, error)
 	GetPR(ctx context.Context, owner, name string, number int64) (*PR, error)
-	// ListAutoMergePRs returns open PRs currently scheduled for auto-merge.
-	ListAutoMergePRs(ctx context.Context, owner, name string) ([]PR, error)
 
 	SetMQStatus(ctx context.Context, owner, name, sha string, st MQStatus) error
 	// MirrorCheck posts a status/check with an arbitrary context name on sha,

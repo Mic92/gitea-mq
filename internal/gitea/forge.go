@@ -33,10 +33,6 @@ func (f *giteaForge) RepoHTMLURL(owner, name string) string {
 	return f.baseURL + "/" + owner + "/" + name
 }
 
-func (f *giteaForge) PRHTMLURL(owner, name string, number int64) string {
-	return fmt.Sprintf("%s/%s/%s/pulls/%d", f.baseURL, owner, name, number)
-}
-
 func (f *giteaForge) BranchHTMLURL(owner, name, branch string) string {
 	return fmt.Sprintf("%s/%s/%s/src/branch/%s", f.baseURL, owner, name, branch)
 }
@@ -45,7 +41,6 @@ func toForgePR(pr *PR, autoMerge bool) forge.PR {
 	out := forge.PR{
 		Number:           pr.Index,
 		Title:            pr.Title,
-		Body:             pr.Body,
 		State:            pr.State,
 		Merged:           pr.HasMerged,
 		HTMLURL:          pr.HTMLURL,
@@ -94,20 +89,6 @@ func (f *giteaForge) GetPR(ctx context.Context, owner, name string, number int64
 	}
 	fp := toForgePR(pr, HasAutomergeScheduled(timeline))
 	return &fp, nil
-}
-
-func (f *giteaForge) ListAutoMergePRs(ctx context.Context, owner, name string) ([]forge.PR, error) {
-	prs, err := f.ListOpenPRs(ctx, owner, name)
-	if err != nil {
-		return nil, err
-	}
-	var out []forge.PR
-	for _, pr := range prs {
-		if pr.AutoMergeEnabled {
-			out = append(out, pr)
-		}
-	}
-	return out, nil
 }
 
 func (f *giteaForge) SetMQStatus(ctx context.Context, owner, name, sha string, st forge.MQStatus) error {

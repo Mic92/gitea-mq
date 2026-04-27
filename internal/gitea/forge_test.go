@@ -13,8 +13,8 @@ func newForge(mock *gitea.MockClient) forge.Forge {
 	return gitea.NewForge(mock, "https://gitea.example.com")
 }
 
-func TestForge_ListAutoMergePRs_FoldsTimeline(t *testing.T) {
-	// PR 1 scheduled → included; PR 2 cancelled, PR 3 no events → excluded.
+func TestForge_ListOpenPRs_FoldsTimeline(t *testing.T) {
+	// PR 1 scheduled → AutoMergeEnabled; PR 2 cancelled, PR 3 no events → not.
 	mock := &gitea.MockClient{
 		ListOpenPRsFn: func(_ context.Context, _, _ string) ([]gitea.PR, error) {
 			return []gitea.PR{
@@ -42,21 +42,18 @@ func TestForge_ListAutoMergePRs_FoldsTimeline(t *testing.T) {
 	}
 
 	f := newForge(mock)
-	prs, err := f.ListAutoMergePRs(context.Background(), "org", "app")
+	prs, err := f.ListOpenPRs(context.Background(), "org", "app")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(prs) != 1 {
-		t.Fatalf("got %d PRs, want 1: %+v", len(prs), prs)
+	if len(prs) != 3 {
+		t.Fatalf("got %d PRs, want 3: %+v", len(prs), prs)
+	}
+	if !prs[0].AutoMergeEnabled || prs[1].AutoMergeEnabled || prs[2].AutoMergeEnabled {
+		t.Errorf("AutoMergeEnabled mapping wrong: %+v", prs)
 	}
 	got := prs[0]
-	if got.Number != 1 {
-		t.Errorf("Number = %d, want 1", got.Number)
-	}
-	if !got.AutoMergeEnabled {
-		t.Error("AutoMergeEnabled = false, want true")
-	}
-	if got.HeadSHA != "sha1" || got.HeadBranch != "feat-1" || got.BaseBranch != "main" {
+	if got.Number != 1 || got.HeadSHA != "sha1" || got.HeadBranch != "feat-1" || got.BaseBranch != "main" {
 		t.Errorf("ref mapping wrong: %+v", got)
 	}
 	if got.AuthorLogin != "alice" {
@@ -243,9 +240,6 @@ func TestForge_URLHelpers(t *testing.T) {
 	f := gitea.NewForge(&gitea.MockClient{}, "https://gitea.example.com/")
 	if got := f.RepoHTMLURL("org", "app"); got != "https://gitea.example.com/org/app" {
 		t.Errorf("RepoHTMLURL = %q", got)
-	}
-	if got := f.PRHTMLURL("org", "app", 42); got != "https://gitea.example.com/org/app/pulls/42" {
-		t.Errorf("PRHTMLURL = %q", got)
 	}
 	if got := f.BranchHTMLURL("org", "app", "gitea-mq/1"); got != "https://gitea.example.com/org/app/src/branch/gitea-mq/1" {
 		t.Errorf("BranchHTMLURL = %q", got)

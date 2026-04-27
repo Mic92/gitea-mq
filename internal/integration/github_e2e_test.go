@@ -72,7 +72,7 @@ func TestGithub_FullMergeQueueFlow(t *testing.T) {
 	}
 	const secret = "gh-hook-secret"
 	hooks := webhook.GithubHandler([]byte(secret),
-		webhook.MapRepoLookup{"github:org/app": {Deps: monDeps, RepoID: dbRepo.ID}}, svc, nil)
+		webhook.MapRepoLookup{"github:org/app": {Deps: monDeps}}, svc, nil)
 
 	// --- Poll enqueues and creates merge branch (no PR webhook needed:
 	// proves the reconcile poll alone recovers after missed deliveries) ---

@@ -24,8 +24,8 @@ func newTestForge(t *testing.T) (*ghfake.Server, forge.Forge) {
 
 func TestForge_URLHelpers(t *testing.T) {
 	_, f := newTestForge(t)
-	if got := f.PRHTMLURL("o", "r", 7); got != "https://github.com/o/r/pull/7" {
-		t.Errorf("PRHTMLURL = %q", got)
+	if got := f.RepoHTMLURL("o", "r"); got != "https://github.com/o/r" {
+		t.Errorf("RepoHTMLURL = %q", got)
 	}
 	if got := f.BranchHTMLURL("o", "r", "gitea-mq/7"); got != "https://github.com/o/r/tree/gitea-mq/7" {
 		t.Errorf("BranchHTMLURL = %q", got)
@@ -53,19 +53,11 @@ func TestForge_ListAndGetPR(t *testing.T) {
 		t.Fatalf("len = %d, want 2", len(prs))
 	}
 
-	auto, err := f.ListAutoMergePRs(ctx, "org", "app")
-	if err != nil {
-		t.Fatalf("ListAutoMergePRs: %v", err)
-	}
-	if len(auto) != 1 || auto[0].Number != 1 {
-		t.Fatalf("auto = %+v, want PR #1 only", auto)
-	}
-
 	pr, err := f.GetPR(ctx, "org", "app", 1)
 	if err != nil {
 		t.Fatalf("GetPR: %v", err)
 	}
-	if !pr.AutoMergeEnabled || pr.NodeID == "" || pr.HeadSHA != "sha1" || pr.AuthorLogin != "alice" {
+	if !pr.AutoMergeEnabled || pr.HeadSHA != "sha1" || pr.AuthorLogin != "alice" {
 		t.Errorf("GetPR mapping = %+v", pr)
 	}
 }

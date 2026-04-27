@@ -111,8 +111,7 @@ func (r *RepoRegistry) Add(ctx context.Context, ref forge.RepoRef) error {
 		Ref:    ref,
 		RepoID: repo.ID,
 		Monitor: &webhook.RepoMonitor{
-			Deps:   monDeps,
-			RepoID: repo.ID,
+			Deps: monDeps,
 			TriggerPoll: func() {
 				select {
 				case trigger <- struct{}{}:

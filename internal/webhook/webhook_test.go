@@ -60,7 +60,7 @@ func setup(t *testing.T) *testEnv {
 	}
 
 	repos := webhook.MapRepoLookup{
-		"gitea:org/app": {Deps: deps, RepoID: repoID},
+		"gitea:org/app": {Deps: deps},
 	}
 
 	return &testEnv{
