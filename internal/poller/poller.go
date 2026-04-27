@@ -24,6 +24,9 @@ type Deps struct {
 	RepoID int64
 	Owner  string
 	Repo   string
+	// Trigger fires an immediate reconcile, used by webhooks so PR-level
+	// events are reflected without waiting for the poll interval.
+	Trigger <-chan struct{}
 	// ExternalURL is the dashboard base URL for status target_url.
 	ExternalURL string
 	// FallbackChecks gates enqueue when branch protection lists none.
@@ -305,6 +308,10 @@ func Run(ctx context.Context, deps *Deps, interval time.Duration) {
 		case <-ctx.Done():
 			slog.Info("poller stopped", "owner", deps.Owner, "repo", deps.Repo)
 			return
+		case <-deps.Trigger:
+			if _, err := PollOnce(ctx, deps); err != nil {
+				slog.Error("poll error", "owner", deps.Owner, "repo", deps.Repo, "error", err)
+			}
 		case <-ticker.C:
 			result, err := PollOnce(ctx, deps)
 			if err != nil {

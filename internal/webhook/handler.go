@@ -17,11 +17,14 @@ import (
 	"github.com/Mic92/gitea-mq/internal/store/pg"
 )
 
-// RepoMonitor holds the monitor deps for a single repo. The webhook handler
-// routes events to the correct repo's monitor.
+// RepoMonitor holds the per-repo deps webhook handlers need to route events.
 type RepoMonitor struct {
 	Deps   *monitor.Deps
 	RepoID int64
+	// TriggerPoll fires an immediate reconcile of the repo's poller. Used
+	// for PR-level webhooks (auto-merge toggle, close, push) where the
+	// poller already owns the correct enqueue/dequeue logic.
+	TriggerPoll func()
 }
 
 // RepoLookup abstracts how the webhook handler finds a repo's monitor.
@@ -88,33 +91,30 @@ func Handler(secret string, repos RepoLookup, queueSvc *queue.Service) http.Hand
 			return
 		}
 
-		// Find the queue entry whose merge branch SHA matches this commit.
-		// Only head-of-queue entries in "testing" state have merge branches.
-		entry := findEntryForCommit(r.Context(), queueSvc, rm.RepoID, event.SHA)
-		if entry == nil {
-			// Status for a commit we're not tracking — ignore.
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-
-		// Mirror the status to the PR head commit with a prefixed context
-		// so users can see merge queue CI progress directly on the PR page.
-		mirrorCtx := "gitea-mq/" + event.Context
-		if err := rm.Deps.Forge.MirrorCheck(r.Context(), rm.Deps.Owner, rm.Deps.Repo, entry.PrHeadSha,
-			mirrorCtx, event.State, event.Description, event.TargetURL); err != nil {
-			slog.Warn("failed to mirror status to PR head", "pr", entry.PrNumber, "context", mirrorCtx, "error", err)
-		}
-
-		checkState := gitea.MapState(event.State)
-
-		if err := monitor.ProcessCheckStatus(r.Context(), rm.Deps, entry, event.Context, checkState, event.TargetURL); err != nil {
-			slog.Error("failed to process check status", "pr", entry.PrNumber, "error", err)
-			// Still return 200 — Gitea will retry on non-2xx, which could
-			// cause duplicate processing.
-		}
-
+		routeCheck(r.Context(), rm, queueSvc, event.SHA, event.Context, gitea.MapState(event.State), event.State, event.Description, event.TargetURL)
 		w.WriteHeader(http.StatusOK)
 	})
+}
+
+// routeCheck is the shared status/check-run path for both forges: match the
+// SHA to a testing queue entry, mirror onto the PR head, and feed the monitor.
+// Returning 200 even on internal errors avoids forge retries causing duplicate
+// processing.
+func routeCheck(ctx context.Context, rm *RepoMonitor, svc *queue.Service, sha, checkCtx string, state pg.CheckState, rawState, desc, targetURL string) {
+	entry := findEntryForCommit(ctx, svc, rm.RepoID, sha)
+	if entry == nil {
+		return
+	}
+
+	mirrorCtx := "gitea-mq/" + checkCtx
+	if err := rm.Deps.Forge.MirrorCheck(ctx, rm.Deps.Owner, rm.Deps.Repo, entry.PrHeadSha,
+		mirrorCtx, rawState, desc, targetURL); err != nil {
+		slog.Warn("failed to mirror status to PR head", "pr", entry.PrNumber, "context", mirrorCtx, "err", err)
+	}
+
+	if err := monitor.ProcessCheckStatus(ctx, rm.Deps, entry, checkCtx, state, targetURL); err != nil {
+		slog.Error("failed to process check status", "pr", entry.PrNumber, "err", err)
+	}
 }
 
 // statusEvent is the subset of Gitea's commit_status webhook payload we need.

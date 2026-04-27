@@ -103,6 +103,9 @@ func (r *RepoRegistry) Add(ctx context.Context, ref forge.RepoRef) error {
 	}
 
 	pollerCtx, cancel := context.WithCancel(r.parentCtx)
+	// Buffer one so a webhook never blocks; coalescing is fine because the
+	// poller reconciles full state anyway.
+	trigger := make(chan struct{}, 1)
 
 	managed := &ManagedRepo{
 		Ref:    ref,
@@ -110,6 +113,12 @@ func (r *RepoRegistry) Add(ctx context.Context, ref forge.RepoRef) error {
 		Monitor: &webhook.RepoMonitor{
 			Deps:   monDeps,
 			RepoID: repo.ID,
+			TriggerPoll: func() {
+				select {
+				case trigger <- struct{}{}:
+				default:
+				}
+			},
 		},
 		cancel: cancel,
 	}
@@ -120,6 +129,7 @@ func (r *RepoRegistry) Add(ctx context.Context, ref forge.RepoRef) error {
 		RepoID:         repo.ID,
 		Owner:          ref.Owner,
 		Repo:           ref.Name,
+		Trigger:        trigger,
 		ExternalURL:    r.deps.ExternalURL,
 		FallbackChecks: r.deps.FallbackChecks,
 		SuccessTimeout: r.deps.SuccessTimeout,
