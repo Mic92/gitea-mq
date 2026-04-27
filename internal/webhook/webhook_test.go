@@ -2,9 +2,6 @@ package webhook_test
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -13,21 +10,15 @@ import (
 	"time"
 
 	"github.com/Mic92/gitea-mq/internal/gitea"
-	"github.com/Mic92/gitea-mq/internal/merge"
 	"github.com/Mic92/gitea-mq/internal/monitor"
 	"github.com/Mic92/gitea-mq/internal/queue"
-	"github.com/Mic92/gitea-mq/internal/store/pg"
 	"github.com/Mic92/gitea-mq/internal/testutil"
 	"github.com/Mic92/gitea-mq/internal/webhook"
 )
 
 const testSecret = "test-secret"
 
-func sign(body []byte) string {
-	mac := hmac.New(sha256.New, []byte(testSecret))
-	mac.Write(body)
-	return hex.EncodeToString(mac.Sum(nil))
-}
+func sign(body []byte) string { return webhook.ComputeSignature(body, testSecret) }
 
 type testEnv struct {
 	handler http.Handler
@@ -95,24 +86,6 @@ func doRequest(handler http.Handler, body []byte, sig string) *httptest.Response
 	return rec
 }
 
-// enqueueTesting enqueues a PR and transitions it to testing with a merge branch,
-// which is the precondition for the webhook handler to find the entry.
-func enqueueTesting(t *testing.T, svc *queue.Service, ctx context.Context, repoID, prNumber int64, prHeadSHA, mergeSHA string) {
-	t.Helper()
-
-	if _, err := svc.Enqueue(ctx, repoID, prNumber, prHeadSHA, "main"); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := svc.UpdateState(ctx, repoID, prNumber, pg.EntryStateTesting); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := svc.SetMergeBranch(ctx, repoID, prNumber, merge.BranchName(prNumber), mergeSHA); err != nil {
-		t.Fatal(err)
-	}
-}
-
 // HMAC is the security boundary — verify valid/missing/invalid signatures.
 func TestHandler_SignatureValidation(t *testing.T) {
 	env := setup(t)
@@ -165,7 +138,7 @@ func TestHandler_MirrorsStatusToPRHead(t *testing.T) {
 		prNumber  = int64(7)
 	)
 
-	enqueueTesting(t, env.svc, env.ctx, env.repoID, prNumber, prHeadSHA, mergeSHA)
+	testutil.EnqueueTesting(t, env.svc, env.repoID, prNumber, prHeadSHA, mergeSHA)
 
 	payload := map[string]any{
 		"sha":         mergeSHA,

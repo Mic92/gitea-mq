@@ -180,19 +180,9 @@ func TestRepoDetailShowsPRs(t *testing.T) {
 func TestPRDetailHeadOfQueueTesting(t *testing.T) {
 	svc, ctx, repoID := testutil.TestQueueService(t)
 
-	res1, err := svc.Enqueue(ctx, repoID, 42, "abc123", "main")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.UpdateState(ctx, repoID, 42, pg.EntryStateTesting); err != nil {
-		t.Fatal(err)
-	}
-	// Set merge branch so the link can be constructed.
-	if err := svc.SetMergeBranch(ctx, repoID, 42, "gitea-mq/abc123", "mergesha"); err != nil {
-		t.Fatal(err)
-	}
+	entry := testutil.EnqueueTesting(t, svc, repoID, 42, "abc123", "mergesha")
 	// Only ci/build has reported — ci/lint and ci/test have not.
-	if err := svc.SaveCheckStatus(ctx, res1.Entry.ID, "ci/build", pg.CheckStateSuccess, "https://ci.example.com/build/1"); err != nil {
+	if err := svc.SaveCheckStatus(ctx, entry.ID, "ci/build", pg.CheckStateSuccess, "https://ci.example.com/build/1"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -261,7 +251,7 @@ func TestPRDetailHeadOfQueueTesting(t *testing.T) {
 		t.Error("expected pending check icon for unreported checks")
 	}
 	// Merge branch link derived from PR.HTMLURL.
-	if !strings.Contains(body, `href="https://gitea.example.com/org/app/src/branch/gitea-mq/abc123"`) {
+	if !strings.Contains(body, `href="https://gitea.example.com/org/app/src/branch/gitea-mq/42"`) {
 		t.Errorf("expected merge branch link, got:\n%s", body)
 	}
 	if !strings.Contains(body, "view on Gitea") {

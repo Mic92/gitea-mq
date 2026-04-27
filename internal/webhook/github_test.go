@@ -2,9 +2,6 @@ package webhook_test
 
 import (
 	"bytes"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,19 +10,13 @@ import (
 	"github.com/Mic92/gitea-mq/internal/webhook"
 )
 
-func ghSign(body []byte) string {
-	mac := hmac.New(sha256.New, []byte(testSecret))
-	mac.Write(body)
-	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
-}
-
 func ghPost(t *testing.T, h http.Handler, event, body string, sign bool) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/webhook/github", bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-GitHub-Event", event)
 	if sign {
-		req.Header.Set("X-Hub-Signature-256", ghSign([]byte(body)))
+		req.Header.Set("X-Hub-Signature-256", "sha256="+webhook.ComputeSignature([]byte(body), testSecret))
 	}
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)

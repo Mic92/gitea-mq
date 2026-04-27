@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -206,10 +207,10 @@ func TestFullMergeQueueFlow(t *testing.T) {
 	webhookReq.Header.Set("Content-Type", "application/json")
 	webhookReq.Header.Set("X-Gitea-Signature", webhook.ComputeSignature([]byte(statusPayload), webhookSecret))
 
-	recorder := &httpRecorder{}
+	recorder := httptest.NewRecorder()
 	webhookHandler.ServeHTTP(recorder, webhookReq)
-	if recorder.statusCode != http.StatusOK {
-		t.Fatalf("webhook returned %d", recorder.statusCode)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("webhook returned %d", recorder.Code)
 	}
 
 	// --- Step 3b: Verify mirrored status gitea-mq/ci/build on PR head ---
@@ -318,19 +319,6 @@ func TestFullMergeQueueFlow(t *testing.T) {
 	if head != nil {
 		t.Fatalf("expected empty queue, got %v", head)
 	}
-}
-
-// httpRecorder is a minimal ResponseWriter for testing handlers.
-type httpRecorder struct {
-	statusCode int
-	body       []byte
-}
-
-func (r *httpRecorder) Header() http.Header  { return http.Header{} }
-func (r *httpRecorder) WriteHeader(code int) { r.statusCode = code }
-func (r *httpRecorder) Write(b []byte) (int, error) {
-	r.body = append(r.body, b...)
-	return len(b), nil
 }
 
 func itoa(n int64) string {

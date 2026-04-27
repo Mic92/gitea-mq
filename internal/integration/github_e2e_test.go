@@ -2,13 +2,6 @@ package integration_test
 
 import (
 	"bytes"
-	"crypto/hmac"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/sha256"
-	"crypto/x509"
-	"encoding/hex"
-	"encoding/pem"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -46,7 +39,7 @@ func TestGithub_FullMergeQueueFlow(t *testing.T) {
 		{Name: "ci/build", Status: "completed", Conclusion: "success"},
 	}
 
-	app, err := githubpkg.NewApp(1, ghTestKey(t), srv.URL+"/api/v3")
+	app, err := githubpkg.NewApp(1, testutil.GithubAppKey(), srv.URL+"/api/v3")
 	if err != nil {
 		t.Fatalf("new app: %v", err)
 	}
@@ -98,9 +91,7 @@ func TestGithub_FullMergeQueueFlow(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/webhook/github", bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-GitHub-Event", "check_run")
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(body))
-	req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+	req.Header.Set("X-Hub-Signature-256", "sha256="+webhook.ComputeSignature([]byte(body), secret))
 	w := httptest.NewRecorder()
 	hooks.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
@@ -141,13 +132,4 @@ func TestGithub_FullMergeQueueFlow(t *testing.T) {
 	if _, ok := repo.Refs["gitea-mq/1"]; ok {
 		t.Error("merge branch not cleaned up")
 	}
-}
-
-func ghTestKey(t *testing.T) []byte {
-	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
 }
