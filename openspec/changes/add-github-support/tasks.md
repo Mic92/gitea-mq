@@ -103,8 +103,8 @@
 
 ## 12. Docs + polish
 
-- [ ] 12.1 README: GitHub section (App registration steps, permissions: Checks RW, Contents RW, Pull requests RW, Administration RW, Metadata R; events: `pull_request`, `check_run`, `status`, `installation`, `installation_repositories`; webhook URL `{EXTERNAL_URL}/webhook/github`)
-- [ ] 12.2 README: config table — add `GITEA_MQ_GITHUB_*` rows; mark Gitea vars "required if Gitea configured"
-- [ ] 12.3 README: dashboard URL scheme note (`/repo/{forge}/...`, legacy fallback)
-- [ ] 12.4 NixOS module: add GitHub options (`appId`, `privateKeyFile`, `webhookSecretFile`, `pollInterval`, `repos`)
-- [ ] 12.5 `flake-fmt`; `go vet ./...`; `golangci-lint run` (if configured) clean
+- [x] 12.1 README: GitHub section (App registration steps, permissions: Checks RW, Contents RW, Pull requests RW, Administration RW, Metadata R; events: `pull_request`, `check_run`, `status`, `installation`, `installation_repositories`; webhook URL `{EXTERNAL_URL}/webhook/github`)
+- [x] 12.2 README: config table — add `GITEA_MQ_GITHUB_*` rows; mark Gitea vars "required if Gitea configured"
+- [x] 12.3 README: dashboard URL scheme note (`/repo/{forge}/...`, legacy fallback)
+- [x] 12.4 NixOS module: add GitHub options (`appId`, `privateKeyFile`, `webhookSecretFile`, `pollInterval`, `repos`)
+- [x] 12.5 `flake-fmt`; `go vet ./...`; `golangci-lint run` (if configured) clean
