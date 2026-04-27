@@ -43,14 +43,14 @@
 
 ## 6. GitHub fake server + client foundations
 
-- [ ] 6.1 `go get github.com/google/go-github/v66 github.com/bradleyfalzon/ghinstallation/v2`; `go mod tidy`
-- [ ] 6.2 Implement `internal/github/ghfake/server.go`: stateful `httptest.Server` with in-memory `Installs`, `Repos` (PRs, Refs, CheckRuns[sha], Rulesets, Settings); routes for `/app/installations`, `/app/installations/{id}/access_tokens`, `/installation/repositories`; helper `New()` + `AddInstallation`/`AddRepo`/`AddPR`; accept any `Authorization` header
-- [ ] 6.3 Extend `ghfake`: routes for `GET/POST /repos/{o}/{r}/pulls`, `GET /repos/{o}/{r}/pulls/{n}`, `POST/PATCH /repos/{o}/{r}/check-runs[/{id}]`, `GET /repos/{o}/{r}/commits/{sha}/check-runs`, `POST /repos/{o}/{r}/git/refs`, `DELETE /repos/{o}/{r}/git/refs/heads/{b}`, `POST /repos/{o}/{r}/merges` (409 when `Repo.ConflictOn[head]`), `GET /repos/{o}/{r}/rules/branches/{b}`, `GET/POST /repos/{o}/{r}/rulesets`, `PATCH /repos/{o}/{r}`, `POST /graphql` (handle `disablePullRequestAutoMerge` → clear `PR.AutoMerge`)
-- [ ] 6.4 Add `ghfake.Server.Client() *github.Client` helper using `WithEnterpriseURLs(srv.URL, srv.URL)` so tests get a ready client; sanity test: `AddRepo` then `client.Repositories.Get` returns it
-- [ ] 6.5 Write `internal/github/app_test.go` against `ghfake`: `App.Installations()` paginates; `App.ClientForRepo(owner,name)` resolves correct installation — RED
-- [ ] 6.6 Implement `internal/github/app.go`: JWT app transport (base URL injectable for tests), installation listing, per-install `*github.Client`, repo→install map — GREEN
-- [ ] 6.7 Write `internal/github/forge_test.go` against `ghfake`: `ListOpenPRs`, `GetPR` (maps `auto_merge`, `node_id`), `ListAutoMergePRs` filters `auto_merge!=nil` — RED
-- [ ] 6.8 Implement `internal/github/forge.go` PR methods + `Kind`/URL helpers — GREEN
+- [x] 6.1 `go get github.com/google/go-github/v66 github.com/bradleyfalzon/ghinstallation/v2`; `go mod tidy`
+- [x] 6.2 Implement `internal/github/ghfake/server.go`: stateful `httptest.Server` with in-memory `Installs`, `Repos` (PRs, Refs, CheckRuns[sha], Rulesets, Settings); routes for `/app/installations`, `/app/installations/{id}/access_tokens`, `/installation/repositories`; helper `New()` + `AddInstallation`/`AddRepo`/`AddPR`; accept any `Authorization` header
+- [x] 6.3 Extend `ghfake`: routes for `GET/POST /repos/{o}/{r}/pulls`, `GET /repos/{o}/{r}/pulls/{n}`, `POST/PATCH /repos/{o}/{r}/check-runs[/{id}]`, `GET /repos/{o}/{r}/commits/{sha}/check-runs`, `POST /repos/{o}/{r}/git/refs`, `DELETE /repos/{o}/{r}/git/refs/heads/{b}`, `POST /repos/{o}/{r}/merges` (409 when `Repo.ConflictOn[head]`), `GET /repos/{o}/{r}/rules/branches/{b}`, `GET/POST /repos/{o}/{r}/rulesets`, `PATCH /repos/{o}/{r}`, `POST /graphql` (handle `disablePullRequestAutoMerge` → clear `PR.AutoMerge`)
+- [x] 6.4 Add `ghfake.Server.Client() *github.Client` helper using `WithEnterpriseURLs(srv.URL, srv.URL)` so tests get a ready client; sanity test: `AddRepo` then `client.Repositories.Get` returns it
+- [x] 6.5 Write `internal/github/app_test.go` against `ghfake`: `App.Installations()` paginates; `App.ClientForRepo(owner,name)` resolves correct installation — RED
+- [x] 6.6 Implement `internal/github/app.go`: JWT app transport (base URL injectable for tests), installation listing, per-install `*github.Client`, repo→install map — GREEN
+- [x] 6.7 Write `internal/github/forge_test.go` against `ghfake`: `ListOpenPRs`, `GetPR` (maps `auto_merge`, `node_id`), `ListAutoMergePRs` filters `auto_merge!=nil` — RED
+- [x] 6.8 Implement `internal/github/forge.go` PR methods + `Kind`/URL helpers — GREEN
 
 ## 7. GitHub forge: status, checks, branches, cancel
 

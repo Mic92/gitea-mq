@@ -90,6 +90,8 @@ ALTER TABLE repos ADD CONSTRAINT repos_forge_owner_name_key UNIQUE (forge, owner
 
 ### D4: GitHub client — `go-github` + `ghinstallation`
 
+`go-github/v84` (the version `ghinstallation/v2` itself depends on) is used so the binary carries one go-github version, not two.
+
 `internal/github`:
 - App JWT via `github.com/bradleyfalzon/ghinstallation/v2` wrapping `net/http.Transport`; it handles installation-token caching/refresh.
 - One `*github.Client` per installation, created lazily and cached by installation ID.
