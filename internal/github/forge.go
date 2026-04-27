@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -16,8 +15,6 @@ import (
 )
 
 var _ forge.Forge = (*githubForge)(nil)
-
-var errNotImplemented = errors.New("github: not implemented")
 
 type githubForge struct {
 	app       *App
@@ -321,8 +318,4 @@ func (f *githubForge) Comment(ctx context.Context, owner, name string, number in
 	}
 	_, _, err = c.Issues.CreateComment(ctx, owner, name, int(number), &gh.IssueComment{Body: gh.Ptr(body)})
 	return err
-}
-
-func (f *githubForge) EnsureRepoSetup(context.Context, string, string, forge.SetupConfig) error {
-	return errNotImplemented
 }

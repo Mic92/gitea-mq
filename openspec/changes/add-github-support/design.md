@@ -133,7 +133,7 @@ Fallback reconcile: per managed GitHub repo, the existing poller infrastructure 
 
 `EnsureRepoSetup` on GitHub:
 1. `PATCH /repos/{o}/{r}` → `allow_auto_merge: true`.
-2. List repo rulesets; find one named `gitea-mq`. If absent, create a ruleset with target `{include: ["~ALL"]}` (all branches) containing a single `required_status_checks` rule with `{context: "gitea-mq", integration_id: <app_id>}`. If present, ensure the rule contains `gitea-mq` (idempotent). Targeting all branches matches the Gitea auto-setup behaviour of patching every protection rule.
+2. List repo rulesets; find one named `gitea-mq`. If absent, create a ruleset with target `{include: ["~ALL"], exclude: ["refs/heads/gitea-mq/**"]}` containing a single `required_status_checks` rule with `{context: "gitea-mq", integration_id: <app_id>}`, plus the App as an `Integration` bypass actor. The exclusion is required so the rule does not gate `CreateMergeBranch` on the very check it produces. If present, leave it untouched (idempotent by name).
 3. No webhook creation — the App-level webhook covers all installations.
 
 *Alternative*: mutate classic branch protection. Rejected — rulesets are GitHub's forward path, can be additive without disturbing existing protection, and avoid the brittle full-object `PUT` of the classic API.
