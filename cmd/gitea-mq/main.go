@@ -13,6 +13,7 @@ import (
 
 	"github.com/Mic92/gitea-mq/internal/config"
 	"github.com/Mic92/gitea-mq/internal/discovery"
+	"github.com/Mic92/gitea-mq/internal/forge"
 	"github.com/Mic92/gitea-mq/internal/gitea"
 	"github.com/Mic92/gitea-mq/internal/queue"
 	"github.com/Mic92/gitea-mq/internal/registry"
@@ -73,17 +74,13 @@ func run() error {
 	queueSvc := queue.NewService(pool)
 	giteaClient := gitea.NewHTTPClient(cfg.GiteaURL, cfg.GiteaToken)
 
-	// Resolve webhook URL for auto-setup.
-	var webhookURL string
-	if cfg.ExternalURL != "" {
-		webhookURL = cfg.ExternalURL + cfg.WebhookPath
-	}
+	forges := forge.NewSet()
+	forges.Register(gitea.NewForge(giteaClient, cfg.GiteaURL))
 
 	// Create the repo registry — central coordination for managed repos.
 	reg := registry.New(ctx, &registry.Deps{
-		Gitea:          giteaClient,
+		Forges:         forges,
 		Queue:          queueSvc,
-		WebhookURL:     webhookURL,
 		WebhookSecret:  cfg.WebhookSecret,
 		ExternalURL:    cfg.ExternalURL,
 		PollInterval:   cfg.PollInterval,
@@ -135,7 +132,7 @@ func run() error {
 	webDeps := &web.Deps{
 		Queue:           queueSvc,
 		Repos:           reg,
-		Gitea:           giteaClient,
+		Forges:          forges,
 		FallbackChecks:  cfg.RequiredChecks,
 		RefreshInterval: int(cfg.RefreshInterval.Seconds()),
 	}

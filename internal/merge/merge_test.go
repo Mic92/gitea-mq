@@ -6,6 +6,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/Mic92/gitea-mq/internal/forge"
 	"github.com/Mic92/gitea-mq/internal/gitea"
 	"github.com/Mic92/gitea-mq/internal/merge"
 	"github.com/Mic92/gitea-mq/internal/queue"
@@ -17,18 +18,21 @@ func TestMain(m *testing.M) {
 	os.Exit(testutil.RunWithPostgres(m))
 }
 
-func setup(t *testing.T) (*gitea.MockClient, *queue.Service, context.Context, int64) {
+// setup returns the MockClient (for assertions) plus the same client wrapped
+// as a forge.Forge so assertions on Gitea API calls survive the refactor.
+func setup(t *testing.T) (*gitea.MockClient, forge.Forge, *queue.Service, context.Context, int64) {
 	t.Helper()
 
 	svc, ctx, repoID := testutil.TestQueueService(t)
+	mock := &gitea.MockClient{}
 
-	return &gitea.MockClient{}, svc, ctx, repoID
+	return mock, gitea.NewForge(mock, "https://gitea.example.com"), svc, ctx, repoID
 }
 
 // Successful merge → branch created, state transitions to testing, pending
 // status updated to "Testing merge result".
 func TestStartTesting_Success(t *testing.T) {
-	mock, svc, ctx, repoID := setup(t)
+	mock, f, svc, ctx, repoID := setup(t)
 
 	mock.MergeBranchesFn = func(_ context.Context, _, _, _, _, _ string) (*gitea.MergeResult, error) {
 		return &gitea.MergeResult{SHA: "mergesha123"}, nil
@@ -39,7 +43,7 @@ func TestStartTesting_Success(t *testing.T) {
 	}
 	entry, _ := svc.GetEntry(ctx, repoID, 42)
 
-	result, err := merge.StartTesting(ctx, mock, svc, "org", "app", repoID, entry, "https://mq.example.com")
+	result, err := merge.StartTesting(ctx, f, svc, "org", "app", repoID, entry, "https://mq.example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +84,7 @@ func TestStartTesting_Success(t *testing.T) {
 // Merge conflict → PR removed from queue, automerge cancelled, failure status
 // set, comment posted.
 func TestStartTesting_Conflict(t *testing.T) {
-	mock, svc, ctx, repoID := setup(t)
+	mock, f, svc, ctx, repoID := setup(t)
 
 	mock.MergeBranchesFn = func(_ context.Context, _, _, _, _, _ string) (*gitea.MergeResult, error) {
 		return nil, &gitea.MergeConflictError{Base: "main", Head: "prsha", Message: "conflict"}
@@ -91,7 +95,7 @@ func TestStartTesting_Conflict(t *testing.T) {
 	}
 	entry, _ := svc.GetEntry(ctx, repoID, 42)
 
-	result, err := merge.StartTesting(ctx, mock, svc, "org", "app", repoID, entry, "https://mq.example.com")
+	result, err := merge.StartTesting(ctx, f, svc, "org", "app", repoID, entry, "https://mq.example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +133,7 @@ func TestStartTesting_Conflict(t *testing.T) {
 // StartTesting clears stale gitea-mq/* mirrored statuses from a previous merge
 // queue attempt so they don't show outdated results while new CI runs.
 func TestStartTesting_ClearsStaleStatuses(t *testing.T) {
-	mock, svc, ctx, repoID := setup(t)
+	mock, f, svc, ctx, repoID := setup(t)
 
 	mock.MergeBranchesFn = func(_ context.Context, _, _, _, _, _ string) (*gitea.MergeResult, error) {
 		return &gitea.MergeResult{SHA: "mergesha456"}, nil
@@ -155,7 +159,7 @@ func TestStartTesting_ClearsStaleStatuses(t *testing.T) {
 	}
 	entry, _ := svc.GetEntry(ctx, repoID, 42)
 
-	result, err := merge.StartTesting(ctx, mock, svc, "org", "app", repoID, entry, "https://mq.example.com")
+	result, err := merge.StartTesting(ctx, f, svc, "org", "app", repoID, entry, "https://mq.example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +213,7 @@ func TestStartTesting_ClearsStaleStatuses(t *testing.T) {
 
 // StartTesting works normally when there are no stale gitea-mq/* statuses to clear.
 func TestStartTesting_NoStaleStatuses(t *testing.T) {
-	mock, svc, ctx, repoID := setup(t)
+	mock, f, svc, ctx, repoID := setup(t)
 
 	mock.MergeBranchesFn = func(_ context.Context, _, _, _, _, _ string) (*gitea.MergeResult, error) {
 		return &gitea.MergeResult{SHA: "mergesha789"}, nil
@@ -231,7 +235,7 @@ func TestStartTesting_NoStaleStatuses(t *testing.T) {
 	}
 	entry, _ := svc.GetEntry(ctx, repoID, 42)
 
-	result, err := merge.StartTesting(ctx, mock, svc, "org", "app", repoID, entry, "https://mq.example.com")
+	result, err := merge.StartTesting(ctx, f, svc, "org", "app", repoID, entry, "https://mq.example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +261,7 @@ func TestStartTesting_NoStaleStatuses(t *testing.T) {
 
 // CleanupStaleBranches deletes gitea-mq/* branches that have no active queue entry.
 func TestCleanupStaleBranches_DeletesOrphans(t *testing.T) {
-	mock, svc, ctx, repoID := setup(t)
+	mock, f, svc, ctx, repoID := setup(t)
 
 	branch10 := merge.BranchName(10)
 	branch99 := merge.BranchName(99)
@@ -279,7 +283,7 @@ func TestCleanupStaleBranches_DeletesOrphans(t *testing.T) {
 		}, nil
 	}
 
-	if err := merge.CleanupStaleBranches(ctx, mock, svc, "org", "app", repoID); err != nil {
+	if err := merge.CleanupStaleBranches(ctx, f, svc, "org", "app", repoID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -295,7 +299,7 @@ func TestCleanupStaleBranches_DeletesOrphans(t *testing.T) {
 
 // CleanupStaleBranches continues if a single delete fails.
 func TestCleanupStaleBranches_DeleteErrorContinues(t *testing.T) {
-	mock, svc, ctx, repoID := setup(t)
+	mock, f, svc, ctx, repoID := setup(t)
 
 	branch1 := merge.BranchName(1)
 	branch2 := merge.BranchName(2)
@@ -316,7 +320,7 @@ func TestCleanupStaleBranches_DeleteErrorContinues(t *testing.T) {
 		return nil
 	}
 
-	if err := merge.CleanupStaleBranches(ctx, mock, svc, "org", "app", repoID); err != nil {
+	if err := merge.CleanupStaleBranches(ctx, f, svc, "org", "app", repoID); err != nil {
 		t.Fatal(err)
 	}
 

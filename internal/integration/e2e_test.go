@@ -48,6 +48,7 @@ func TestFullMergeQueueFlow(t *testing.T) {
 	api.CreateToken(t)
 
 	giteaClient := gitea.NewHTTPClient(giteaServer.URL, api.Token)
+	giteaForge := gitea.NewForge(giteaClient, giteaServer.URL)
 
 	repoName := "e2e-mq-test"
 
@@ -116,7 +117,7 @@ func TestFullMergeQueueFlow(t *testing.T) {
 	}
 
 	pollerDeps := &poller.Deps{
-		Gitea:          giteaClient,
+		Forge:          giteaForge,
 		Queue:          svc,
 		RepoID:         repo.ID,
 		Owner:          "testuser",
@@ -125,7 +126,7 @@ func TestFullMergeQueueFlow(t *testing.T) {
 	}
 
 	monDeps := &monitor.Deps{
-		Gitea:        giteaClient,
+		Forge:        giteaForge,
 		Queue:        svc,
 		Owner:        "testuser",
 		Repo:         repoName,
@@ -134,7 +135,7 @@ func TestFullMergeQueueFlow(t *testing.T) {
 	}
 
 	// Set up the webhook handler so we can deliver status events to it.
-	repoKey := "testuser/" + repoName
+	repoKey := "gitea:testuser/" + repoName
 	repoMonitors := webhook.MapRepoLookup{
 		repoKey: {
 			Deps:   monDeps,
@@ -197,7 +198,7 @@ func TestFullMergeQueueFlow(t *testing.T) {
 		"state": "success",
 		"description": "build passed",
 		"repository": {"full_name": %q}
-	}`, mergeBranchSHA, repoKey)
+	}`, mergeBranchSHA, "testuser/"+repoName)
 
 	webhookReq, err := http.NewRequest(http.MethodPost, "/webhook", strings.NewReader(statusPayload))
 	if err != nil {

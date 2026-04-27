@@ -8,17 +8,16 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/Mic92/gitea-mq/internal/config"
+	"github.com/Mic92/gitea-mq/internal/forge"
 	"github.com/Mic92/gitea-mq/internal/gitea"
 	"github.com/Mic92/gitea-mq/internal/registry"
 )
 
-// Deps holds the dependencies the discovery loop needs.
 type Deps struct {
 	Gitea         gitea.Client
 	Registry      *registry.RepoRegistry
 	Topic         string
-	ExplicitRepos []config.RepoRef
+	ExplicitRepos []forge.RepoRef
 }
 
 // DiscoverOnce runs a single discovery cycle: searches repos by topic,
@@ -31,8 +30,7 @@ func DiscoverOnce(ctx context.Context, deps *Deps) error {
 		return err
 	}
 
-	// Build the desired set from topic-discovered repos.
-	desired := make(map[string]config.RepoRef)
+	desired := make(map[string]forge.RepoRef)
 
 	for _, repo := range repos {
 		if !repo.Permissions.Admin {
@@ -41,11 +39,10 @@ func DiscoverOnce(ctx context.Context, deps *Deps) error {
 			continue
 		}
 
-		ref := config.RepoRef{Owner: repo.Owner.Login, Name: repo.Name}
+		ref := forge.RepoRef{Forge: forge.KindGitea, Owner: repo.Owner.Login, Name: repo.Name}
 		desired[ref.String()] = ref
 	}
 
-	// Always include explicit repos.
 	for _, ref := range deps.ExplicitRepos {
 		desired[ref.String()] = ref
 	}
@@ -72,7 +69,7 @@ func DiscoverOnce(ctx context.Context, deps *Deps) error {
 				continue
 			}
 			slog.Info("discovery: removing repo", "repo", key)
-			ref, ok := config.ParseRepoRef(key)
+			ref, ok := forge.ParseRepoRef(key)
 			if ok {
 				deps.Registry.Remove(ref)
 			}

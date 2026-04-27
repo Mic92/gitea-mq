@@ -16,16 +16,16 @@
 
 ## 3. Migrate callers to forge.Forge (no behaviour change)
 
-- [ ] 3.1 Extend `config.RepoRef` with `Forge forge.Kind`; `String()` = `<forge>:<owner>/<name>`; update `ParseRepoRef` callers; add tests for `GITEA_MQ_REPOS` parsing → forge `gitea`
-- [ ] 3.2 Write failing test: `registry` keys by `forge:owner/name` and `Deps.Forges *forge.Set` resolves correct forge in `Add` — RED
-- [ ] 3.3 Refactor `internal/registry`: replace `Deps.Gitea` with `Deps.Forges`; key map by `ref.String()`; call `forge.EnsureRepoSetup` — GREEN; `registry_test.go` passes
-- [ ] 3.4 Refactor `internal/poller`: take `forge.Forge` + `RepoRef`; call `ListAutoMergePRs`; `poller_test.go` passes with `MockForge`
-- [ ] 3.5 Refactor `internal/merge`: `CreateMergeBranch`/`CleanupMergeBranch` take `forge.Forge`; `merge_test.go` passes with `MockForge`
-- [ ] 3.6 Refactor `internal/monitor`: `SetMQStatus`, `GetRequiredChecks`, `GetCheckStates`, `CancelAutoMerge`, `Comment` via `forge.Forge`; tests pass
-- [ ] 3.7 Refactor `internal/discovery`: emit `forge.RepoRef{Forge: gitea}`; tests pass
-- [ ] 3.8 Refactor `internal/web`: use `Forge.RepoHTMLURL`/`PRHTMLURL`, `Forge.GetPR`; tests pass
-- [ ] 3.9 Update `cmd/` wiring: build `forge.Set` with Gitea adapter; binary builds
-- [ ] 3.10 `go test ./...` and `internal/integration` e2e green — Gitea behaviour unchanged
+- [x] 3.1 Extend `config.RepoRef` with `Forge forge.Kind`; `String()` = `<forge>:<owner>/<name>`; update `ParseRepoRef` callers; add tests for `GITEA_MQ_REPOS` parsing → forge `gitea`
+- [x] 3.2 Write failing test: `registry` keys by `forge:owner/name` and `Deps.Forges *forge.Set` resolves correct forge in `Add` — RED
+- [x] 3.3 Refactor `internal/registry`: replace `Deps.Gitea` with `Deps.Forges`; key map by `ref.String()`; call `forge.EnsureRepoSetup` — GREEN; `registry_test.go` passes
+- [x] 3.4 Refactor `internal/poller`: take `forge.Forge` + `RepoRef`; call `ListAutoMergePRs`; `poller_test.go` passes with `MockForge`
+- [x] 3.5 Refactor `internal/merge`: `CreateMergeBranch`/`CleanupMergeBranch` take `forge.Forge`; `merge_test.go` passes with `MockForge`
+- [x] 3.6 Refactor `internal/monitor`: `SetMQStatus`, `GetRequiredChecks`, `GetCheckStates`, `CancelAutoMerge`, `Comment` via `forge.Forge`; tests pass
+- [x] 3.7 Refactor `internal/discovery`: emit `forge.RepoRef{Forge: gitea}`; tests pass
+- [x] 3.8 Refactor `internal/web`: use `Forge.RepoHTMLURL`/`PRHTMLURL`, `Forge.GetPR`; tests pass
+- [x] 3.9 Update `cmd/` wiring: build `forge.Set` with Gitea adapter; binary builds
+- [x] 3.10 `go test ./...` and `internal/integration` e2e green — Gitea behaviour unchanged
 
 ## 4. Database forge column
 

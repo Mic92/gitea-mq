@@ -5,13 +5,15 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/Mic92/gitea-mq/internal/forge"
 )
 
 // Config holds all configuration for the gitea-mq service.
 type Config struct {
 	GiteaURL          string
 	GiteaToken        string
-	Repos             []RepoRef
+	Repos             []forge.RepoRef
 	Topic             string // optional: discover repos by this Gitea topic
 	DatabaseURL       string
 	WebhookSecret     string
@@ -24,26 +26,6 @@ type Config struct {
 	RefreshInterval   time.Duration
 	DiscoveryInterval time.Duration
 	LogLevel          string // "debug", "info", "warn", "error"
-}
-
-// RepoRef identifies a repository by owner and name.
-type RepoRef struct {
-	Owner string
-	Name  string
-}
-
-func (r RepoRef) String() string {
-	return r.Owner + "/" + r.Name
-}
-
-// ParseRepoRef parses an "owner/name" string into a RepoRef.
-// Returns false if the format is invalid.
-func ParseRepoRef(s string) (RepoRef, bool) {
-	owner, name, ok := strings.Cut(s, "/")
-	if !ok || owner == "" || name == "" {
-		return RepoRef{}, false
-	}
-	return RepoRef{Owner: owner, Name: name}, true
 }
 
 // Load reads configuration from environment variables, validates required
@@ -100,7 +82,7 @@ func Load() (*Config, error) {
 
 	// Parse repos (may be empty when topic-based discovery is used).
 	if reposStr != "" {
-		repos, err := parseRepos(reposStr)
+		repos, err := parseRepos(reposStr, forge.KindGitea)
 		if err != nil {
 			return nil, fmt.Errorf("GITEA_MQ_REPOS: %w", err)
 		}
@@ -158,18 +140,21 @@ func envOrDefault(key, defaultVal string) string {
 	return defaultVal
 }
 
-func parseRepos(s string) ([]RepoRef, error) {
-	var repos []RepoRef
+// parseRepos parses a comma-separated list of "owner/name" entries and
+// tags each with the given forge kind. Users never write the forge prefix;
+// the env var name (GITEA_MQ_REPOS vs GITEA_MQ_GITHUB_REPOS) determines it.
+func parseRepos(s string, kind forge.Kind) ([]forge.RepoRef, error) {
+	var repos []forge.RepoRef
 	for _, part := range strings.Split(s, ",") {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
 		}
-		ref, ok := ParseRepoRef(part)
-		if !ok {
+		owner, name, ok := strings.Cut(part, "/")
+		if !ok || owner == "" || name == "" {
 			return nil, fmt.Errorf("invalid repo format %q, expected owner/name", part)
 		}
-		repos = append(repos, ref)
+		repos = append(repos, forge.RepoRef{Forge: kind, Owner: owner, Name: name})
 	}
 	if len(repos) == 0 {
 		return nil, fmt.Errorf("no repos specified")

@@ -12,8 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Mic92/gitea-mq/internal/config"
-	"github.com/Mic92/gitea-mq/internal/gitea"
+	"github.com/Mic92/gitea-mq/internal/forge"
 	"github.com/Mic92/gitea-mq/internal/monitor"
 	"github.com/Mic92/gitea-mq/internal/queue"
 	"github.com/Mic92/gitea-mq/internal/store/pg"
@@ -134,15 +133,15 @@ type PRDetailData struct {
 // RepoLister abstracts how the dashboard gets the current managed repo set.
 // Implementations include the RepoRegistry (dynamic) and static lists (tests).
 type RepoLister interface {
-	List() []config.RepoRef
-	Contains(fullName string) bool
+	List() []forge.RepoRef
+	Contains(key string) bool
 }
 
 // Deps holds the dependencies the web handlers need.
 type Deps struct {
 	Queue           *queue.Service
 	Repos           RepoLister
-	Gitea           gitea.Client
+	Forges          *forge.Set
 	FallbackChecks  []string // from GITEA_MQ_REQUIRED_CHECKS
 	RefreshInterval int      // seconds
 }
@@ -245,22 +244,24 @@ func repoHandler(deps *Deps) http.HandlerFunc {
 			return
 		}
 
-		// Check if this is a managed repo.
-		if !deps.Repos.Contains(owner + "/" + name) {
+		// Legacy 2-segment paths assume Gitea until section-10 routing lands.
+		ref := forge.RepoRef{Forge: forge.KindGitea, Owner: owner, Name: name}
+		if !deps.Repos.Contains(ref.String()) {
 			http.NotFound(w, r)
 			return
 		}
 
 		if prNumberStr != "" {
-			servePRDetail(w, r, deps, owner, name, prNumberStr)
+			servePRDetail(w, r, deps, ref, prNumberStr)
 		} else {
-			serveRepoDetail(w, r, deps, owner, name)
+			serveRepoDetail(w, r, deps, ref)
 		}
 	}
 }
 
 // serveRepoDetail renders the repo queue listing page.
-func serveRepoDetail(w http.ResponseWriter, r *http.Request, deps *Deps, owner, name string) {
+func serveRepoDetail(w http.ResponseWriter, r *http.Request, deps *Deps, ref forge.RepoRef) {
+	owner, name := ref.Owner, ref.Name
 	ctx := r.Context()
 	repo, err := deps.Queue.GetOrCreateRepo(ctx, owner, name)
 	if err != nil {
@@ -298,7 +299,8 @@ func serveRepoDetail(w http.ResponseWriter, r *http.Request, deps *Deps, owner, 
 }
 
 // servePRDetail renders the PR detail page.
-func servePRDetail(w http.ResponseWriter, r *http.Request, deps *Deps, owner, name, prNumberStr string) {
+func servePRDetail(w http.ResponseWriter, r *http.Request, deps *Deps, ref forge.RepoRef, prNumberStr string) {
+	owner, name := ref.Owner, ref.Name
 	prNumber, err := strconv.ParseInt(prNumberStr, 10, 64)
 	if err != nil || prNumber <= 0 {
 		http.NotFound(w, r)
@@ -359,24 +361,23 @@ func servePRDetail(w http.ResponseWriter, r *http.Request, deps *Deps, owner, na
 		}
 	}
 
-	// Fetch PR title/author from Gitea API (graceful degradation).
-	if deps.Gitea != nil {
-		pr, err := deps.Gitea.GetPR(ctx, owner, name, prNumber)
+	// Fetch PR title/author from the forge (graceful degradation).
+	var f forge.Forge
+	if deps.Forges != nil {
+		f, _ = deps.Forges.For(ref)
+	}
+	if f != nil {
+		pr, err := f.GetPR(ctx, owner, name, prNumber)
 		if err != nil {
-			slog.Warn("failed to fetch PR from Gitea", "pr", prNumber, "error", err)
+			slog.Warn("failed to fetch PR from forge", "pr", prNumber, "error", err)
 		} else {
 			data.Title = pr.Title
 			data.PRURL = pr.HTMLURL
-			if pr.User != nil {
-				data.Author = pr.User.Login
+			if pr.AuthorLogin != "" {
+				data.Author = pr.AuthorLogin
 			}
-			// Construct merge branch URL from the PR's HTML URL.
-			// PR URL: https://gitea.example.com/owner/repo/pulls/42
-			// Branch URL: https://gitea.example.com/owner/repo/src/branch/{name}
-			if entry.MergeBranchName.Valid && entry.MergeBranchName.String != "" && pr.HTMLURL != "" {
-				if idx := strings.Index(pr.HTMLURL, "/pulls/"); idx >= 0 {
-					data.MergeBranchURL = pr.HTMLURL[:idx] + "/src/branch/" + entry.MergeBranchName.String
-				}
+			if entry.MergeBranchName.Valid && entry.MergeBranchName.String != "" {
+				data.MergeBranchURL = f.BranchHTMLURL(owner, name, entry.MergeBranchName.String)
 			}
 		}
 	}
@@ -389,9 +390,12 @@ func servePRDetail(w http.ResponseWriter, r *http.Request, deps *Deps, owner, na
 			slog.Error("failed to get check statuses", "pr", prNumber, "error", err)
 		}
 
-		required, err := monitor.ResolveRequiredChecks(ctx, deps.Gitea, owner, name, entry.TargetBranch, deps.FallbackChecks)
-		if err != nil {
-			slog.Warn("failed to resolve required checks", "pr", prNumber, "error", err)
+		var required []string
+		if f != nil {
+			required, err = monitor.ResolveRequiredChecks(ctx, f, owner, name, entry.TargetBranch, deps.FallbackChecks)
+			if err != nil {
+				slog.Warn("failed to resolve required checks", "pr", prNumber, "error", err)
+			}
 		}
 
 		data.CheckStatuses = mergeCheckStatuses(recorded, required)

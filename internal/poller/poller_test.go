@@ -22,7 +22,7 @@ func setupPollerTest(t *testing.T) (*poller.Deps, *gitea.MockClient, *queue.Serv
 
 	mock := &gitea.MockClient{}
 	deps := &poller.Deps{
-		Gitea:          mock,
+		Forge:          gitea.NewForge(mock, "https://gitea.example.com"),
 		Queue:          svc,
 		RepoID:         repoID,
 		Owner:          "org",

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Mic92/gitea-mq/internal/config"
+	"github.com/Mic92/gitea-mq/internal/forge"
 	"github.com/Mic92/gitea-mq/internal/gitea"
 	"github.com/Mic92/gitea-mq/internal/store/pg"
 	"github.com/Mic92/gitea-mq/internal/testutil"
@@ -18,17 +18,27 @@ import (
 
 // staticRepoLister implements web.RepoLister for tests.
 type staticRepoLister struct {
-	repos []config.RepoRef
+	repos []forge.RepoRef
 }
 
-func (s *staticRepoLister) List() []config.RepoRef {
+func (s *staticRepoLister) List() []forge.RepoRef {
 	return s.repos
 }
 
-func (s *staticRepoLister) Contains(fullName string) bool {
-	return slices.ContainsFunc(s.repos, func(r config.RepoRef) bool {
-		return r.String() == fullName
+func (s *staticRepoLister) Contains(key string) bool {
+	return slices.ContainsFunc(s.repos, func(r forge.RepoRef) bool {
+		return r.String() == key
 	})
+}
+
+func giteaRef(owner, name string) forge.RepoRef {
+	return forge.RepoRef{Forge: forge.KindGitea, Owner: owner, Name: name}
+}
+
+func giteaForges(mock *gitea.MockClient) *forge.Set {
+	s := forge.NewSet()
+	s.Register(gitea.NewForge(mock, "https://gitea.example.com"))
+	return s
 }
 
 func TestOverviewShowsRepoAndQueueData(t *testing.T) {
@@ -42,9 +52,9 @@ func TestOverviewShowsRepoAndQueueData(t *testing.T) {
 
 	deps := &web.Deps{
 		Queue: svc,
-		Repos: &staticRepoLister{repos: []config.RepoRef{
-			{Owner: "org", Name: "app"},
-			{Owner: "org", Name: "lib"},
+		Repos: &staticRepoLister{repos: []forge.RepoRef{
+			giteaRef("org", "app"),
+			giteaRef("org", "lib"),
 		}},
 		RefreshInterval: 5,
 	}
@@ -126,7 +136,7 @@ func TestRepoDetailShowsPRs(t *testing.T) {
 
 	deps := &web.Deps{
 		Queue:           svc,
-		Repos:           &staticRepoLister{repos: []config.RepoRef{{Owner: "org", Name: "app"}}},
+		Repos:           &staticRepoLister{repos: []forge.RepoRef{giteaRef("org", "app")}},
 		RefreshInterval: 10,
 	}
 
@@ -201,8 +211,8 @@ func TestPRDetailHeadOfQueueTesting(t *testing.T) {
 
 	deps := &web.Deps{
 		Queue:           svc,
-		Repos:           &staticRepoLister{repos: []config.RepoRef{{Owner: "org", Name: "app"}}},
-		Gitea:           mock,
+		Repos:           &staticRepoLister{repos: []forge.RepoRef{giteaRef("org", "app")}},
+		Forges:          giteaForges(mock),
 		RefreshInterval: 10,
 	}
 
@@ -280,8 +290,8 @@ func TestPRDetailNonHeadQueued(t *testing.T) {
 
 	deps := &web.Deps{
 		Queue:           svc,
-		Repos:           &staticRepoLister{repos: []config.RepoRef{{Owner: "org", Name: "app"}}},
-		Gitea:           mock,
+		Repos:           &staticRepoLister{repos: []forge.RepoRef{giteaRef("org", "app")}},
+		Forges:          giteaForges(mock),
 		RefreshInterval: 10,
 	}
 
@@ -312,7 +322,7 @@ func TestPRDetailNotInQueue(t *testing.T) {
 
 	deps := &web.Deps{
 		Queue:           svc,
-		Repos:           &staticRepoLister{repos: []config.RepoRef{{Owner: "org", Name: "app"}}},
+		Repos:           &staticRepoLister{repos: []forge.RepoRef{giteaRef("org", "app")}},
 		RefreshInterval: 10,
 	}
 
@@ -345,8 +355,8 @@ func TestPRDetailGiteaAPIFailure(t *testing.T) {
 
 	deps := &web.Deps{
 		Queue:           svc,
-		Repos:           &staticRepoLister{repos: []config.RepoRef{{Owner: "org", Name: "app"}}},
-		Gitea:           mock,
+		Repos:           &staticRepoLister{repos: []forge.RepoRef{giteaRef("org", "app")}},
+		Forges:          giteaForges(mock),
 		RefreshInterval: 10,
 	}
 
@@ -375,7 +385,7 @@ func TestRepoDetailUnknownRepoReturns404(t *testing.T) {
 
 	deps := &web.Deps{
 		Queue:           svc,
-		Repos:           &staticRepoLister{repos: []config.RepoRef{{Owner: "org", Name: "app"}}},
+		Repos:           &staticRepoLister{repos: []forge.RepoRef{giteaRef("org", "app")}},
 		RefreshInterval: 10,
 	}
 

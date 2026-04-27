@@ -51,7 +51,7 @@ func setup(t *testing.T) *testEnv {
 	}
 
 	deps := &monitor.Deps{
-		Gitea:        mock,
+		Forge:        gitea.NewForge(mock, "https://gitea.example.com"),
 		Queue:        svc,
 		Owner:        "org",
 		Repo:         "app",
@@ -60,7 +60,7 @@ func setup(t *testing.T) *testEnv {
 	}
 
 	repos := webhook.MapRepoLookup{
-		"org/app": {Deps: deps, RepoID: repoID},
+		"gitea:org/app": {Deps: deps, RepoID: repoID},
 	}
 
 	return &testEnv{

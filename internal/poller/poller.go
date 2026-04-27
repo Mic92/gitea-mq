@@ -1,14 +1,16 @@
-// Package poller discovers PRs with automerge scheduled by polling the
-// Gitea API timeline for pull_scheduled_merge / pull_cancel_scheduled_merge
-// comment types.
+// Package poller reconciles the queue with the forge: it discovers PRs with
+// auto-merge enabled, enqueues them once their own CI is green, and removes
+// queued PRs that were merged/closed/retargeted/pushed/cancelled.
 package poller
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
+	"github.com/Mic92/gitea-mq/internal/forge"
 	"github.com/Mic92/gitea-mq/internal/gitea"
 	"github.com/Mic92/gitea-mq/internal/merge"
 	"github.com/Mic92/gitea-mq/internal/monitor"
@@ -16,45 +18,37 @@ import (
 	"github.com/Mic92/gitea-mq/internal/store/pg"
 )
 
-// Deps holds the dependencies the poller needs. Using a struct instead of
-// individual fields makes testing straightforward — tests inject mocks.
 type Deps struct {
-	Gitea  gitea.Client
+	Forge  forge.Forge
 	Queue  *queue.Service
 	RepoID int64
 	Owner  string
 	Repo   string
-	// ExternalURL is the dashboard base URL for constructing target_url in commit statuses.
+	// ExternalURL is the dashboard base URL for status target_url.
 	ExternalURL string
-	// FallbackChecks is the list of CI check contexts to require when
-	// branch protection doesn't specify any. Used to gate enqueue.
+	// FallbackChecks gates enqueue when branch protection lists none.
 	FallbackChecks []string
-	// SuccessTimeout is how long a PR can sit in "success" state without
-	// being merged before we consider automerge failed.
+	// SuccessTimeout is how long a PR may sit in "success" without merging
+	// before we assume the forge's auto-merge failed.
 	SuccessTimeout time.Duration
 }
 
-// PollResult describes what happened during a single poll cycle.
 type PollResult struct {
-	Enqueued []int64 // PR numbers newly enqueued
-	Dequeued []int64 // PR numbers removed from queue
-	Advanced []int64 // PR numbers that caused queue advancement
-	Errors   []error // non-fatal errors encountered
-	Paused   bool    // true if Gitea was unreachable
+	Enqueued []int64
+	Dequeued []int64
+	Advanced []int64
+	Errors   []error
+	Paused   bool // forge unreachable
 }
 
-// removeOpts controls optional behaviour when removing a PR from the queue.
 type removeOpts struct {
 	cancelAutomerge bool
-	comment         string // if non-empty, post this comment on the PR
-	advance         bool   // whether to record in Advanced (queue moved forward)
-	logMsg          string // slog message
-	logAttrs        []any  // extra slog key-value pairs
+	comment         string
+	advance         bool
+	logMsg          string
+	logAttrs        []any
 }
 
-// removePR dequeues a PR, optionally cancels automerge and posts a comment,
-// cleans up the merge branch if the entry was head, and records the removal
-// in the poll result.
 func removePR(ctx context.Context, deps *Deps, result *PollResult, entry *pg.QueueEntry, opts removeOpts) error {
 	dqResult, err := deps.Queue.Dequeue(ctx, deps.RepoID, entry.PrNumber)
 	if err != nil {
@@ -62,163 +56,114 @@ func removePR(ctx context.Context, deps *Deps, result *PollResult, entry *pg.Que
 	}
 
 	if opts.cancelAutomerge {
-		_ = deps.Gitea.CancelAutoMerge(ctx, deps.Owner, deps.Repo, entry.PrNumber)
+		_ = deps.Forge.CancelAutoMerge(ctx, deps.Owner, deps.Repo, entry.PrNumber)
 	}
-
 	if opts.comment != "" {
-		_ = deps.Gitea.CreateComment(ctx, deps.Owner, deps.Repo, entry.PrNumber, opts.comment)
+		_ = deps.Forge.Comment(ctx, deps.Owner, deps.Repo, entry.PrNumber, opts.comment)
 	}
-
 	if dqResult.WasHead {
-		merge.CleanupMergeBranch(ctx, deps.Gitea, deps.Owner, deps.Repo, entry)
+		merge.CleanupMergeBranch(ctx, deps.Forge, deps.Owner, deps.Repo, entry)
 	}
 
 	result.Dequeued = append(result.Dequeued, entry.PrNumber)
-
 	if opts.advance {
 		result.Advanced = append(result.Advanced, entry.PrNumber)
 	}
 
 	slog.Info(opts.logMsg, append([]any{"pr", entry.PrNumber}, opts.logAttrs...)...)
-
 	return nil
 }
 
-// prChecksGreen checks whether the CI statuses on a PR's head commit
-// are passing. It resolves the required checks from branch protection (or
-// fallback config), fetches the combined commit status, and evaluates them.
-// Returns true if all required checks pass, or if no CI is configured.
-func prChecksGreen(ctx context.Context, deps *Deps, pr *gitea.PR) (bool, error) {
-	targetBranch := ""
-	if pr.Base != nil {
-		targetBranch = pr.Base.Ref
-	}
-
-	requiredChecks, err := monitor.ResolveRequiredChecks(ctx, deps.Gitea, deps.Owner, deps.Repo, targetBranch, deps.FallbackChecks)
+// prChecksGreen reports whether the PR's own head-commit checks are passing.
+// True when all required checks pass, or when no CI is configured at all.
+func prChecksGreen(ctx context.Context, deps *Deps, pr *forge.PR) (bool, error) {
+	requiredChecks, err := monitor.ResolveRequiredChecks(ctx, deps.Forge, deps.Owner, deps.Repo, pr.BaseBranch, deps.FallbackChecks)
 	if err != nil {
-		return false, fmt.Errorf("resolve required checks for PR #%d: %w", pr.Index, err)
+		return false, fmt.Errorf("resolve required checks for PR #%d: %w", pr.Number, err)
 	}
 
-	headSHA := ""
-	if pr.Head != nil {
-		headSHA = pr.Head.Sha
-	}
-
-	combined, err := deps.Gitea.GetCombinedCommitStatus(ctx, deps.Owner, deps.Repo, headSHA)
+	checks, err := deps.Forge.GetCheckStates(ctx, deps.Owner, deps.Repo, pr.HeadSHA)
 	if err != nil {
-		return false, fmt.Errorf("get combined status for PR #%d: %w", pr.Index, err)
+		return false, fmt.Errorf("get check states for PR #%d: %w", pr.Number, err)
 	}
 
-	// Filter out gitea-mq's own statuses — we shouldn't gate on ourselves.
+	// gitea-mq/* mirrors are our own output, not external CI.
 	var externalStatuses []pg.CheckStatus
-	for _, s := range combined.Statuses {
-		if s.Context == "gitea-mq" {
+	for ctxName, c := range checks {
+		if strings.HasPrefix(ctxName, merge.BranchPrefix) {
 			continue
 		}
-		externalStatuses = append(externalStatuses, pg.CheckStatus{
-			Context: s.Context,
-			State:   gitea.MapState(s.Status),
-		})
+		externalStatuses = append(externalStatuses, pg.CheckStatus{Context: ctxName, State: c.State})
 	}
 
-	// No required checks and no external statuses → no CI configured, allow enqueue.
 	if len(requiredChecks) == 0 && len(externalStatuses) == 0 {
 		return true, nil
 	}
 
-	result, _, _ := monitor.EvaluateChecks(externalStatuses, requiredChecks)
-	return result == monitor.CheckSuccess, nil
+	res, _, _ := monitor.EvaluateChecks(externalStatuses, requiredChecks)
+	return res == monitor.CheckSuccess, nil
 }
 
-// PollOnce runs a single poll cycle for one repository:
-//
-//  1. Fetch all open PRs
-//  2. For each open PR: check timeline → enqueue if automerge scheduled and CI is green
-//  3. For each queued PR: check if automerge cancelled → dequeue
-//  4. For each queued PR: check if merged → remove + advance
-//  5. For each queued PR: check if head SHA changed → remove + cancel automerge
-//  6. For each queued PR: check if closed → remove + cleanup
-//  7. For each queued PR: check if target branch changed → remove
-//  8. For head-of-queue in success state: check if still open too long → cancel
+// PollOnce runs a single reconcile cycle for one repository.
 func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 	result := &PollResult{}
 
-	// Step 1: Fetch all open PRs.
-	openPRs, err := deps.Gitea.ListOpenPRs(ctx, deps.Owner, deps.Repo)
+	openPRs, err := deps.Forge.ListOpenPRs(ctx, deps.Owner, deps.Repo)
 	if err != nil {
 		return &PollResult{Paused: true, Errors: []error{err}}, nil
 	}
 
-	// Build a lookup of open PRs by index.
-	openPRMap := make(map[int64]*gitea.PR, len(openPRs))
+	openPRMap := make(map[int64]*forge.PR, len(openPRs))
 	for i := range openPRs {
-		openPRMap[openPRs[i].Index] = &openPRs[i]
+		openPRMap[openPRs[i].Number] = &openPRs[i]
 	}
 
-	// Step 2: For each open PR, check automerge state.
-	for _, pr := range openPRs {
-		timeline, err := deps.Gitea.GetPRTimeline(ctx, deps.Owner, deps.Repo, pr.Index)
-		if err != nil {
-			result.Errors = append(result.Errors, fmt.Errorf("get timeline for PR #%d: %w", pr.Index, err))
+	// Enqueue newly auto-merge-enabled PRs whose own CI is green.
+	for i := range openPRs {
+		pr := &openPRs[i]
+		if !pr.AutoMergeEnabled {
 			continue
 		}
 
-		if !HasAutomergeScheduled(timeline) {
-			continue
-		}
-
-		// Check if already queued.
-		existing, err := deps.Queue.GetEntry(ctx, deps.RepoID, pr.Index)
+		existing, err := deps.Queue.GetEntry(ctx, deps.RepoID, pr.Number)
 		if err != nil {
-			result.Errors = append(result.Errors, fmt.Errorf("check queue for PR #%d: %w", pr.Index, err))
+			result.Errors = append(result.Errors, fmt.Errorf("check queue for PR #%d: %w", pr.Number, err))
 			continue
 		}
 		if existing != nil {
-			continue // Already queued, no-op.
+			continue
 		}
 
-		// Gate on CI checks: only enqueue once the PR's own checks are green.
-		green, err := prChecksGreen(ctx, deps, &pr)
+		green, err := prChecksGreen(ctx, deps, pr)
 		if err != nil {
-			result.Errors = append(result.Errors, fmt.Errorf("check CI status for PR #%d: %w", pr.Index, err))
+			result.Errors = append(result.Errors, fmt.Errorf("check CI status for PR #%d: %w", pr.Number, err))
 			continue
 		}
 		if !green {
 			continue
 		}
 
-		// Enqueue the PR.
-		headSHA := ""
-		if pr.Head != nil {
-			headSHA = pr.Head.Sha
-		}
-		targetBranch := ""
-		if pr.Base != nil {
-			targetBranch = pr.Base.Ref
-		}
-
-		enqResult, err := deps.Queue.Enqueue(ctx, deps.RepoID, pr.Index, headSHA, targetBranch)
+		enqResult, err := deps.Queue.Enqueue(ctx, deps.RepoID, pr.Number, pr.HeadSHA, pr.BaseBranch)
 		if err != nil {
-			result.Errors = append(result.Errors, fmt.Errorf("enqueue PR #%d: %w", pr.Index, err))
+			result.Errors = append(result.Errors, fmt.Errorf("enqueue PR #%d: %w", pr.Number, err))
 			continue
 		}
 
 		if enqResult.IsNew {
-			// Set gitea-mq pending status on the PR's head commit.
 			desc := fmt.Sprintf("Queued (position #%d)", enqResult.Position)
-			targetURL := gitea.DashboardPRURL(deps.ExternalURL, deps.Owner, deps.Repo, pr.Index)
-			if err := deps.Gitea.CreateCommitStatus(ctx, deps.Owner, deps.Repo, headSHA,
-				gitea.MQStatus("pending", desc, targetURL)); err != nil {
-				result.Errors = append(result.Errors, fmt.Errorf("set pending status for PR #%d: %w", pr.Index, err))
+			targetURL := gitea.DashboardPRURL(deps.ExternalURL, deps.Owner, deps.Repo, pr.Number)
+			if err := deps.Forge.SetMQStatus(ctx, deps.Owner, deps.Repo, pr.HeadSHA, forge.MQStatus{
+				State: pg.CheckStatePending, Description: desc, TargetURL: targetURL,
+			}); err != nil {
+				result.Errors = append(result.Errors, fmt.Errorf("set pending status for PR #%d: %w", pr.Number, err))
 			}
 
-			result.Enqueued = append(result.Enqueued, pr.Index)
-			slog.Info("enqueued PR from automerge detection", "pr", pr.Index, "position", enqResult.Position)
+			result.Enqueued = append(result.Enqueued, pr.Number)
+			slog.Info("enqueued PR from automerge detection", "pr", pr.Number, "position", enqResult.Position)
 		}
 	}
 
-	// Step 3-8: Check all queued entries for state changes.
-	// We need to get all active entries for this repo.
+	// Reconcile existing queue entries against forge state.
 	activeEntries, err := deps.Queue.ListActiveEntries(ctx, deps.RepoID)
 	if err != nil {
 		result.Errors = append(result.Errors, fmt.Errorf("list active entries: %w", err))
@@ -228,53 +173,43 @@ func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 	for _, entry := range activeEntries {
 		pr, isOpen := openPRMap[entry.PrNumber]
 
-		// Step 6: Closed PR detection — PR no longer in open PRs list.
 		if !isOpen {
-			// Fetch actual PR state to distinguish closed vs merged.
-			fullPR, err := deps.Gitea.GetPR(ctx, deps.Owner, deps.Repo, entry.PrNumber)
+			fullPR, err := deps.Forge.GetPR(ctx, deps.Owner, deps.Repo, entry.PrNumber)
 			if err != nil {
 				result.Errors = append(result.Errors, fmt.Errorf("get PR #%d: %w", entry.PrNumber, err))
 				continue
 			}
 
-			if fullPR.HasMerged {
-				// Step 4: Merged PR — remove + advance.
+			if fullPR.Merged {
 				if err := removePR(ctx, deps, result, &entry, removeOpts{
-					advance: true,
-					logMsg:  "removed merged PR from queue",
+					advance: true, logMsg: "removed merged PR from queue",
 				}); err != nil {
 					result.Errors = append(result.Errors, fmt.Errorf("dequeue merged PR #%d: %w", entry.PrNumber, err))
 				}
-
 				continue
 			}
 
-			// Closed but not merged — silently remove.
 			if err := removePR(ctx, deps, result, &entry, removeOpts{
 				logMsg: "removed closed PR from queue",
 			}); err != nil {
 				result.Errors = append(result.Errors, fmt.Errorf("dequeue closed PR #%d: %w", entry.PrNumber, err))
 			}
-
 			continue
 		}
 
-		// Step 7: Target branch change detection.
-		if pr.Base != nil && pr.Base.Ref != entry.TargetBranch {
+		if pr.BaseBranch != "" && pr.BaseBranch != entry.TargetBranch {
 			if err := removePR(ctx, deps, result, &entry, removeOpts{
 				cancelAutomerge: true,
-				comment:         fmt.Sprintf("⚠️ Removed from merge queue: target branch changed from `%s` to `%s`. Please re-schedule automerge.", entry.TargetBranch, pr.Base.Ref),
+				comment:         fmt.Sprintf("⚠️ Removed from merge queue: target branch changed from `%s` to `%s`. Please re-schedule automerge.", entry.TargetBranch, pr.BaseBranch),
 				logMsg:          "removed retargeted PR from queue",
-				logAttrs:        []any{"old_branch", entry.TargetBranch, "new_branch", pr.Base.Ref},
+				logAttrs:        []any{"old_branch", entry.TargetBranch, "new_branch", pr.BaseBranch},
 			}); err != nil {
 				result.Errors = append(result.Errors, fmt.Errorf("dequeue retargeted PR #%d: %w", entry.PrNumber, err))
 			}
-
 			continue
 		}
 
-		// Step 5: Head SHA changed → new push detection.
-		if pr.Head != nil && pr.Head.Sha != entry.PrHeadSha {
+		if pr.HeadSHA != "" && pr.HeadSHA != entry.PrHeadSha {
 			if err := removePR(ctx, deps, result, &entry, removeOpts{
 				cancelAutomerge: true,
 				comment:         "⚠️ Removed from merge queue: new commits were pushed. Please re-schedule automerge.",
@@ -283,63 +218,44 @@ func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 			}); err != nil {
 				result.Errors = append(result.Errors, fmt.Errorf("dequeue pushed PR #%d: %w", entry.PrNumber, err))
 			}
-
 			continue
 		}
 
-		// Step 3: Automerge cancellation detection.
-		timeline, err := deps.Gitea.GetPRTimeline(ctx, deps.Owner, deps.Repo, entry.PrNumber)
-		if err != nil {
-			result.Errors = append(result.Errors, fmt.Errorf("get timeline for queued PR #%d: %w", entry.PrNumber, err))
-			continue
-		}
-
-		if !HasAutomergeScheduled(timeline) {
+		if !pr.AutoMergeEnabled {
 			if err := removePR(ctx, deps, result, &entry, removeOpts{
 				logMsg: "removed PR due to automerge cancellation",
 			}); err != nil {
 				result.Errors = append(result.Errors, fmt.Errorf("dequeue cancelled PR #%d: %w", entry.PrNumber, err))
 			}
-
 			continue
 		}
 
-		// Step 8: Success-but-not-merged timeout detection.
-		if entry.State == pg.EntryStateSuccess && deps.SuccessTimeout > 0 {
-			if entry.CompletedAt.Valid {
-				completedTime := entry.CompletedAt.Time
-				if time.Since(completedTime) > deps.SuccessTimeout {
-					// PR has been in success state too long — automerge probably failed.
-					targetURL := gitea.DashboardPRURL(deps.ExternalURL, deps.Owner, deps.Repo, entry.PrNumber)
-					_ = deps.Gitea.CreateCommitStatus(ctx, deps.Owner, deps.Repo, entry.PrHeadSha,
-						gitea.MQStatus("error", "Automerge did not complete in time", targetURL))
-					_ = deps.Queue.SetError(ctx, deps.RepoID, entry.PrNumber, "automerge did not complete in time")
+		if entry.State == pg.EntryStateSuccess && deps.SuccessTimeout > 0 &&
+			entry.CompletedAt.Valid && time.Since(entry.CompletedAt.Time) > deps.SuccessTimeout {
+			targetURL := gitea.DashboardPRURL(deps.ExternalURL, deps.Owner, deps.Repo, entry.PrNumber)
+			_ = deps.Forge.SetMQStatus(ctx, deps.Owner, deps.Repo, entry.PrHeadSha, forge.MQStatus{
+				State: pg.CheckStateError, Description: "Automerge did not complete in time", TargetURL: targetURL,
+			})
+			_ = deps.Queue.SetError(ctx, deps.RepoID, entry.PrNumber, "automerge did not complete in time")
 
-					if err := removePR(ctx, deps, result, &entry, removeOpts{
-						cancelAutomerge: true,
-						comment:         "⚠️ Removed from merge queue: PR was marked as ready to merge but Gitea did not merge it in time. This may indicate a branch protection issue.",
-						advance:         true,
-						logMsg:          "removed PR due to success-but-not-merged timeout",
-					}); err != nil {
-						result.Errors = append(result.Errors, fmt.Errorf("dequeue timed-out PR #%d: %w", entry.PrNumber, err))
-					}
-				}
+			if err := removePR(ctx, deps, result, &entry, removeOpts{
+				cancelAutomerge: true,
+				comment:         "⚠️ Removed from merge queue: PR was marked as ready to merge but Gitea did not merge it in time. This may indicate a branch protection issue.",
+				advance:         true,
+				logMsg:          "removed PR due to success-but-not-merged timeout",
+			}); err != nil {
+				result.Errors = append(result.Errors, fmt.Errorf("dequeue timed-out PR #%d: %w", entry.PrNumber, err))
 			}
 		}
 	}
 
-	// Step 9: Start testing for any head-of-queue entry still in "queued" state.
-	// This kicks off merge branch creation for newly-enqueued PRs or after
-	// the previous head was removed and the queue advanced.
-	//
-	// Re-fetch active entries since the loop above may have changed them.
+	// Kick off testing for any branch whose head is still queued.
 	activeEntries, err = deps.Queue.ListActiveEntries(ctx, deps.RepoID)
 	if err != nil {
 		result.Errors = append(result.Errors, fmt.Errorf("list active entries for testing: %w", err))
 		return result, nil
 	}
 
-	// Collect unique target branches that have queued entries.
 	seenBranches := make(map[string]bool)
 	for _, entry := range activeEntries {
 		if seenBranches[entry.TargetBranch] {
@@ -356,14 +272,12 @@ func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 			continue
 		}
 
-		startResult, err := merge.StartTesting(ctx, deps.Gitea, deps.Queue, deps.Owner, deps.Repo, deps.RepoID, head, deps.ExternalURL)
+		startResult, err := merge.StartTesting(ctx, deps.Forge, deps.Queue, deps.Owner, deps.Repo, deps.RepoID, head, deps.ExternalURL)
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("start testing for PR #%d: %w", head.PrNumber, err))
 			continue
 		}
 		if startResult.Removed {
-			// PR was removed from the queue (conflict, git error, etc.)
-			// — the next head (if any) will be picked up on the next poll cycle.
 			result.Dequeued = append(result.Dequeued, head.PrNumber)
 			result.Errors = append(result.Errors, fmt.Errorf("removed PR #%d from queue during testing start", head.PrNumber))
 			slog.Info("head-of-queue was removed, will retry next cycle", "pr", head.PrNumber)
@@ -375,12 +289,10 @@ func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 	return result, nil
 }
 
-// Run starts the polling loop. It runs PollOnce on every tick and stops when
-// ctx is cancelled. The first poll happens immediately (no initial delay).
+// Run starts the polling loop. The first poll happens immediately.
 func Run(ctx context.Context, deps *Deps, interval time.Duration) {
 	slog.Info("poller started", "owner", deps.Owner, "repo", deps.Repo, "interval", interval)
 
-	// Run immediately on startup.
 	if _, err := PollOnce(ctx, deps); err != nil {
 		slog.Error("poll error", "owner", deps.Owner, "repo", deps.Repo, "error", err)
 	}
@@ -392,20 +304,16 @@ func Run(ctx context.Context, deps *Deps, interval time.Duration) {
 		select {
 		case <-ctx.Done():
 			slog.Info("poller stopped", "owner", deps.Owner, "repo", deps.Repo)
-
 			return
 		case <-ticker.C:
 			result, err := PollOnce(ctx, deps)
 			if err != nil {
 				slog.Error("poll error", "owner", deps.Owner, "repo", deps.Repo, "error", err)
-
 				continue
 			}
-
 			if result.Paused {
-				slog.Warn("Gitea unavailable, pausing", "owner", deps.Owner, "repo", deps.Repo)
+				slog.Warn("forge unavailable, pausing", "owner", deps.Owner, "repo", deps.Repo)
 			}
-
 			for _, e := range result.Errors {
 				slog.Warn("poll issue", "owner", deps.Owner, "repo", deps.Repo, "error", e)
 			}

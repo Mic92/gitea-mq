@@ -21,7 +21,7 @@ func setupMonitorTest(t *testing.T) (*monitor.Deps, *gitea.MockClient, *queue.Se
 
 	mock := &gitea.MockClient{}
 	deps := &monitor.Deps{
-		Gitea:        mock,
+		Forge:        gitea.NewForge(mock, "https://gitea.example.com"),
 		Queue:        svc,
 		Owner:        "org",
 		Repo:         "app",
