@@ -129,4 +129,5 @@ type Repo struct {
 	Owner     string             `json:"owner"`
 	Name      string             `json:"name"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	Forge     string             `json:"forge"`
 }

@@ -5,11 +5,7 @@ package gitea
 
 import (
 	"context"
-	"fmt"
-	"strings"
 	"time"
-
-	"github.com/jogman/gitea-mq/internal/store/pg"
 )
 
 // PR represents a pull request from the Gitea API.
@@ -69,12 +65,6 @@ type CommitStatus struct {
 // Centralises the context string so callers don't repeat it.
 func MQStatus(state, description, targetURL string) CommitStatus {
 	return CommitStatus{Context: "gitea-mq", State: state, Description: description, TargetURL: targetURL}
-}
-
-// DashboardPRURL constructs the dashboard URL for a specific PR.
-// The baseURL should be the GITEA_MQ_EXTERNAL_URL value.
-func DashboardPRURL(baseURL, owner, repo string, prNumber int64) string {
-	return strings.TrimRight(baseURL, "/") + fmt.Sprintf("/repo/%s/%s/pr/%d", owner, repo, prNumber)
 }
 
 // Branch represents a branch from the Gitea API.
@@ -158,22 +148,6 @@ type CommitStatusResult struct {
 	Status      string `json:"status"`
 	Description string `json:"description"`
 	TargetURL   string `json:"target_url"`
-}
-
-// MapState maps Gitea's API status strings to internal CheckState values.
-// Gitea uses states like "warning" and "skipped" that don't exist in our DB
-// enum but are passing states.
-func MapState(s string) pg.CheckState {
-	switch s {
-	case "success", "warning", "skipped":
-		return pg.CheckStateSuccess
-	case "failure":
-		return pg.CheckStateFailure
-	case "error":
-		return pg.CheckStateError
-	default:
-		return pg.CheckStatePending
-	}
 }
 
 // Client defines the Gitea API surface used by gitea-mq.

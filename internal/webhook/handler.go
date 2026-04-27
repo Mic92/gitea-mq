@@ -10,17 +10,19 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/jogman/gitea-mq/internal/gitea"
-	"github.com/jogman/gitea-mq/internal/monitor"
-	"github.com/jogman/gitea-mq/internal/queue"
-	"github.com/jogman/gitea-mq/internal/store/pg"
+	"github.com/Mic92/gitea-mq/internal/forge"
+	"github.com/Mic92/gitea-mq/internal/monitor"
+	"github.com/Mic92/gitea-mq/internal/queue"
+	"github.com/Mic92/gitea-mq/internal/store/pg"
 )
 
-// RepoMonitor holds the monitor deps for a single repo. The webhook handler
-// routes events to the correct repo's monitor.
+// RepoMonitor holds the per-repo deps webhook handlers need to route events.
 type RepoMonitor struct {
-	Deps   *monitor.Deps
-	RepoID int64
+	Deps *monitor.Deps
+	// TriggerPoll fires an immediate reconcile of the repo's poller. Used
+	// for PR-level webhooks (auto-merge toggle, close, push) where the
+	// poller already owns the correct enqueue/dequeue logic.
+	TriggerPoll func()
 }
 
 // RepoLookup abstracts how the webhook handler finds a repo's monitor.
@@ -72,13 +74,14 @@ func Handler(secret string, repos RepoLookup, queueSvc *queue.Service) http.Hand
 		}
 
 		// Ignore our own status updates to prevent feedback loops.
-		if event.Context == "gitea-mq" {
+		if forge.IsOwnContext(event.Context) {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
 
-		// Route to the correct repo.
-		repoKey := event.Repository.FullName
+		// Gitea payloads identify repos as owner/name; the registry keys by
+		// forge:owner/name.
+		repoKey := string(forge.KindGitea) + ":" + event.Repository.FullName
 		rm, ok := repos.LookupMonitor(repoKey)
 		if !ok {
 			slog.Debug("webhook for unmanaged repo", "repo", repoKey)
@@ -86,37 +89,33 @@ func Handler(secret string, repos RepoLookup, queueSvc *queue.Service) http.Hand
 			return
 		}
 
-		// Find the queue entry whose merge branch SHA matches this commit.
-		// Only head-of-queue entries in "testing" state have merge branches.
-		entry := findEntryForCommit(r.Context(), queueSvc, rm.RepoID, event.SHA)
-		if entry == nil {
-			// Status for a commit we're not tracking — ignore.
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-
-		// Mirror the status to the PR head commit with a prefixed context
-		// so users can see merge queue CI progress directly on the PR page.
-		mirrorStatus := gitea.CommitStatus{
-			Context:     "gitea-mq/" + event.Context,
-			State:       event.State,
+		routeCheck(r.Context(), rm, queueSvc, event.SHA, event.Context, forge.Check{
+			State:       forge.ParseCheckState(event.State),
 			Description: event.Description,
 			TargetURL:   event.TargetURL,
-		}
-		if err := rm.Deps.Gitea.CreateCommitStatus(r.Context(), rm.Deps.Owner, rm.Deps.Repo, entry.PrHeadSha, mirrorStatus); err != nil {
-			slog.Warn("failed to mirror status to PR head", "pr", entry.PrNumber, "context", mirrorStatus.Context, "error", err)
-		}
-
-		checkState := gitea.MapState(event.State)
-
-		if err := monitor.ProcessCheckStatus(r.Context(), rm.Deps, entry, event.Context, checkState, event.TargetURL); err != nil {
-			slog.Error("failed to process check status", "pr", entry.PrNumber, "error", err)
-			// Still return 200 — Gitea will retry on non-2xx, which could
-			// cause duplicate processing.
-		}
-
+		})
 		w.WriteHeader(http.StatusOK)
 	})
+}
+
+// routeCheck is the shared status/check-run path for both forges: match the
+// SHA to a testing queue entry, mirror onto the PR head, and feed the monitor.
+// Returning 200 even on internal errors avoids forge retries causing duplicate
+// processing.
+func routeCheck(ctx context.Context, rm *RepoMonitor, svc *queue.Service, sha, checkCtx string, c forge.Check) {
+	entry := findEntryForCommit(ctx, svc, rm.Deps.RepoID, sha)
+	if entry == nil {
+		return
+	}
+
+	mirrorCtx := forge.MirrorContextPrefix + checkCtx
+	if err := rm.Deps.Forge.MirrorCheck(ctx, rm.Deps.Owner, rm.Deps.Repo, entry.PrHeadSha, mirrorCtx, c); err != nil {
+		slog.Warn("failed to mirror status to PR head", "pr", entry.PrNumber, "context", mirrorCtx, "err", err)
+	}
+
+	if err := monitor.ProcessCheckStatus(ctx, rm.Deps, entry, checkCtx, c.State, c.TargetURL); err != nil {
+		slog.Error("failed to process check status", "pr", entry.PrNumber, "err", err)
+	}
 }
 
 // statusEvent is the subset of Gitea's commit_status webhook payload we need.

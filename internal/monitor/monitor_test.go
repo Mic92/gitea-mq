@@ -6,12 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jogman/gitea-mq/internal/gitea"
-	"github.com/jogman/gitea-mq/internal/merge"
-	"github.com/jogman/gitea-mq/internal/monitor"
-	"github.com/jogman/gitea-mq/internal/queue"
-	"github.com/jogman/gitea-mq/internal/store/pg"
-	"github.com/jogman/gitea-mq/internal/testutil"
+	"github.com/Mic92/gitea-mq/internal/gitea"
+	"github.com/Mic92/gitea-mq/internal/monitor"
+	"github.com/Mic92/gitea-mq/internal/queue"
+	"github.com/Mic92/gitea-mq/internal/store/pg"
+	"github.com/Mic92/gitea-mq/internal/testutil"
 )
 
 func setupMonitorTest(t *testing.T) (*monitor.Deps, *gitea.MockClient, *queue.Service, context.Context, int64) {
@@ -21,7 +20,7 @@ func setupMonitorTest(t *testing.T) (*monitor.Deps, *gitea.MockClient, *queue.Se
 
 	mock := &gitea.MockClient{}
 	deps := &monitor.Deps{
-		Gitea:        mock,
+		Forge:        gitea.NewForge(mock, "https://gitea.example.com"),
 		Queue:        svc,
 		Owner:        "org",
 		Repo:         "app",
@@ -30,25 +29,6 @@ func setupMonitorTest(t *testing.T) (*monitor.Deps, *gitea.MockClient, *queue.Se
 	}
 
 	return deps, mock, svc, ctx, repoID
-}
-
-// enqueueTesting is a helper that enqueues a PR and transitions it to
-// the testing state with a merge branch, which is the precondition for
-// ProcessCheckStatus.
-func enqueueTesting(t *testing.T, svc *queue.Service, ctx context.Context, repoID, prNumber int64) {
-	t.Helper()
-
-	if _, err := svc.Enqueue(ctx, repoID, prNumber, "sha"+string(rune('0'+prNumber%10)), "main"); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := svc.UpdateState(ctx, repoID, prNumber, pg.EntryStateTesting); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := svc.SetMergeBranch(ctx, repoID, prNumber, merge.BranchName(prNumber), "mergesha"); err != nil {
-		t.Fatal(err)
-	}
 }
 
 func withBranchProtection(mock *gitea.MockClient, checks ...string) {
@@ -65,9 +45,7 @@ func withBranchProtection(mock *gitea.MockClient, checks ...string) {
 func TestProcessCheckStatus_AllPass_TriggersSuccess(t *testing.T) {
 	deps, mock, svc, ctx, repoID := setupMonitorTest(t)
 	withBranchProtection(mock, "gitea-mq", "ci/build")
-	enqueueTesting(t, svc, ctx, repoID, 42)
-
-	entry, _ := svc.GetEntry(ctx, repoID, 42)
+	entry := testutil.EnqueueTesting(t, svc, repoID, 42, "sha42", "mergesha")
 
 	if err := monitor.ProcessCheckStatus(ctx, deps, entry, "ci/build", pg.CheckStateSuccess, ""); err != nil {
 		t.Fatal(err)
@@ -93,14 +71,12 @@ func TestProcessCheckStatus_AllPass_TriggersSuccess(t *testing.T) {
 func TestProcessCheckStatus_Failure_CancelsAndAdvances(t *testing.T) {
 	deps, mock, svc, ctx, repoID := setupMonitorTest(t)
 	withBranchProtection(mock, "gitea-mq", "ci/build")
-	enqueueTesting(t, svc, ctx, repoID, 42)
+	entry := testutil.EnqueueTesting(t, svc, repoID, 42, "sha42", "mergesha")
 
 	// PR #43 is next in line.
 	if _, err := svc.Enqueue(ctx, repoID, 43, "sha43", "main"); err != nil {
 		t.Fatal(err)
 	}
-
-	entry, _ := svc.GetEntry(ctx, repoID, 42)
 
 	if err := monitor.ProcessCheckStatus(ctx, deps, entry, "ci/build", pg.CheckStateFailure, "https://ci.example.com/build/42"); err != nil {
 		t.Fatal(err)
@@ -135,9 +111,7 @@ func TestProcessCheckStatus_Failure_CancelsAndAdvances(t *testing.T) {
 func TestProcessCheckStatus_Partial_StaysWaiting(t *testing.T) {
 	deps, mock, svc, ctx, repoID := setupMonitorTest(t)
 	withBranchProtection(mock, "gitea-mq", "ci/build", "ci/lint")
-	enqueueTesting(t, svc, ctx, repoID, 42)
-
-	entry, _ := svc.GetEntry(ctx, repoID, 42)
+	entry := testutil.EnqueueTesting(t, svc, repoID, 42, "sha42", "mergesha")
 
 	// Only ci/build reported — ci/lint still pending.
 	if err := monitor.ProcessCheckStatus(ctx, deps, entry, "ci/build", pg.CheckStateSuccess, ""); err != nil {
@@ -162,7 +136,7 @@ func TestProcessCheckStatus_Partial_StaysWaiting(t *testing.T) {
 func TestProcessCheckStatus_Success_SkipsStaleMirroredStatuses(t *testing.T) {
 	deps, mock, svc, ctx, repoID := setupMonitorTest(t)
 	withBranchProtection(mock, "gitea-mq", "ci/build")
-	enqueueTesting(t, svc, ctx, repoID, 42)
+	entry := testutil.EnqueueTesting(t, svc, repoID, 42, "sha42", "mergesha")
 
 	// Simulate stale gitea-mq/* statuses on the PR head from a previous attempt.
 	mock.GetCombinedCommitStatusFn = func(_ context.Context, _, _, _ string) (*gitea.CombinedStatus, error) {
@@ -175,8 +149,6 @@ func TestProcessCheckStatus_Success_SkipsStaleMirroredStatuses(t *testing.T) {
 			},
 		}, nil
 	}
-
-	entry, _ := svc.GetEntry(ctx, repoID, 42)
 
 	if err := monitor.ProcessCheckStatus(ctx, deps, entry, "ci/build", pg.CheckStateSuccess, ""); err != nil {
 		t.Fatal(err)
@@ -211,9 +183,7 @@ func TestProcessCheckStatus_Success_SkipsStaleMirroredStatuses(t *testing.T) {
 func TestProcessCheckStatus_RetrySuccess(t *testing.T) {
 	deps, mock, svc, ctx, repoID := setupMonitorTest(t)
 	withBranchProtection(mock, "gitea-mq", "ci/build")
-	enqueueTesting(t, svc, ctx, repoID, 42)
-
-	entry, _ := svc.GetEntry(ctx, repoID, 42)
+	entry := testutil.EnqueueTesting(t, svc, repoID, 42, "sha42", "mergesha")
 
 	// First: failure.
 	if err := monitor.ProcessCheckStatus(ctx, deps, entry, "ci/build", pg.CheckStateFailure, ""); err != nil {
@@ -223,9 +193,7 @@ func TestProcessCheckStatus_RetrySuccess(t *testing.T) {
 	// Re-setup with a clean DB so the queue and mock state are fresh.
 	deps, mock, svc, ctx, repoID = setupMonitorTest(t)
 	withBranchProtection(mock, "gitea-mq", "ci/build")
-	enqueueTesting(t, svc, ctx, repoID, 42)
-
-	entry, _ = svc.GetEntry(ctx, repoID, 42)
+	entry = testutil.EnqueueTesting(t, svc, repoID, 42, "sha42", "mergesha")
 
 	// Record failure, then overwrite with success (simulating retry).
 	_ = svc.SaveCheckStatus(ctx, entry.ID, "ci/build", pg.CheckStateFailure, "")

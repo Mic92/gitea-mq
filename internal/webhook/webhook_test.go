@@ -2,9 +2,6 @@ package webhook_test
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,22 +9,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jogman/gitea-mq/internal/gitea"
-	"github.com/jogman/gitea-mq/internal/merge"
-	"github.com/jogman/gitea-mq/internal/monitor"
-	"github.com/jogman/gitea-mq/internal/queue"
-	"github.com/jogman/gitea-mq/internal/store/pg"
-	"github.com/jogman/gitea-mq/internal/testutil"
-	"github.com/jogman/gitea-mq/internal/webhook"
+	"github.com/Mic92/gitea-mq/internal/gitea"
+	"github.com/Mic92/gitea-mq/internal/monitor"
+	"github.com/Mic92/gitea-mq/internal/queue"
+	"github.com/Mic92/gitea-mq/internal/testutil"
+	"github.com/Mic92/gitea-mq/internal/webhook"
 )
 
 const testSecret = "test-secret"
 
-func sign(body []byte) string {
-	mac := hmac.New(sha256.New, []byte(testSecret))
-	mac.Write(body)
-	return hex.EncodeToString(mac.Sum(nil))
-}
+func sign(body []byte) string { return webhook.ComputeSignature(body, testSecret) }
 
 type testEnv struct {
 	handler http.Handler
@@ -51,7 +42,7 @@ func setup(t *testing.T) *testEnv {
 	}
 
 	deps := &monitor.Deps{
-		Gitea:        mock,
+		Forge:        gitea.NewForge(mock, "https://gitea.example.com"),
 		Queue:        svc,
 		Owner:        "org",
 		Repo:         "app",
@@ -60,7 +51,7 @@ func setup(t *testing.T) *testEnv {
 	}
 
 	repos := webhook.MapRepoLookup{
-		"org/app": {Deps: deps, RepoID: repoID},
+		"gitea:org/app": {Deps: deps},
 	}
 
 	return &testEnv{
@@ -95,48 +86,73 @@ func doRequest(handler http.Handler, body []byte, sig string) *httptest.Response
 	return rec
 }
 
-// enqueueTesting enqueues a PR and transitions it to testing with a merge branch,
-// which is the precondition for the webhook handler to find the entry.
-func enqueueTesting(t *testing.T, svc *queue.Service, ctx context.Context, repoID, prNumber int64, prHeadSHA, mergeSHA string) {
-	t.Helper()
-
-	if _, err := svc.Enqueue(ctx, repoID, prNumber, prHeadSHA, "main"); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := svc.UpdateState(ctx, repoID, prNumber, pg.EntryStateTesting); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := svc.SetMergeBranch(ctx, repoID, prNumber, merge.BranchName(prNumber), mergeSHA); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// HMAC is the security boundary — verify valid/missing/invalid signatures.
+// HMAC is the security boundary for both forge endpoints.
 func TestHandler_SignatureValidation(t *testing.T) {
-	env := setup(t)
-	body := makePayload("abc", "ci/build", "success", "org/app")
-
-	if rec := doRequest(env.handler, body, sign(body)); rec.Code != http.StatusOK {
-		t.Fatalf("valid sig: expected 200, got %d", rec.Code)
-	}
-	if rec := doRequest(env.handler, body, ""); rec.Code != http.StatusUnauthorized {
-		t.Fatalf("missing sig: expected 401, got %d", rec.Code)
-	}
-	if rec := doRequest(env.handler, body, "deadbeef"); rec.Code != http.StatusUnauthorized {
-		t.Fatalf("wrong sig: expected 401, got %d", rec.Code)
+	giteaBody := string(makePayload("abc", "ci/build", "success", "x/y"))
+	for _, tc := range []struct {
+		name    string
+		handler http.Handler
+		header  string
+		body    string
+		good    string
+	}{
+		{
+			"gitea", webhook.Handler(testSecret, webhook.MapRepoLookup{}, nil),
+			"X-Gitea-Signature", giteaBody, sign([]byte(giteaBody)),
+		},
+		{
+			"github", webhook.GithubHandler([]byte(testSecret), webhook.MapRepoLookup{}, nil, nil),
+			"X-Hub-Signature-256", `{}`, "sha256=" + sign([]byte(`{}`)),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, sig := range []struct {
+				name string
+				val  string
+				code int
+			}{
+				{"valid", tc.good, http.StatusOK},
+				{"missing", "", http.StatusUnauthorized},
+				{"wrong", "deadbeef", http.StatusUnauthorized},
+			} {
+				req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(tc.body))
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("X-GitHub-Event", "ping")
+				if sig.val != "" {
+					req.Header.Set(tc.header, sig.val)
+				}
+				rec := httptest.NewRecorder()
+				tc.handler.ServeHTTP(rec, req)
+				if rec.Code != sig.code {
+					t.Errorf("%s sig: code=%d want %d", sig.name, rec.Code, sig.code)
+				}
+			}
+		})
 	}
 }
 
-// Prevents the feedback loop: gitea-mq posts status → webhook fires → must not re-process.
-func TestHandler_IgnoresOwnStatus(t *testing.T) {
+// A primed queue entry ensures a missed filter would reach MirrorCheck rather
+// than fall out at SHA lookup; previously the Gitea handler only dropped the
+// bare "gitea-mq" context, so gitea-mq/* mirrors fed back into the monitor.
+func TestHandler_IgnoresOwnContexts(t *testing.T) {
 	env := setup(t)
-	body := makePayload("abc", "gitea-mq", "success", "org/app")
-	doRequest(env.handler, body, sign(body))
 
-	if len(env.mock.CallsTo("CreateCommitStatus")) != 0 {
-		t.Fatal("should not process own status — feedback loop risk")
+	if _, err := env.svc.Enqueue(env.ctx, env.repoID, 5, "pr-head", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.svc.SetMergeBranch(env.ctx, env.repoID, 5, "gitea-mq/5", "merge-sha"); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, checkCtx := range []string{"gitea-mq", "gitea-mq/ci/build"} {
+		body := makePayload("merge-sha", checkCtx, "success", "org/app")
+		rec := doRequest(env.handler, body, sign(body))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: expected 200, got %d", checkCtx, rec.Code)
+		}
+	}
+	if n := len(env.mock.CallsTo("CreateCommitStatus")); n != 0 {
+		t.Fatalf("own-context status was re-processed: %d CreateCommitStatus calls", n)
 	}
 }
 
@@ -151,7 +167,7 @@ func TestHandler_MirrorsStatusToPRHead(t *testing.T) {
 		prNumber  = int64(7)
 	)
 
-	enqueueTesting(t, env.svc, env.ctx, env.repoID, prNumber, prHeadSHA, mergeSHA)
+	testutil.EnqueueTesting(t, env.svc, env.repoID, prNumber, prHeadSHA, mergeSHA)
 
 	payload := map[string]any{
 		"sha":         mergeSHA,

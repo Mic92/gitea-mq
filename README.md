@@ -25,24 +25,33 @@ One PR is tested at a time per target branch. PRs targeting different branches g
 
 ## Configuration
 
+gitea-mq can manage Gitea repos, GitHub repos, or both from one process. At
+least one of the two backends must be configured.
+
+
 All configuration is via environment variables:
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `GITEA_MQ_GITEA_URL` | yes | — | Gitea instance URL |
-| `GITEA_MQ_GITEA_TOKEN` | yes | — | API token with repo scope |
-| `GITEA_MQ_REPOS` | yes* | — | Comma-separated `owner/repo` list (not required when `GITEA_MQ_TOPIC` is set) |
-| `GITEA_MQ_TOPIC` | no | — | Discover repos by Gitea topic instead of (or in addition to) a static list |
+| `GITEA_MQ_GITEA_URL` | gitea | — | Gitea instance URL. Setting this enables the Gitea backend. |
+| `GITEA_MQ_GITEA_TOKEN` | gitea | — | API token with repo scope |
+| `GITEA_MQ_REPOS` | no | — | Comma-separated `owner/repo` list of Gitea repos (optional when `GITEA_MQ_TOPIC` is set) |
+| `GITEA_MQ_TOPIC` | no | — | Discover Gitea repos by topic instead of (or in addition to) a static list |
+| `GITEA_MQ_WEBHOOK_SECRET` | gitea | — | Shared secret for the Gitea webhook HMAC |
+| `GITEA_MQ_GITHUB_APP_ID` | github | — | GitHub App ID. Setting this enables the GitHub backend. |
+| `GITEA_MQ_GITHUB_PRIVATE_KEY` / `_FILE` | github | — | PEM-encoded App private key, or path to a file containing it |
+| `GITEA_MQ_GITHUB_WEBHOOK_SECRET` | github | — | Webhook secret configured on the GitHub App |
+| `GITEA_MQ_GITHUB_REPOS` | no | — | Comma-separated `owner/repo` list of GitHub repos to manage in addition to all repos the App is installed on |
+| `GITEA_MQ_GITHUB_POLL_INTERVAL` | no | `GITEA_MQ_POLL_INTERVAL` | Override the reconcile poll interval for GitHub (its rate limit is much higher) |
 | `GITEA_MQ_DATABASE_URL` | yes | — | PostgreSQL connection string |
-| `GITEA_MQ_WEBHOOK_SECRET` | yes | — | Shared secret for webhook HMAC |
 | `GITEA_MQ_LISTEN_ADDR` | no | `:8080` | HTTP listen address |
-| `GITEA_MQ_WEBHOOK_PATH` | no | `/webhook` | Webhook endpoint path |
+| `GITEA_MQ_WEBHOOK_PATH` | no | `/webhook` | Legacy alias for the Gitea webhook endpoint (the canonical path is `/webhook/gitea`) |
 | `GITEA_MQ_EXTERNAL_URL` | yes | — | URL where Gitea can reach this service (used for webhook auto-setup and commit status target URLs) |
 | `GITEA_MQ_POLL_INTERVAL` | no | `30s` | Automerge discovery poll interval |
 | `GITEA_MQ_CHECK_TIMEOUT` | no | `1h` | Timeout for required checks |
 | `GITEA_MQ_REQUIRED_CHECKS` | no | — | Fallback required CI contexts when branch protection has none (comma-separated) |
 | `GITEA_MQ_REFRESH_INTERVAL` | no | `10s` | Dashboard auto-refresh interval |
-| `GITEA_MQ_DISCOVERY_INTERVAL` | no | `5m` | How often to re-discover repos by topic (only used when `GITEA_MQ_TOPIC` is set) |
+| `GITEA_MQ_DISCOVERY_INTERVAL` | no | `5m` | How often to re-scan Gitea topics and GitHub installations |
 | `GITEA_MQ_LOG_LEVEL` | no | `info` | Log level: debug, info, warn, error |
 
 ## Repo selection
@@ -68,12 +77,35 @@ GITEA_MQ_REPOS=org/critical-service
 GITEA_MQ_TOPIC=merge-queue
 ```
 
+## GitHub setup
+
+gitea-mq talks to GitHub as a [GitHub App](https://docs.github.com/en/apps/creating-github-apps).
+Use the [App creation helper](https://mic92.github.io/gitea-mq/) to pre-fill
+the registration form, or register one manually with:
+
+- **Webhook URL**: `${GITEA_MQ_EXTERNAL_URL}/webhook/github`, secret = `GITEA_MQ_GITHUB_WEBHOOK_SECRET`
+- **Permissions** (Repository): Checks **read & write**, Commit statuses **read**, Contents **read & write**, Pull requests **read & write**, Administration **read & write**, Metadata **read**
+- **Subscribed events**: `pull_request`, `check_run`, `status`, `installation`, `installation_repositories`
+
+Generate a private key, then set `GITEA_MQ_GITHUB_APP_ID` and
+`GITEA_MQ_GITHUB_PRIVATE_KEY_FILE`. On startup gitea-mq patches the App's
+webhook URL and secret to match `GITEA_MQ_EXTERNAL_URL` /
+`GITEA_MQ_GITHUB_WEBHOOK_SECRET`, so you can leave those fields blank when
+registering the App. Install the App on the orgs/repos you
+want managed; gitea-mq picks up every installation automatically.
+`GITEA_MQ_GITHUB_REPOS` is optional and additive: listed repos stay managed
+even if the installation is later removed.
+
 ## Auto-setup
 
 On startup, gitea-mq automatically configures each managed repository:
 
-- **Branch protection**: Adds `gitea-mq` as a required status check to all existing branch protection rules
-- **Webhook**: Creates a webhook for `status` events pointed at the service
+- **Gitea**: adds `gitea-mq` as a required status check to all existing branch protection rules and creates a `status` webhook pointed at the service
+- **GitHub**: enables `allow_auto_merge` and creates a `gitea-mq` repository ruleset that requires the `gitea-mq` check on the default branch (the App and repo admins are bypass actors). Add further target branches to the ruleset's include list if you queue PRs against more than the default branch.
+
+If the GitHub App lacks the Administration permission, auto-setup is skipped
+with a warning and the queue still runs against whatever the operator
+pre-configured.
 
 `GITEA_MQ_EXTERNAL_URL` is the externally-reachable URL of gitea-mq (e.g. `https://mq.example.com`), **not** the Gitea URL.
 It is used for webhook auto-setup and as the target URL in commit statuses (linking to the dashboard).
@@ -117,11 +149,15 @@ gitea-mq needs to know which CI checks must pass on the merge branch before it a
 
 A lightweight web dashboard shows queue status across all managed repos, lets you drill into individual repos to see queued PRs, and inspect check results for each PR. Auto-refreshes without JavaScript. A `/healthz` endpoint is available for monitoring.
 
+Repo and PR pages live under `/repo/{forge}/{owner}/{name}` (e.g.
+`/repo/github/org/app/pr/42`). Paths without the forge segment resolve as
+Gitea for compatibility with links posted by older versions.
+
 ## NixOS module
 
 ```nix
 {
-  inputs.gitea-mq.url = "github:jogman/gitea-mq";
+  inputs.gitea-mq.url = "github:Mic92/gitea-mq";
 
   # In your NixOS configuration:
   imports = [ inputs.gitea-mq.nixosModules.default ];
@@ -143,12 +179,17 @@ A lightweight web dashboard shows queue status across all managed repos, lets yo
 |---|---|---|---|
 | `enable` | bool | `false` | Enable the service |
 | `package` | package | `pkgs.gitea-mq` | Package to use |
-| `giteaUrl` | string | — | Gitea instance URL |
-| `giteaTokenFile` | path | — | File containing the API token |
+| `giteaUrl` | string or null | `null` | Gitea instance URL; enables the Gitea backend |
+| `giteaTokenFile` | path | — | File containing the Gitea API token |
+| `webhookSecretFile` | path | — | File containing the Gitea webhook secret |
+| `github.appId` | int or null | `null` | GitHub App ID; enables the GitHub backend |
+| `github.privateKeyFile` | path | — | File containing the GitHub App private key (PEM) |
+| `github.webhookSecretFile` | path | — | File containing the GitHub App webhook secret |
+| `github.repos` | list of strings | `[]` | GitHub repos in addition to all installations |
+| `github.pollInterval` | string or null | `null` | Override poll interval for GitHub |
 | `repos` | list of strings | `[]` | Repos to manage (`owner/name`); optional when `topic` is set |
 | `topic` | string or null | `null` | Discover repos by Gitea topic |
 | `databaseUrl` | string | `postgres:///gitea-mq?host=/run/postgresql` | PostgreSQL connection string |
-| `webhookSecretFile` | path | — | File containing the webhook secret |
 | `listenAddr` | string | `:8080` | HTTP listen address |
 | `webhookPath` | string | `/webhook` | Webhook endpoint path |
 | `externalUrl` | string | — | URL where Gitea can reach this service (for webhook auto-setup and commit status links) |

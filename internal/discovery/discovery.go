@@ -1,93 +1,91 @@
-// Package discovery implements periodic topic-based repo discovery from the
-// Gitea API. It reconciles the discovered set with the registry, adding new
-// repos and removing ones that lost the topic.
+// Package discovery reconciles the desired set of managed repos against the
+// registry. Each forge contributes a Source; reconciliation is scoped per
+// forge so one backend being unreachable does not evict another's repos.
 package discovery
 
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"time"
 
-	"github.com/jogman/gitea-mq/internal/config"
-	"github.com/jogman/gitea-mq/internal/gitea"
-	"github.com/jogman/gitea-mq/internal/registry"
+	"github.com/Mic92/gitea-mq/internal/forge"
+	"github.com/Mic92/gitea-mq/internal/registry"
 )
 
-// Deps holds the dependencies the discovery loop needs.
-type Deps struct {
-	Gitea         gitea.Client
-	Registry      *registry.RepoRegistry
-	Topic         string
-	ExplicitRepos []config.RepoRef
+// Source enumerates repos a forge wants managed.
+type Source struct {
+	Kind forge.Kind
+	List func(ctx context.Context) ([]forge.RepoRef, error)
 }
 
-// DiscoverOnce runs a single discovery cycle: searches repos by topic,
-// filters by admin access, merges with explicit repos, and reconciles
-// the registry.
-func DiscoverOnce(ctx context.Context, deps *Deps) error {
-	repos, err := deps.Gitea.SearchReposByTopic(ctx, deps.Topic)
-	if err != nil {
-		slog.Warn("discovery: failed to search repos by topic", "error", err)
-		return err
+type Deps struct {
+	Sources       []Source
+	Registry      *registry.RepoRegistry
+	ExplicitRepos []forge.RepoRef
+	// Trigger fires an immediate cycle in addition to the interval, e.g. on
+	// an installation webhook.
+	Trigger <-chan struct{}
+}
+
+func DiscoverOnce(ctx context.Context, deps *Deps) {
+	explicit := make(map[string]forge.RepoRef, len(deps.ExplicitRepos))
+	for _, r := range deps.ExplicitRepos {
+		explicit[r.String()] = r
 	}
+	// Explicit repos are added regardless of whether their forge has a
+	// dynamic source so a Gitea-only config without topic discovery still
+	// brings repos up.
+	addNew(ctx, deps.Registry, explicit)
 
-	// Build the desired set from topic-discovered repos.
-	desired := make(map[string]config.RepoRef)
-
-	for _, repo := range repos {
-		if !repo.Permissions.Admin {
-			slog.Debug("discovery: skipping repo without admin access",
-				"repo", repo.FullName)
+	for _, src := range deps.Sources {
+		refs, err := src.List(ctx)
+		if err != nil {
+			// Do not reconcile this forge: removing repos because the API is
+			// down would amplify an outage into queue loss.
+			slog.Warn("discovery: source failed; keeping current set", "forge", src.Kind, "err", err)
 			continue
 		}
-
-		ref := config.RepoRef{Owner: repo.Owner.Login, Name: repo.Name}
-		desired[ref.String()] = ref
-	}
-
-	// Always include explicit repos.
-	for _, ref := range deps.ExplicitRepos {
-		desired[ref.String()] = ref
-	}
-
-	// Reconcile: add new repos.
-	for key, ref := range desired {
-		if !deps.Registry.Contains(key) {
-			slog.Info("discovery: adding repo", "repo", key)
-			if err := deps.Registry.Add(ctx, ref); err != nil {
-				slog.Warn("discovery: failed to add repo", "repo", key, "error", err)
-			}
+		desired := map[string]forge.RepoRef{}
+		for _, r := range refs {
+			desired[r.String()] = r
 		}
-	}
+		addNew(ctx, deps.Registry, desired)
 
-	// Reconcile: remove repos that lost the topic (but not explicit ones).
-	explicitSet := make(map[string]struct{}, len(deps.ExplicitRepos))
-	for _, ref := range deps.ExplicitRepos {
-		explicitSet[ref.String()] = struct{}{}
-	}
-
-	for key := range deps.Registry.Keys() {
-		if _, inDesired := desired[key]; !inDesired {
-			if _, isExplicit := explicitSet[key]; isExplicit {
+		prefix := string(src.Kind) + ":"
+		for key := range deps.Registry.Keys() {
+			if !strings.HasPrefix(key, prefix) {
+				continue
+			}
+			if _, ok := desired[key]; ok {
+				continue
+			}
+			if _, ok := explicit[key]; ok {
 				continue
 			}
 			slog.Info("discovery: removing repo", "repo", key)
-			ref, ok := config.ParseRepoRef(key)
-			if ok {
+			if ref, ok := forge.ParseRepoRef(key); ok {
 				deps.Registry.Remove(ref)
 			}
 		}
+		slog.Info("discovery: reconciled", "forge", src.Kind, "managed", len(desired))
 	}
-
-	slog.Info("discovery: cycle complete", "managed", len(desired))
-	return nil
 }
 
-// Run starts the background discovery loop, repeating at the given interval.
-// The caller is responsible for the initial DiscoverOnce call.
-// Stops when ctx is cancelled.
+func addNew(ctx context.Context, reg *registry.RepoRegistry, desired map[string]forge.RepoRef) {
+	for key, ref := range desired {
+		if reg.Contains(key) {
+			continue
+		}
+		slog.Info("discovery: adding repo", "repo", key)
+		if err := reg.Add(ctx, ref); err != nil {
+			slog.Warn("discovery: failed to add repo", "repo", key, "err", err)
+		}
+	}
+}
+
 func Run(ctx context.Context, deps *Deps, interval time.Duration) {
-	slog.Info("discovery loop started", "topic", deps.Topic, "interval", interval)
+	slog.Info("discovery loop started", "interval", interval, "sources", len(deps.Sources))
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -98,9 +96,9 @@ func Run(ctx context.Context, deps *Deps, interval time.Duration) {
 			slog.Info("discovery loop stopped")
 			return
 		case <-ticker.C:
-			if err := DiscoverOnce(ctx, deps); err != nil {
-				slog.Error("discovery error", "error", err)
-			}
+			DiscoverOnce(ctx, deps)
+		case <-deps.Trigger:
+			DiscoverOnce(ctx, deps)
 		}
 	}
 }

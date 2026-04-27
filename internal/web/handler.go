@@ -12,11 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jogman/gitea-mq/internal/config"
-	"github.com/jogman/gitea-mq/internal/gitea"
-	"github.com/jogman/gitea-mq/internal/monitor"
-	"github.com/jogman/gitea-mq/internal/queue"
-	"github.com/jogman/gitea-mq/internal/store/pg"
+	"github.com/Mic92/gitea-mq/internal/forge"
+	"github.com/Mic92/gitea-mq/internal/monitor"
+	"github.com/Mic92/gitea-mq/internal/queue"
+	"github.com/Mic92/gitea-mq/internal/store/pg"
 )
 
 //go:embed templates/*.html templates/*.css
@@ -36,6 +35,14 @@ var funcMap = template.FuncMap{
 			return "❌"
 		default:
 			return "⏳"
+		}
+	},
+	"forgeName": func(k forge.Kind) string {
+		switch k {
+		case forge.KindGithub:
+			return "GitHub"
+		default:
+			return "Gitea"
 		}
 	},
 }
@@ -88,6 +95,7 @@ func pluralize(n int, unit string) string {
 
 // RepoOverview holds the data for one repo in the overview page.
 type RepoOverview struct {
+	Forge     forge.Kind
 	Owner     string
 	Name      string
 	QueueSize int
@@ -108,14 +116,17 @@ type RepoDetailEntry struct {
 
 // RepoDetailData is the template data for the repo detail page.
 type RepoDetailData struct {
+	Forge           forge.Kind
 	Owner           string
 	Name            string
+	RepoURL         string // link to the repo on the forge
 	Entries         []RepoDetailEntry
 	RefreshInterval int // seconds
 }
 
 // PRDetailData is the template data for the PR detail page.
 type PRDetailData struct {
+	Forge           forge.Kind
 	Owner           string
 	Name            string
 	PrNumber        int64
@@ -126,23 +137,23 @@ type PRDetailData struct {
 	EnqueuedAt      time.Time
 	CheckStatuses   []pg.CheckStatus
 	InQueue         bool
-	PRURL           string // link to the PR on Gitea
-	MergeBranchURL  string // link to the merge branch on Gitea
-	RefreshInterval int    // seconds
+	PRURL           string
+	MergeBranchURL  string
+	RefreshInterval int // seconds
 }
 
 // RepoLister abstracts how the dashboard gets the current managed repo set.
 // Implementations include the RepoRegistry (dynamic) and static lists (tests).
 type RepoLister interface {
-	List() []config.RepoRef
-	Contains(fullName string) bool
+	List() []forge.RepoRef
+	Contains(key string) bool
 }
 
 // Deps holds the dependencies the web handlers need.
 type Deps struct {
 	Queue           *queue.Service
 	Repos           RepoLister
-	Gitea           gitea.Client
+	Forges          *forge.Set
 	FallbackChecks  []string // from GITEA_MQ_REQUIRED_CHECKS
 	RefreshInterval int      // seconds
 }
@@ -183,9 +194,9 @@ func overviewHandler(deps *Deps) http.HandlerFunc {
 		}
 
 		for _, ref := range deps.Repos.List() {
-			overview := RepoOverview{Owner: ref.Owner, Name: ref.Name}
+			overview := RepoOverview{Forge: ref.Forge, Owner: ref.Owner, Name: ref.Name}
 
-			repo, err := deps.Queue.GetOrCreateRepo(ctx, ref.Owner, ref.Name)
+			repo, err := deps.Queue.GetOrCreateRepo(ctx, string(ref.Forge), ref.Owner, ref.Name)
 			if err != nil {
 				slog.Error("failed to get repo", "repo", ref, "error", err)
 				data.Repos = append(data.Repos, overview)
@@ -212,57 +223,55 @@ func overviewHandler(deps *Deps) http.HandlerFunc {
 }
 
 // repoHandler serves repo and PR detail pages:
-//   - GET /repo/{owner}/{name} — repo queue listing
-//   - GET /repo/{owner}/{name}/pr/{number} — PR detail
+//   - GET /repo/{forge}/{owner}/{name} — repo queue listing
+//   - GET /repo/{forge}/{owner}/{name}/pr/{number} — PR detail
+//
+// Legacy two-/three-segment paths without {forge} resolve as gitea so existing
+// MQStatus target_urls and bookmarks keep working.
 func repoHandler(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Parse /repo/{owner}/{name}[/pr/{number}] from path.
-		path := strings.TrimPrefix(r.URL.Path, "/repo/")
-		owner, rest, ok := strings.Cut(path, "/")
-		if !ok || owner == "" || rest == "" {
+		parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/repo/"), "/"), "/")
+
+		kind := forge.KindGitea
+		if len(parts) > 0 && forge.Kind(parts[0]).Valid() {
+			kind = forge.Kind(parts[0])
+			parts = parts[1:]
+		}
+
+		var owner, name, prNumberStr string
+		switch {
+		case len(parts) == 2:
+			owner, name = parts[0], parts[1]
+		case len(parts) == 4 && parts[2] == "pr":
+			owner, name, prNumberStr = parts[0], parts[1], parts[3]
+		default:
+			http.NotFound(w, r)
+			return
+		}
+		if owner == "" || name == "" {
 			http.NotFound(w, r)
 			return
 		}
 
-		// Split rest into name and optional /pr/{number}.
-		var name string
-		var prNumberStr string
-		if idx := strings.Index(rest, "/"); idx >= 0 {
-			name = rest[:idx]
-			suffix := rest[idx+1:] // e.g. "pr/42"
-			prPrefix, numStr, hasPR := strings.Cut(suffix, "/")
-			if !hasPR || prPrefix != "pr" || numStr == "" {
-				http.NotFound(w, r)
-				return
-			}
-			prNumberStr = numStr
-		} else {
-			name = rest
-		}
-
-		if name == "" {
-			http.NotFound(w, r)
-			return
-		}
-
-		// Check if this is a managed repo.
-		if !deps.Repos.Contains(owner + "/" + name) {
+		ref := forge.RepoRef{Forge: kind, Owner: owner, Name: name}
+		if !deps.Repos.Contains(ref.String()) {
 			http.NotFound(w, r)
 			return
 		}
 
 		if prNumberStr != "" {
-			servePRDetail(w, r, deps, owner, name, prNumberStr)
+			servePRDetail(w, r, deps, ref, prNumberStr)
 		} else {
-			serveRepoDetail(w, r, deps, owner, name)
+			serveRepoDetail(w, r, deps, ref)
 		}
 	}
 }
 
 // serveRepoDetail renders the repo queue listing page.
-func serveRepoDetail(w http.ResponseWriter, r *http.Request, deps *Deps, owner, name string) {
+func serveRepoDetail(w http.ResponseWriter, r *http.Request, deps *Deps, ref forge.RepoRef) {
+	owner, name := ref.Owner, ref.Name
 	ctx := r.Context()
-	repo, err := deps.Queue.GetOrCreateRepo(ctx, owner, name)
+	repo, err := deps.Queue.GetOrCreateRepo(ctx, string(ref.Forge), owner, name)
 	if err != nil {
 		slog.Error("failed to get repo", "owner", owner, "name", name, "error", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
@@ -277,9 +286,15 @@ func serveRepoDetail(w http.ResponseWriter, r *http.Request, deps *Deps, owner, 
 	}
 
 	data := RepoDetailData{
+		Forge:           ref.Forge,
 		Owner:           owner,
 		Name:            name,
 		RefreshInterval: deps.RefreshInterval,
+	}
+	if deps.Forges != nil {
+		if f, _ := deps.Forges.For(ref); f != nil {
+			data.RepoURL = f.RepoHTMLURL(owner, name)
+		}
 	}
 
 	for _, e := range entries {
@@ -298,7 +313,8 @@ func serveRepoDetail(w http.ResponseWriter, r *http.Request, deps *Deps, owner, 
 }
 
 // servePRDetail renders the PR detail page.
-func servePRDetail(w http.ResponseWriter, r *http.Request, deps *Deps, owner, name, prNumberStr string) {
+func servePRDetail(w http.ResponseWriter, r *http.Request, deps *Deps, ref forge.RepoRef, prNumberStr string) {
+	owner, name := ref.Owner, ref.Name
 	prNumber, err := strconv.ParseInt(prNumberStr, 10, 64)
 	if err != nil || prNumber <= 0 {
 		http.NotFound(w, r)
@@ -306,7 +322,7 @@ func servePRDetail(w http.ResponseWriter, r *http.Request, deps *Deps, owner, na
 	}
 
 	ctx := r.Context()
-	repo, err := deps.Queue.GetOrCreateRepo(ctx, owner, name)
+	repo, err := deps.Queue.GetOrCreateRepo(ctx, string(ref.Forge), owner, name)
 	if err != nil {
 		slog.Error("failed to get repo", "owner", owner, "name", name, "error", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
@@ -321,6 +337,7 @@ func servePRDetail(w http.ResponseWriter, r *http.Request, deps *Deps, owner, na
 	}
 
 	data := PRDetailData{
+		Forge:           ref.Forge,
 		Owner:           owner,
 		Name:            name,
 		PrNumber:        prNumber,
@@ -359,24 +376,23 @@ func servePRDetail(w http.ResponseWriter, r *http.Request, deps *Deps, owner, na
 		}
 	}
 
-	// Fetch PR title/author from Gitea API (graceful degradation).
-	if deps.Gitea != nil {
-		pr, err := deps.Gitea.GetPR(ctx, owner, name, prNumber)
+	// Fetch PR title/author from the forge (graceful degradation).
+	var f forge.Forge
+	if deps.Forges != nil {
+		f, _ = deps.Forges.For(ref)
+	}
+	if f != nil {
+		pr, err := f.GetPR(ctx, owner, name, prNumber)
 		if err != nil {
-			slog.Warn("failed to fetch PR from Gitea", "pr", prNumber, "error", err)
+			slog.Warn("failed to fetch PR from forge", "pr", prNumber, "error", err)
 		} else {
 			data.Title = pr.Title
 			data.PRURL = pr.HTMLURL
-			if pr.User != nil {
-				data.Author = pr.User.Login
+			if pr.AuthorLogin != "" {
+				data.Author = pr.AuthorLogin
 			}
-			// Construct merge branch URL from the PR's HTML URL.
-			// PR URL: https://gitea.example.com/owner/repo/pulls/42
-			// Branch URL: https://gitea.example.com/owner/repo/src/branch/{name}
-			if entry.MergeBranchName.Valid && entry.MergeBranchName.String != "" && pr.HTMLURL != "" {
-				if idx := strings.Index(pr.HTMLURL, "/pulls/"); idx >= 0 {
-					data.MergeBranchURL = pr.HTMLURL[:idx] + "/src/branch/" + entry.MergeBranchName.String
-				}
+			if entry.MergeBranchName.Valid && entry.MergeBranchName.String != "" {
+				data.MergeBranchURL = f.BranchHTMLURL(owner, name, entry.MergeBranchName.String)
 			}
 		}
 	}
@@ -389,9 +405,12 @@ func servePRDetail(w http.ResponseWriter, r *http.Request, deps *Deps, owner, na
 			slog.Error("failed to get check statuses", "pr", prNumber, "error", err)
 		}
 
-		required, err := monitor.ResolveRequiredChecks(ctx, deps.Gitea, owner, name, entry.TargetBranch, deps.FallbackChecks)
-		if err != nil {
-			slog.Warn("failed to resolve required checks", "pr", prNumber, "error", err)
+		var required []string
+		if f != nil {
+			required, err = monitor.ResolveRequiredChecks(ctx, f, owner, name, entry.TargetBranch, deps.FallbackChecks)
+			if err != nil {
+				slog.Warn("failed to resolve required checks", "pr", prNumber, "error", err)
+			}
 		}
 
 		data.CheckStatuses = mergeCheckStatuses(recorded, required)

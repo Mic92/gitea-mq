@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/Mic92/gitea-mq/internal/store/pg"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/jogman/gitea-mq/internal/store/pg"
 )
 
 // EnqueueResult describes what happened when enqueueing a PR.
@@ -304,8 +304,9 @@ func (s *Service) ListActiveEntries(ctx context.Context, repoID int64) ([]pg.Que
 }
 
 // GetOrCreateRepo ensures a repo row exists and returns it.
-func (s *Service) GetOrCreateRepo(ctx context.Context, owner, name string) (pg.Repo, error) {
+func (s *Service) GetOrCreateRepo(ctx context.Context, forge, owner, name string) (pg.Repo, error) {
 	return s.queries().GetOrCreateRepo(ctx, pg.GetOrCreateRepoParams{
+		Forge: forge,
 		Owner: owner,
 		Name:  name,
 	})

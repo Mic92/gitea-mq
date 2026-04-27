@@ -9,26 +9,36 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jogman/gitea-mq/internal/config"
-	"github.com/jogman/gitea-mq/internal/gitea"
-	"github.com/jogman/gitea-mq/internal/store/pg"
-	"github.com/jogman/gitea-mq/internal/testutil"
-	"github.com/jogman/gitea-mq/internal/web"
+	"github.com/Mic92/gitea-mq/internal/forge"
+	"github.com/Mic92/gitea-mq/internal/gitea"
+	"github.com/Mic92/gitea-mq/internal/store/pg"
+	"github.com/Mic92/gitea-mq/internal/testutil"
+	"github.com/Mic92/gitea-mq/internal/web"
 )
 
 // staticRepoLister implements web.RepoLister for tests.
 type staticRepoLister struct {
-	repos []config.RepoRef
+	repos []forge.RepoRef
 }
 
-func (s *staticRepoLister) List() []config.RepoRef {
+func (s *staticRepoLister) List() []forge.RepoRef {
 	return s.repos
 }
 
-func (s *staticRepoLister) Contains(fullName string) bool {
-	return slices.ContainsFunc(s.repos, func(r config.RepoRef) bool {
-		return r.String() == fullName
+func (s *staticRepoLister) Contains(key string) bool {
+	return slices.ContainsFunc(s.repos, func(r forge.RepoRef) bool {
+		return r.String() == key
 	})
+}
+
+func giteaRef(owner, name string) forge.RepoRef {
+	return forge.RepoRef{Forge: forge.KindGitea, Owner: owner, Name: name}
+}
+
+func giteaForges(mock *gitea.MockClient) *forge.Set {
+	s := forge.NewSet()
+	s.Register(gitea.NewForge(mock, "https://gitea.example.com"))
+	return s
 }
 
 func TestOverviewShowsRepoAndQueueData(t *testing.T) {
@@ -42,9 +52,10 @@ func TestOverviewShowsRepoAndQueueData(t *testing.T) {
 
 	deps := &web.Deps{
 		Queue: svc,
-		Repos: &staticRepoLister{repos: []config.RepoRef{
-			{Owner: "org", Name: "app"},
-			{Owner: "org", Name: "lib"},
+		Repos: &staticRepoLister{repos: []forge.RepoRef{
+			giteaRef("org", "app"),
+			giteaRef("org", "lib"),
+			{Forge: forge.KindGithub, Owner: "ghorg", Name: "proj"},
 		}},
 		RefreshInterval: 5,
 	}
@@ -61,11 +72,14 @@ func TestOverviewShowsRepoAndQueueData(t *testing.T) {
 	body := rec.Body.String()
 
 	// Both repos listed as links.
-	if !strings.Contains(body, `href="/repo/org/app"`) {
-		t.Error("expected link to org/app repo page")
+	if !strings.Contains(body, `href="/repo/gitea/org/app"`) {
+		t.Error("expected forge-qualified link to org/app")
 	}
-	if !strings.Contains(body, `href="/repo/org/lib"`) {
-		t.Error("expected link to org/lib repo page")
+	if !strings.Contains(body, `href="/repo/gitea/org/lib"`) {
+		t.Error("expected forge-qualified link to org/lib")
+	}
+	if !strings.Contains(body, `href="/repo/github/ghorg/proj"`) || !strings.Contains(body, `forge-github`) {
+		t.Error("expected github forge href and badge")
 	}
 
 	// Queue count badge for org/app should be 2.
@@ -126,7 +140,7 @@ func TestRepoDetailShowsPRs(t *testing.T) {
 
 	deps := &web.Deps{
 		Queue:           svc,
-		Repos:           &staticRepoLister{repos: []config.RepoRef{{Owner: "org", Name: "app"}}},
+		Repos:           &staticRepoLister{repos: []forge.RepoRef{giteaRef("org", "app")}},
 		RefreshInterval: 10,
 	}
 
@@ -142,10 +156,10 @@ func TestRepoDetailShowsPRs(t *testing.T) {
 	body := rec.Body.String()
 
 	// Both PRs listed as links to PR detail pages.
-	if !strings.Contains(body, `href="/repo/org/app/pr/42"`) {
+	if !strings.Contains(body, `href="/repo/gitea/org/app/pr/42"`) {
 		t.Errorf("expected link to PR #42 detail page, body:\n%s", body)
 	}
-	if !strings.Contains(body, `href="/repo/org/app/pr/43"`) {
+	if !strings.Contains(body, `href="/repo/gitea/org/app/pr/43"`) {
 		t.Errorf("expected link to PR #43 detail page, body:\n%s", body)
 	}
 
@@ -166,19 +180,9 @@ func TestRepoDetailShowsPRs(t *testing.T) {
 func TestPRDetailHeadOfQueueTesting(t *testing.T) {
 	svc, ctx, repoID := testutil.TestQueueService(t)
 
-	res1, err := svc.Enqueue(ctx, repoID, 42, "abc123", "main")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.UpdateState(ctx, repoID, 42, pg.EntryStateTesting); err != nil {
-		t.Fatal(err)
-	}
-	// Set merge branch so the link can be constructed.
-	if err := svc.SetMergeBranch(ctx, repoID, 42, "gitea-mq/abc123", "mergesha"); err != nil {
-		t.Fatal(err)
-	}
+	entry := testutil.EnqueueTesting(t, svc, repoID, 42, "abc123", "mergesha")
 	// Only ci/build has reported — ci/lint and ci/test have not.
-	if err := svc.SaveCheckStatus(ctx, res1.Entry.ID, "ci/build", pg.CheckStateSuccess, "https://ci.example.com/build/1"); err != nil {
+	if err := svc.SaveCheckStatus(ctx, entry.ID, "ci/build", pg.CheckStateSuccess, "https://ci.example.com/build/1"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -201,8 +205,8 @@ func TestPRDetailHeadOfQueueTesting(t *testing.T) {
 
 	deps := &web.Deps{
 		Queue:           svc,
-		Repos:           &staticRepoLister{repos: []config.RepoRef{{Owner: "org", Name: "app"}}},
-		Gitea:           mock,
+		Repos:           &staticRepoLister{repos: []forge.RepoRef{giteaRef("org", "app")}},
+		Forges:          giteaForges(mock),
 		RefreshInterval: 10,
 	}
 
@@ -247,7 +251,7 @@ func TestPRDetailHeadOfQueueTesting(t *testing.T) {
 		t.Error("expected pending check icon for unreported checks")
 	}
 	// Merge branch link derived from PR.HTMLURL.
-	if !strings.Contains(body, `href="https://gitea.example.com/org/app/src/branch/gitea-mq/abc123"`) {
+	if !strings.Contains(body, `href="https://gitea.example.com/org/app/src/branch/gitea-mq/42"`) {
 		t.Errorf("expected merge branch link, got:\n%s", body)
 	}
 	if !strings.Contains(body, "view on Gitea") {
@@ -280,8 +284,8 @@ func TestPRDetailNonHeadQueued(t *testing.T) {
 
 	deps := &web.Deps{
 		Queue:           svc,
-		Repos:           &staticRepoLister{repos: []config.RepoRef{{Owner: "org", Name: "app"}}},
-		Gitea:           mock,
+		Repos:           &staticRepoLister{repos: []forge.RepoRef{giteaRef("org", "app")}},
+		Forges:          giteaForges(mock),
 		RefreshInterval: 10,
 	}
 
@@ -307,30 +311,6 @@ func TestPRDetailNonHeadQueued(t *testing.T) {
 	}
 }
 
-func TestPRDetailNotInQueue(t *testing.T) {
-	svc, _, _ := testutil.TestQueueService(t)
-
-	deps := &web.Deps{
-		Queue:           svc,
-		Repos:           &staticRepoLister{repos: []config.RepoRef{{Owner: "org", Name: "app"}}},
-		RefreshInterval: 10,
-	}
-
-	mux := web.NewMux(deps)
-	req := httptest.NewRequest(http.MethodGet, "/repo/org/app/pr/99", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 for PR not in queue, got %d", rec.Code)
-	}
-
-	body := rec.Body.String()
-	if !strings.Contains(body, "not in the merge queue") {
-		t.Errorf("expected 'not in the merge queue' message, got:\n%s", body)
-	}
-}
-
 func TestPRDetailGiteaAPIFailure(t *testing.T) {
 	svc, ctx, repoID := testutil.TestQueueService(t)
 
@@ -345,8 +325,8 @@ func TestPRDetailGiteaAPIFailure(t *testing.T) {
 
 	deps := &web.Deps{
 		Queue:           svc,
-		Repos:           &staticRepoLister{repos: []config.RepoRef{{Owner: "org", Name: "app"}}},
-		Gitea:           mock,
+		Repos:           &staticRepoLister{repos: []forge.RepoRef{giteaRef("org", "app")}},
+		Forges:          giteaForges(mock),
 		RefreshInterval: 10,
 	}
 
@@ -370,21 +350,36 @@ func TestPRDetailGiteaAPIFailure(t *testing.T) {
 	}
 }
 
-func TestRepoDetailUnknownRepoReturns404(t *testing.T) {
+func TestRepoHandler_ForgeRouting(t *testing.T) {
 	svc, _, _ := testutil.TestQueueService(t)
-
 	deps := &web.Deps{
-		Queue:           svc,
-		Repos:           &staticRepoLister{repos: []config.RepoRef{{Owner: "org", Name: "app"}}},
-		RefreshInterval: 10,
+		Queue:  svc,
+		Forges: giteaForges(&gitea.MockClient{}),
+		Repos:  &staticRepoLister{repos: []forge.RepoRef{giteaRef("org", "app")}},
 	}
-
 	mux := web.NewMux(deps)
-	req := httptest.NewRequest(http.MethodGet, "/repo/org/unknown", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 for unknown repo, got %d", rec.Code)
+	for _, tc := range []struct {
+		path     string
+		code     int
+		wantBody string
+	}{
+		{"/repo/gitea/org/app", 200, ""},
+		{"/repo/org/app", 200, ""}, // legacy: missing forge segment defaults to gitea
+		{"/repo/gitea/org/app/pr/99", 200, "not in the merge queue"},
+		{"/repo/org/app/pr/99", 200, "not in the merge queue"}, // legacy PR path
+		{"/repo/org/unknown", 404, ""},
+		{"/repo/github/org/app", 404, ""}, // forge known but repo not registered for it
+		{"/repo/gitlab/org/app", 404, ""}, // unknown forge segment
+		{"/repo/gitea/org", 404, ""},
+	} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
+		if rec.Code != tc.code {
+			t.Errorf("%s: code=%d want %d", tc.path, rec.Code, tc.code)
+		}
+		if tc.wantBody != "" && !strings.Contains(rec.Body.String(), tc.wantBody) {
+			t.Errorf("%s: body missing %q", tc.path, tc.wantBody)
+		}
 	}
 }

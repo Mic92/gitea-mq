@@ -159,25 +159,27 @@ func (q *Queries) GetHeadOfQueue(ctx context.Context, arg GetHeadOfQueueParams) 
 }
 
 const getOrCreateRepo = `-- name: GetOrCreateRepo :one
-INSERT INTO repos (owner, name)
-VALUES ($1, $2)
-ON CONFLICT (owner, name) DO UPDATE SET owner = EXCLUDED.owner
-RETURNING id, owner, name, created_at
+INSERT INTO repos (forge, owner, name)
+VALUES ($1, $2, $3)
+ON CONFLICT (forge, owner, name) DO UPDATE SET owner = EXCLUDED.owner
+RETURNING id, owner, name, created_at, forge
 `
 
 type GetOrCreateRepoParams struct {
+	Forge string `json:"forge"`
 	Owner string `json:"owner"`
 	Name  string `json:"name"`
 }
 
 func (q *Queries) GetOrCreateRepo(ctx context.Context, arg GetOrCreateRepoParams) (Repo, error) {
-	row := q.db.QueryRow(ctx, getOrCreateRepo, arg.Owner, arg.Name)
+	row := q.db.QueryRow(ctx, getOrCreateRepo, arg.Forge, arg.Owner, arg.Name)
 	var i Repo
 	err := row.Scan(
 		&i.ID,
 		&i.Owner,
 		&i.Name,
 		&i.CreatedAt,
+		&i.Forge,
 	)
 	return i, err
 }
@@ -296,7 +298,7 @@ func (q *Queries) ListQueue(ctx context.Context, arg ListQueueParams) ([]QueueEn
 }
 
 const loadActiveQueues = `-- name: LoadActiveQueues :many
-SELECT qe.id, qe.repo_id, qe.pr_number, qe.pr_head_sha, qe.target_branch, qe.state, qe.enqueued_at, qe.testing_started_at, qe.completed_at, qe.merge_branch_name, qe.merge_branch_sha, qe.error_message, r.owner, r.name AS repo_name
+SELECT qe.id, qe.repo_id, qe.pr_number, qe.pr_head_sha, qe.target_branch, qe.state, qe.enqueued_at, qe.testing_started_at, qe.completed_at, qe.merge_branch_name, qe.merge_branch_sha, qe.error_message, r.forge, r.owner, r.name AS repo_name
 FROM queue_entries qe
 JOIN repos r ON r.id = qe.repo_id
 WHERE qe.state NOT IN ('failed', 'cancelled')
@@ -316,6 +318,7 @@ type LoadActiveQueuesRow struct {
 	MergeBranchName  pgtype.Text        `json:"merge_branch_name"`
 	MergeBranchSha   pgtype.Text        `json:"merge_branch_sha"`
 	ErrorMessage     pgtype.Text        `json:"error_message"`
+	Forge            string             `json:"forge"`
 	Owner            string             `json:"owner"`
 	RepoName         string             `json:"repo_name"`
 }
@@ -342,6 +345,7 @@ func (q *Queries) LoadActiveQueues(ctx context.Context) ([]LoadActiveQueuesRow, 
 			&i.MergeBranchName,
 			&i.MergeBranchSha,
 			&i.ErrorMessage,
+			&i.Forge,
 			&i.Owner,
 			&i.RepoName,
 		); err != nil {

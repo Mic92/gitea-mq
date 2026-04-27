@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jogman/gitea-mq/internal/config"
-	"github.com/jogman/gitea-mq/internal/gitea"
-	"github.com/jogman/gitea-mq/internal/merge"
-	"github.com/jogman/gitea-mq/internal/queue"
-	"github.com/jogman/gitea-mq/internal/registry"
-	"github.com/jogman/gitea-mq/internal/testutil"
+	"github.com/Mic92/gitea-mq/internal/forge"
+	"github.com/Mic92/gitea-mq/internal/gitea"
+	"github.com/Mic92/gitea-mq/internal/merge"
+	"github.com/Mic92/gitea-mq/internal/queue"
+	"github.com/Mic92/gitea-mq/internal/registry"
+	"github.com/Mic92/gitea-mq/internal/testutil"
 )
 
 func newTestRegistry(t *testing.T) (*registry.RepoRegistry, context.Context) {
@@ -24,8 +24,11 @@ func newTestRegistry(t *testing.T) (*registry.RepoRegistry, context.Context) {
 	pool := testutil.TestDB(t)
 	queueSvc := queue.NewService(pool)
 
+	forges := forge.NewSet()
+	forges.Register(gitea.NewForge(&gitea.MockClient{}, "https://gitea.example.com"))
+
 	deps := &registry.Deps{
-		Gitea:          &gitea.MockClient{},
+		Forges:         forges,
 		Queue:          queueSvc,
 		PollInterval:   1 * time.Hour, // long interval so pollers don't fire during tests
 		CheckTimeout:   1 * time.Hour,
@@ -35,15 +38,19 @@ func newTestRegistry(t *testing.T) (*registry.RepoRegistry, context.Context) {
 	return registry.New(ctx, deps), ctx
 }
 
+func giteaRef(owner, name string) forge.RepoRef {
+	return forge.RepoRef{Forge: forge.KindGitea, Owner: owner, Name: name}
+}
+
 func TestAddAndLookup(t *testing.T) {
 	reg, ctx := newTestRegistry(t)
-	ref := config.RepoRef{Owner: "org", Name: "app"}
+	ref := giteaRef("org", "app")
 
 	if err := reg.Add(ctx, ref); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 
-	m, ok := reg.Lookup("org/app")
+	m, ok := reg.Lookup("gitea:org/app")
 	if !ok {
 		t.Fatal("expected repo to be found after Add")
 	}
@@ -55,9 +62,54 @@ func TestAddAndLookup(t *testing.T) {
 	}
 }
 
+// Registry must key by forge:owner/name and route Add through the correct
+// adapter from Deps.Forges; same owner/name on a second forge is distinct.
+func TestAdd_RoutesByForgeKind(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	pool := testutil.TestDB(t)
+	queueSvc := queue.NewService(pool)
+
+	giteaMock := &gitea.MockClient{}
+	ghMock := &forge.MockForge{KindVal: forge.KindGithub}
+
+	forges := forge.NewSet()
+	forges.Register(gitea.NewForge(giteaMock, "https://gitea.example.com"))
+	forges.Register(ghMock)
+
+	reg := registry.New(ctx, &registry.Deps{
+		Forges:       forges,
+		Queue:        queueSvc,
+		PollInterval: 1 * time.Hour,
+		CheckTimeout: 1 * time.Hour,
+	})
+
+	if err := reg.Add(ctx, forge.RepoRef{Forge: forge.KindGithub, Owner: "org", Name: "app"}); err != nil {
+		t.Fatalf("Add github: %v", err)
+	}
+	if err := reg.Add(ctx, giteaRef("org", "app")); err != nil {
+		t.Fatalf("Add gitea: %v", err)
+	}
+
+	if !reg.Contains("github:org/app") || !reg.Contains("gitea:org/app") {
+		t.Fatal("expected both forge keys present")
+	}
+
+	// EnsureRepoSetup must have been routed to the github mock for the github ref.
+	if len(ghMock.CallsTo("EnsureRepoSetup")) != 1 {
+		t.Errorf("github EnsureRepoSetup calls = %d, want 1", len(ghMock.CallsTo("EnsureRepoSetup")))
+	}
+
+	// Unknown forge kind must error, not silently fall back.
+	if err := reg.Add(ctx, forge.RepoRef{Forge: "bitbucket", Owner: "o", Name: "n"}); err == nil {
+		t.Error("expected error for unregistered forge kind")
+	}
+}
+
 func TestAddIdempotent(t *testing.T) {
 	reg, ctx := newTestRegistry(t)
-	ref := config.RepoRef{Owner: "org", Name: "app"}
+	ref := giteaRef("org", "app")
 
 	if err := reg.Add(ctx, ref); err != nil {
 		t.Fatalf("first Add: %v", err)
@@ -74,7 +126,7 @@ func TestAddIdempotent(t *testing.T) {
 
 func TestRemove(t *testing.T) {
 	reg, ctx := newTestRegistry(t)
-	ref := config.RepoRef{Owner: "org", Name: "app"}
+	ref := giteaRef("org", "app")
 
 	if err := reg.Add(ctx, ref); err != nil {
 		t.Fatalf("Add: %v", err)
@@ -82,11 +134,11 @@ func TestRemove(t *testing.T) {
 
 	reg.Remove(ref)
 
-	_, ok := reg.Lookup("org/app")
+	_, ok := reg.Lookup("gitea:org/app")
 	if ok {
 		t.Error("expected repo to be gone after Remove")
 	}
-	if reg.Contains("org/app") {
+	if reg.Contains("gitea:org/app") {
 		t.Error("Contains should return false after Remove")
 	}
 }
@@ -99,8 +151,11 @@ func TestRemoveCleansUpMergeBranchesAndDBEntries(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
+	forges := forge.NewSet()
+	forges.Register(gitea.NewForge(mock, "https://gitea.example.com"))
+
 	deps := &registry.Deps{
-		Gitea:          mock,
+		Forges:         forges,
 		Queue:          queueSvc,
 		PollInterval:   1 * time.Hour,
 		CheckTimeout:   1 * time.Hour,
@@ -108,13 +163,13 @@ func TestRemoveCleansUpMergeBranchesAndDBEntries(t *testing.T) {
 	}
 
 	reg := registry.New(ctx, deps)
-	ref := config.RepoRef{Owner: "org", Name: "app"}
+	ref := giteaRef("org", "app")
 
 	if err := reg.Add(ctx, ref); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 
-	m, ok := reg.Lookup("org/app")
+	m, ok := reg.Lookup("gitea:org/app")
 	if !ok {
 		t.Fatal("repo not found after Add")
 	}
@@ -154,7 +209,7 @@ func TestRemoveCleansUpMergeBranchesAndDBEntries(t *testing.T) {
 func TestRemoveNonExistent(t *testing.T) {
 	reg, _ := newTestRegistry(t)
 	// Should not panic.
-	reg.Remove(config.RepoRef{Owner: "org", Name: "nope"})
+	reg.Remove(giteaRef("org", "nope"))
 }
 
 func TestConcurrentAccess(t *testing.T) {
@@ -167,7 +222,7 @@ func TestConcurrentAccess(t *testing.T) {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
-			ref := config.RepoRef{Owner: "org", Name: fmt.Sprintf("repo-%d", n)}
+			ref := giteaRef("org", fmt.Sprintf("repo-%d", n))
 			_ = reg.Add(ctx, ref)
 		}(i)
 	}
@@ -178,8 +233,8 @@ func TestConcurrentAccess(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			_ = reg.List()
-			_ = reg.Contains("org/repo-0")
-			_, _ = reg.Lookup("org/repo-0")
+			_ = reg.Contains("gitea:org/repo-0")
+			_, _ = reg.Lookup("gitea:org/repo-0")
 		}()
 	}
 

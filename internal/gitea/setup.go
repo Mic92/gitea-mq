@@ -1,21 +1,16 @@
-// Package setup auto-configures Gitea repos for use with gitea-mq:
-// ensures `gitea-mq` is a required status check in branch protection
-// and ensures a webhook exists for commit_status events.
-package setup
+package gitea
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
 	"slices"
-
-	"github.com/jogman/gitea-mq/internal/gitea"
 )
 
-// EnsureBranchProtection checks all branch protection rules for a repo and
-// adds `gitea-mq` to the required status checks if missing.
-// If no branch protection rules exist, it logs a warning and returns.
-func EnsureBranchProtection(ctx context.Context, client gitea.Client, owner, repo string) error {
+// EnsureBranchProtection adds `gitea-mq` to every branch-protection rule's
+// required status checks if missing. With no rules present it logs a warning
+// and returns nil — gitea-mq can still run, the user just won't get gating.
+func EnsureBranchProtection(ctx context.Context, client Client, owner, repo string) error {
 	bps, err := client.ListBranchProtections(ctx, owner, repo)
 	if err != nil {
 		return fmt.Errorf("list branch protections for %s/%s: %w", owner, repo, err)
@@ -34,11 +29,10 @@ func EnsureBranchProtection(ctx context.Context, client gitea.Client, owner, rep
 			continue
 		}
 
-		// Add gitea-mq to the status checks.
-		newContexts := append(bp.StatusCheckContexts, "gitea-mq")
-		enableStatusCheck := true
-		opts := gitea.EditBranchProtectionOpts{
-			EnableStatusCheck:   &enableStatusCheck,
+		newContexts := append(slices.Clone(bp.StatusCheckContexts), "gitea-mq")
+		enable := true
+		opts := EditBranchProtectionOpts{
+			EnableStatusCheck:   &enable,
 			StatusCheckContexts: newContexts,
 		}
 
@@ -54,15 +48,14 @@ func EnsureBranchProtection(ctx context.Context, client gitea.Client, owner, rep
 	return nil
 }
 
-// EnsureWebhook checks if a webhook for commit_status events already exists
-// pointing at the given URL and creates one if not.
-func EnsureWebhook(ctx context.Context, client gitea.Client, owner, repo, webhookURL, secret string) error {
+// EnsureWebhook creates a `status`-event webhook pointing at webhookURL unless
+// one already exists with that URL.
+func EnsureWebhook(ctx context.Context, client Client, owner, repo, webhookURL, secret string) error {
 	hooks, err := client.ListWebhooks(ctx, owner, repo)
 	if err != nil {
 		return fmt.Errorf("list webhooks for %s/%s: %w", owner, repo, err)
 	}
 
-	// Check if a matching webhook already exists.
 	for _, h := range hooks {
 		if h.Config["url"] == webhookURL {
 			slog.Debug("webhook already exists",
@@ -71,7 +64,7 @@ func EnsureWebhook(ctx context.Context, client gitea.Client, owner, repo, webhoo
 		}
 	}
 
-	opts := gitea.CreateWebhookOpts{
+	opts := CreateWebhookOpts{
 		Type:   "gitea",
 		Events: []string{"status"},
 		Active: true,
@@ -87,15 +80,5 @@ func EnsureWebhook(ctx context.Context, client gitea.Client, owner, repo, webhoo
 	}
 
 	slog.Info("created webhook", "owner", owner, "repo", repo, "url", webhookURL)
-
 	return nil
-}
-
-// EnsureRepo runs both EnsureBranchProtection and EnsureWebhook for a repo.
-func EnsureRepo(ctx context.Context, client gitea.Client, owner, repo, webhookURL, secret string) error {
-	if err := EnsureBranchProtection(ctx, client, owner, repo); err != nil {
-		return err
-	}
-
-	return EnsureWebhook(ctx, client, owner, repo, webhookURL, secret)
 }

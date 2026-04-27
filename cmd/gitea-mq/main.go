@@ -11,14 +11,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jogman/gitea-mq/internal/config"
-	"github.com/jogman/gitea-mq/internal/discovery"
-	"github.com/jogman/gitea-mq/internal/gitea"
-	"github.com/jogman/gitea-mq/internal/queue"
-	"github.com/jogman/gitea-mq/internal/registry"
-	"github.com/jogman/gitea-mq/internal/store/pg"
-	"github.com/jogman/gitea-mq/internal/web"
-	"github.com/jogman/gitea-mq/internal/webhook"
+	"github.com/Mic92/gitea-mq/internal/config"
+	"github.com/Mic92/gitea-mq/internal/discovery"
+	"github.com/Mic92/gitea-mq/internal/forge"
+	"github.com/Mic92/gitea-mq/internal/gitea"
+	"github.com/Mic92/gitea-mq/internal/github"
+	"github.com/Mic92/gitea-mq/internal/queue"
+	"github.com/Mic92/gitea-mq/internal/registry"
+	"github.com/Mic92/gitea-mq/internal/store/pg"
+	"github.com/Mic92/gitea-mq/internal/web"
+	"github.com/Mic92/gitea-mq/internal/webhook"
 )
 
 func main() {
@@ -53,8 +55,9 @@ func run() error {
 
 	slog.Info("starting gitea-mq",
 		"listen", cfg.ListenAddr,
-		"repos", cfg.Repos,
-		"topic", cfg.Topic,
+		"repos", cfg.Repos(),
+		"gitea", cfg.Gitea != nil,
+		"github", cfg.Github != nil,
 		"poll_interval", cfg.PollInterval,
 		"check_timeout", cfg.CheckTimeout,
 	)
@@ -71,20 +74,47 @@ func run() error {
 	defer pool.Close()
 
 	queueSvc := queue.NewService(pool)
-	giteaClient := gitea.NewHTTPClient(cfg.GiteaURL, cfg.GiteaToken)
+	forges := forge.NewSet()
+	var discSources []discovery.Source
 
-	// Resolve webhook URL for auto-setup.
-	var webhookURL string
-	if cfg.ExternalURL != "" {
-		webhookURL = cfg.ExternalURL + cfg.WebhookPath
+	var giteaWebhookSecret string
+	if cfg.Gitea != nil {
+		giteaClient := gitea.NewHTTPClient(cfg.Gitea.URL, cfg.Gitea.Token)
+		forges.Register(gitea.NewForge(giteaClient, cfg.Gitea.URL))
+		giteaWebhookSecret = cfg.Gitea.WebhookSecret
+		if cfg.Gitea.Topic != "" {
+			discSources = append(discSources, discovery.Source{
+				Kind: forge.KindGitea,
+				List: gitea.TopicSource(giteaClient, cfg.Gitea.Topic),
+			})
+		}
+	}
+
+	if cfg.Github != nil {
+		app, err := github.NewApp(cfg.Github.AppID, cfg.Github.PrivateKey, github.DefaultBaseURL)
+		if err != nil {
+			return fmt.Errorf("init github app: %w", err)
+		}
+		// Populate the installation→repo map before any forge call so the
+		// initial registry.Add for explicit repos can resolve a client.
+		if err := app.Refresh(ctx); err != nil {
+			slog.Warn("github: initial installation refresh failed", "err", err)
+		}
+		if err := app.SyncHookConfig(ctx, cfg.ExternalURL, cfg.Github.WebhookSecret); err != nil {
+			slog.Warn("github: sync app webhook config failed", "err", err)
+		}
+		forges.Register(github.NewForge(app, ""))
+		discSources = append(discSources, discovery.Source{
+			Kind: forge.KindGithub,
+			List: github.InstallationSource(app),
+		})
 	}
 
 	// Create the repo registry — central coordination for managed repos.
 	reg := registry.New(ctx, &registry.Deps{
-		Gitea:          giteaClient,
+		Forges:         forges,
 		Queue:          queueSvc,
-		WebhookURL:     webhookURL,
-		WebhookSecret:  cfg.WebhookSecret,
+		WebhookSecret:  giteaWebhookSecret,
 		ExternalURL:    cfg.ExternalURL,
 		PollInterval:   cfg.PollInterval,
 		CheckTimeout:   cfg.CheckTimeout,
@@ -92,37 +122,42 @@ func run() error {
 		SuccessTimeout: 5 * time.Minute,
 	})
 
-	// Register explicit repos.
-	for _, ref := range cfg.Repos {
-		if err := reg.Add(ctx, ref); err != nil {
-			return fmt.Errorf("register repo %s: %w", ref, err)
-		}
+	discTrigger := make(chan struct{}, 1)
+	discDeps := &discovery.Deps{
+		Sources:       discSources,
+		Registry:      reg,
+		ExplicitRepos: cfg.Repos(),
+		Trigger:       discTrigger,
 	}
-
-	// Topic-based discovery: run initial discovery, then start background loop.
-	if cfg.Topic != "" {
-		discDeps := &discovery.Deps{
-			Gitea:         giteaClient,
-			Registry:      reg,
-			Topic:         cfg.Topic,
-			ExplicitRepos: cfg.Repos,
-		}
-
-		// Initial discovery blocks startup so all repos are ready before serving.
-		if err := discovery.DiscoverOnce(ctx, discDeps); err != nil {
-			slog.Warn("initial discovery failed, continuing with explicit repos", "error", err)
-		}
-
-		// Background discovery loop.
+	// Initial discovery blocks startup so the dashboard and webhook see the
+	// full repo set immediately. Explicit repos are added via the same path.
+	discovery.DiscoverOnce(ctx, discDeps)
+	if len(discSources) > 0 {
 		go discovery.Run(ctx, discDeps, cfg.DiscoveryInterval)
 	}
 
 	// HTTP server: webhook + dashboard on the same mux.
 	mux := http.NewServeMux()
 
-	// Webhook handler — uses registry for dynamic repo lookup.
-	webhookHandler := webhook.Handler(cfg.WebhookSecret, reg, queueSvc)
-	mux.Handle(cfg.WebhookPath, webhookHandler)
+	if cfg.Gitea != nil {
+		h := webhook.Handler(giteaWebhookSecret, reg, queueSvc)
+		mux.Handle("/webhook/gitea", h)
+		// Legacy alias kept so existing per-repo webhooks created by earlier
+		// versions keep working.
+		if cfg.WebhookPath != "" && cfg.WebhookPath != "/webhook/gitea" {
+			mux.Handle(cfg.WebhookPath, h)
+		}
+	}
+	if cfg.Github != nil {
+		mux.Handle("/webhook/github", webhook.GithubHandler(
+			[]byte(cfg.Github.WebhookSecret), reg, queueSvc,
+			func() {
+				select {
+				case discTrigger <- struct{}{}:
+				default:
+				}
+			}))
+	}
 
 	// Health check.
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -135,7 +170,7 @@ func run() error {
 	webDeps := &web.Deps{
 		Queue:           queueSvc,
 		Repos:           reg,
-		Gitea:           giteaClient,
+		Forges:          forges,
 		FallbackChecks:  cfg.RequiredChecks,
 		RefreshInterval: int(cfg.RefreshInterval.Seconds()),
 	}

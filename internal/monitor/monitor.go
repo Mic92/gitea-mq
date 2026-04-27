@@ -6,18 +6,16 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
-	"github.com/jogman/gitea-mq/internal/gitea"
-	"github.com/jogman/gitea-mq/internal/merge"
-	"github.com/jogman/gitea-mq/internal/queue"
-	"github.com/jogman/gitea-mq/internal/store/pg"
+	"github.com/Mic92/gitea-mq/internal/forge"
+	"github.com/Mic92/gitea-mq/internal/merge"
+	"github.com/Mic92/gitea-mq/internal/queue"
+	"github.com/Mic92/gitea-mq/internal/store/pg"
 )
 
-// Deps holds the dependencies the monitor needs.
 type Deps struct {
-	Gitea          gitea.Client
+	Forge          forge.Forge
 	Queue          *queue.Service
 	Owner          string
 	Repo           string
@@ -27,7 +25,6 @@ type Deps struct {
 	FallbackChecks []string // from GITEA_MQ_REQUIRED_CHECKS
 }
 
-// CheckResult describes the outcome of evaluating checks for an entry.
 type CheckResult int
 
 const (
@@ -40,38 +37,17 @@ const (
 )
 
 // ResolveRequiredChecks determines which check contexts are required for a
-// given target branch. It queries branch protection first, falls back to
-// config, and finally falls back to "any single success suffices".
-//
-// Returns the list of required check context names. An empty list means
-// "any single success status is sufficient".
-func ResolveRequiredChecks(ctx context.Context, giteaClient gitea.Client, owner, repo, targetBranch string, fallback []string) ([]string, error) {
-	bp, err := giteaClient.GetBranchProtection(ctx, owner, repo, targetBranch)
+// target branch: forge-reported required checks first, falling back to config,
+// then to "any single success suffices" (empty list).
+func ResolveRequiredChecks(ctx context.Context, f forge.Forge, owner, repo, targetBranch string, fallback []string) ([]string, error) {
+	checks, err := f.GetRequiredChecks(ctx, owner, repo, targetBranch)
 	if err != nil {
-		return nil, fmt.Errorf("get branch protection for %s: %w", targetBranch, err)
+		return nil, fmt.Errorf("get required checks for %s: %w", targetBranch, err)
 	}
-
-	if bp != nil && bp.EnableStatusCheck && len(bp.StatusCheckContexts) > 0 {
-		// Filter out gitea-mq to avoid circular dependency.
-		var checks []string
-		for _, c := range bp.StatusCheckContexts {
-			if c != "gitea-mq" {
-				checks = append(checks, c)
-			}
-		}
-
-		if len(checks) > 0 {
-			return checks, nil
-		}
+	if len(checks) > 0 {
+		return checks, nil
 	}
-
-	// Fall back to config-defined checks.
-	if len(fallback) > 0 {
-		return fallback, nil
-	}
-
-	// No config — any single success suffices.
-	return nil, nil
+	return fallback, nil
 }
 
 // EvaluateChecks compares recorded check statuses against required checks.
@@ -82,17 +58,14 @@ func ResolveRequiredChecks(ctx context.Context, giteaClient gitea.Client, owner,
 // If requiredChecks is empty, any single success status is sufficient.
 func EvaluateChecks(statuses []pg.CheckStatus, requiredChecks []string) (CheckResult, string, string) {
 	if len(requiredChecks) == 0 {
-		// Any single success suffices.
 		for _, s := range statuses {
 			if s.State == pg.CheckStateSuccess {
 				return CheckSuccess, "", ""
 			}
 		}
-
 		return CheckWaiting, "", ""
 	}
 
-	// Build a lookup of latest status per context.
 	statusMap := make(map[string]pg.CheckStatus, len(statuses))
 	for _, s := range statuses {
 		statusMap[s.Context] = s
@@ -101,9 +74,8 @@ func EvaluateChecks(statuses []pg.CheckStatus, requiredChecks []string) (CheckRe
 	for _, req := range requiredChecks {
 		cs, ok := statusMap[req]
 		if !ok {
-			return CheckWaiting, "", "" // Not yet reported.
+			return CheckWaiting, "", ""
 		}
-
 		switch cs.State {
 		case pg.CheckStateFailure, pg.CheckStateError:
 			return CheckFailure, req, cs.TargetUrl
@@ -112,8 +84,6 @@ func EvaluateChecks(statuses []pg.CheckStatus, requiredChecks []string) (CheckRe
 		case pg.CheckStateSuccess:
 			continue
 		default:
-			// Unknown state (e.g. empty string from deserialization bug) —
-			// treat as waiting rather than silently passing.
 			return CheckWaiting, "", ""
 		}
 	}
@@ -121,12 +91,10 @@ func EvaluateChecks(statuses []pg.CheckStatus, requiredChecks []string) (CheckRe
 	return CheckSuccess, "", ""
 }
 
-// CheckTimeout returns true if the entry has exceeded the check timeout.
 func CheckTimeout(entry *pg.QueueEntry, timeout time.Duration) bool {
 	if !entry.TestingStartedAt.Valid {
 		return false
 	}
-
 	return time.Since(entry.TestingStartedAt.Time) > timeout
 }
 
@@ -136,23 +104,19 @@ func CheckTimeout(entry *pg.QueueEntry, timeout time.Duration) bool {
 func HandleSuccess(ctx context.Context, deps *Deps, entry *pg.QueueEntry) error {
 	slog.Info("all checks passed", "pr", entry.PrNumber)
 
-	targetURL := gitea.DashboardPRURL(deps.ExternalURL, deps.Owner, deps.Repo, entry.PrNumber)
+	targetURL := forge.DashboardPRURL(deps.ExternalURL, deps.Forge.Kind(), deps.Owner, deps.Repo, entry.PrNumber)
 
-	// Set gitea-mq commit status to success on the PR's head commit.
-	if err := deps.Gitea.CreateCommitStatus(ctx, deps.Owner, deps.Repo, entry.PrHeadSha,
-		gitea.MQStatus("success", "Merge queue passed", targetURL)); err != nil {
+	if err := deps.Forge.SetMQStatus(ctx, deps.Owner, deps.Repo, entry.PrHeadSha, forge.MQStatus{
+		State: pg.CheckStateSuccess, Description: "Merge queue passed", TargetURL: targetURL,
+	}); err != nil {
 		return fmt.Errorf("set success status for PR #%d: %w", entry.PrNumber, err)
 	}
 
-	// Skip any gitea-mq/* mirrored statuses still pending so the overall
-	// commit status is green. These are from checks that weren't reported
-	// on the merge branch (e.g. cleared from a previous attempt).
-	skipPendingMirroredStatuses(ctx, deps.Gitea, deps.Owner, deps.Repo, entry.PrHeadSha)
+	// Flip leftover stale-pending mirrors so the overall PR status is green.
+	skipPendingMirroredStatuses(ctx, deps.Forge, deps.Owner, deps.Repo, entry.PrHeadSha)
 
-	// Delete the merge branch — CI is done, no longer needed.
-	merge.CleanupMergeBranch(ctx, deps.Gitea, deps.Owner, deps.Repo, entry)
+	merge.CleanupMergeBranch(ctx, deps.Forge, deps.Owner, deps.Repo, entry)
 
-	// Transition to success state. The poller will advance once the PR is merged.
 	if err := deps.Queue.UpdateState(ctx, deps.RepoID, entry.PrNumber, pg.EntryStateSuccess); err != nil {
 		return fmt.Errorf("update state to success for PR #%d: %w", entry.PrNumber, err)
 	}
@@ -160,75 +124,66 @@ func HandleSuccess(ctx context.Context, deps *Deps, entry *pg.QueueEntry) error 
 	return nil
 }
 
-// skipPendingMirroredStatuses sets any gitea-mq/* mirrored statuses that are
-// still pending to skipped. Called on success so leftover pending statuses
-// (e.g. from a previous attempt that were cleared) don't block the green result.
-func skipPendingMirroredStatuses(ctx context.Context, giteaClient gitea.Client, owner, repo, sha string) {
-	combined, err := giteaClient.GetCombinedCommitStatus(ctx, owner, repo, sha)
+// skipPendingMirroredStatuses sets gitea-mq/* mirrors that are still pending
+// with the StaleMirrorDescription to skipped, so cleared mirrors from a
+// previous attempt don't block the green result.
+func skipPendingMirroredStatuses(ctx context.Context, f forge.Forge, owner, repo, sha string) {
+	checks, err := f.GetCheckStates(ctx, owner, repo, sha)
 	if err != nil {
 		slog.Warn("failed to fetch commit statuses for skip cleanup", "sha", sha, "error", err)
 		return
 	}
-
-	for _, s := range combined.Statuses {
-		if !strings.HasPrefix(s.Context, merge.BranchPrefix) {
+	for ctxName, c := range checks {
+		if !forge.IsOwnContext(ctxName) {
 			continue
 		}
-		if s.Status != "pending" || s.Description != merge.StaleMirrorDescription {
+		if c.State != pg.CheckStatePending || c.Description != merge.StaleMirrorDescription {
 			continue
 		}
-		_ = giteaClient.CreateCommitStatus(ctx, owner, repo, sha, gitea.CommitStatus{
-			Context:     s.Context,
-			State:       "skipped",
+		_ = f.MirrorCheck(ctx, owner, repo, sha, ctxName, forge.Check{
+			State:       forge.CheckState("skipped"),
 			Description: merge.StaleMirrorDescription,
 		})
 	}
 }
 
-// HandleFailure processes a check failure for the head-of-queue.
-// Sets gitea-mq to failure, cancels automerge, posts comment, deletes merge branch, advances.
-// When targetURL is non-empty, the check name in the comment is formatted as a markdown link.
 func HandleFailure(ctx context.Context, deps *Deps, entry *pg.QueueEntry, failedCheck, targetURL string) error {
 	slog.Info("check failed", "pr", entry.PrNumber, "check", failedCheck)
 
 	desc := fmt.Sprintf("Check failed: %s", failedCheck)
-
 	checkRef := failedCheck
 	if targetURL != "" {
 		checkRef = fmt.Sprintf("[%s](%s)", failedCheck, targetURL)
 	}
 
-	return removeFromQueue(ctx, deps, entry, "failure", desc,
+	return removeFromQueue(ctx, deps, entry, pg.CheckStateFailure, desc,
 		fmt.Sprintf("❌ Removed from merge queue: Check failed: %s", checkRef))
 }
 
-// HandleTimeout processes a check timeout for the head-of-queue.
 func HandleTimeout(ctx context.Context, deps *Deps, entry *pg.QueueEntry) error {
 	slog.Info("check timeout exceeded", "pr", entry.PrNumber)
 
-	return removeFromQueue(ctx, deps, entry, "error", "Check timeout exceeded",
+	return removeFromQueue(ctx, deps, entry, pg.CheckStateError, "Check timeout exceeded",
 		"⏰ Removed from merge queue: check timeout exceeded. Required checks did not complete in time.")
 }
 
-// removeFromQueue is the shared implementation for HandleFailure and HandleTimeout.
-// It sets the commit status, cancels automerge, posts a comment, cleans up
-// the merge branch, marks the entry as failed, and advances the queue.
-func removeFromQueue(ctx context.Context, deps *Deps, entry *pg.QueueEntry, statusState, statusDesc, comment string) error {
-	targetURL := gitea.DashboardPRURL(deps.ExternalURL, deps.Owner, deps.Repo, entry.PrNumber)
-	if err := deps.Gitea.CreateCommitStatus(ctx, deps.Owner, deps.Repo, entry.PrHeadSha,
-		gitea.MQStatus(statusState, statusDesc, targetURL)); err != nil {
+func removeFromQueue(ctx context.Context, deps *Deps, entry *pg.QueueEntry, statusState pg.CheckState, statusDesc, comment string) error {
+	targetURL := forge.DashboardPRURL(deps.ExternalURL, deps.Forge.Kind(), deps.Owner, deps.Repo, entry.PrNumber)
+	if err := deps.Forge.SetMQStatus(ctx, deps.Owner, deps.Repo, entry.PrHeadSha, forge.MQStatus{
+		State: statusState, Description: statusDesc, TargetURL: targetURL,
+	}); err != nil {
 		slog.Warn("failed to set status", "pr", entry.PrNumber, "error", err)
 	}
 
-	if err := deps.Gitea.CancelAutoMerge(ctx, deps.Owner, deps.Repo, entry.PrNumber); err != nil {
+	if err := deps.Forge.CancelAutoMerge(ctx, deps.Owner, deps.Repo, entry.PrNumber); err != nil {
 		slog.Warn("failed to cancel automerge", "pr", entry.PrNumber, "error", err)
 	}
 
-	if err := deps.Gitea.CreateComment(ctx, deps.Owner, deps.Repo, entry.PrNumber, comment); err != nil {
+	if err := deps.Forge.Comment(ctx, deps.Owner, deps.Repo, entry.PrNumber, comment); err != nil {
 		slog.Warn("failed to post comment", "pr", entry.PrNumber, "error", err)
 	}
 
-	merge.CleanupMergeBranch(ctx, deps.Gitea, deps.Owner, deps.Repo, entry)
+	merge.CleanupMergeBranch(ctx, deps.Forge, deps.Owner, deps.Repo, entry)
 
 	if err := deps.Queue.UpdateState(ctx, deps.RepoID, entry.PrNumber, pg.EntryStateFailed); err != nil {
 		slog.Warn("failed to update state to failed", "pr", entry.PrNumber, "error", err)
@@ -245,24 +200,20 @@ func removeFromQueue(ctx context.Context, deps *Deps, entry *pg.QueueEntry, stat
 // a commit status event for a merge branch. It records the status, evaluates
 // checks, and triggers success/failure handling as appropriate.
 func ProcessCheckStatus(ctx context.Context, deps *Deps, entry *pg.QueueEntry, checkContext string, checkState pg.CheckState, targetURL string) error {
-	// Record the check status (latest wins — upsert).
 	if err := deps.Queue.SaveCheckStatus(ctx, entry.ID, checkContext, checkState, targetURL); err != nil {
 		return fmt.Errorf("save check status for PR #%d: %w", entry.PrNumber, err)
 	}
 
-	// Resolve required checks for this target branch.
-	requiredChecks, err := ResolveRequiredChecks(ctx, deps.Gitea, deps.Owner, deps.Repo, entry.TargetBranch, deps.FallbackChecks)
+	requiredChecks, err := ResolveRequiredChecks(ctx, deps.Forge, deps.Owner, deps.Repo, entry.TargetBranch, deps.FallbackChecks)
 	if err != nil {
 		return fmt.Errorf("resolve required checks: %w", err)
 	}
 
-	// Get all recorded statuses for this entry.
 	statuses, err := deps.Queue.GetCheckStatuses(ctx, entry.ID)
 	if err != nil {
 		return fmt.Errorf("get check statuses for PR #%d: %w", entry.PrNumber, err)
 	}
 
-	// Evaluate.
 	result, failedCheck, failedURL := EvaluateChecks(statuses, requiredChecks)
 
 	switch result {
@@ -271,7 +222,6 @@ func ProcessCheckStatus(ctx context.Context, deps *Deps, entry *pg.QueueEntry, c
 	case CheckFailure:
 		return HandleFailure(ctx, deps, entry, failedCheck, failedURL)
 	case CheckWaiting:
-		// Still waiting for more checks. Check timeout.
 		if CheckTimeout(entry, deps.CheckTimeout) {
 			return HandleTimeout(ctx, deps, entry)
 		}
