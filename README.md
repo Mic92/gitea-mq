@@ -173,6 +173,12 @@ Gitea for compatibility with links posted by older versions.
   };
 }
 ```
+
+Real-world deployments:
+
+- Gitea backend: [clan-infra](https://git.clan.lol/clan/clan-infra/src/branch/main/modules/web01/gitea-mq.nix) · [dashboard](https://mq.clan.lol)
+- GitHub backend: [Mic92/dotfiles](https://github.com/Mic92/dotfiles/blob/main/machines/eve/modules/gitea-mq.nix) · [dashboard](https://mq.thalheim.io)
+
 ### NixOS module options
 
 | Option | Type | Default | Description |
