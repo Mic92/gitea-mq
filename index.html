@@ -290,17 +290,11 @@
       </div>
     </div>
 
-    <div class="field">
-      <label for="secret">Webhook secret</label>
-      <div class="secret-row">
-        <input id="secret" type="text" spellcheck="false" autocomplete="off">
-        <button type="button" class="icon-btn" id="regen" title="Regenerate">↻</button>
-        <button type="button" class="icon-btn" id="copySecret" title="Copy">⧉</button>
-      </div>
-      <div class="hint">
-        Store this as <code>GITEA_MQ_GITHUB_WEBHOOK_SECRET</code>. GitHub asks
-        you to re-enter it on the next page.
-      </div>
+    <div class="hint">
+      Leave the <b>Webhook secret</b> field on the GitHub form blank —
+      gitea-mq sets the App's webhook URL and secret itself on startup from
+      <code>GITEA_MQ_EXTERNAL_URL</code> and
+      <code>GITEA_MQ_GITHUB_WEBHOOK_SECRET</code>.
     </div>
   </form>
 
@@ -340,15 +334,13 @@
       <li>Under <b>Private keys</b>, click <i>Generate a private key</i>.
         Save the downloaded <code>.pem</code> file and point
         <code>GITEA_MQ_GITHUB_PRIVATE_KEY_FILE</code> at it.</li>
-      <li>Under <b>Webhook</b>, paste the secret from above into the
-        <i>Webhook secret</i> field if it isn’t already filled, then save.</li>
       <li><b>Install</b> the App on the orgs/repos you want managed. gitea-mq
         picks up every installation automatically.</li>
     </ol>
     <pre id="envPreview"># env
 GITEA_MQ_GITHUB_APP_ID=…
 GITEA_MQ_GITHUB_PRIVATE_KEY_FILE=/path/to/key.pem
-GITEA_MQ_GITHUB_WEBHOOK_SECRET=…
+GITEA_MQ_GITHUB_WEBHOOK_SECRET=<generate locally>
 GITEA_MQ_EXTERNAL_URL=…</pre>
   </div>
 </main>
@@ -380,12 +372,6 @@ GITEA_MQ_EXTERNAL_URL=…</pre>
     t.classList.add("show");
     clearTimeout(toast._t);
     toast._t = setTimeout(() => t.classList.remove("show"), 1800);
-  }
-
-  function genSecret(bytes = 32) {
-    const buf = new Uint8Array(bytes);
-    crypto.getRandomValues(buf);
-    return Array.from(buf, (b) => b.toString(16).padStart(2, "0")).join("");
   }
 
   function hookUrl() {
@@ -420,7 +406,7 @@ GITEA_MQ_EXTERNAL_URL=…</pre>
 `# env
 GITEA_MQ_GITHUB_APP_ID=…
 GITEA_MQ_GITHUB_PRIVATE_KEY_FILE=/path/to/key.pem
-GITEA_MQ_GITHUB_WEBHOOK_SECRET=${$("secret").value || "…"}
+GITEA_MQ_GITHUB_WEBHOOK_SECRET=<generate locally>
 GITEA_MQ_EXTERNAL_URL=${$("externalUrl").value.trim() || "…"}`;
     $("orgField").hidden =
       document.querySelector('input[name="scope"]:checked').value !== "org";
@@ -451,19 +437,10 @@ GITEA_MQ_EXTERNAL_URL=${$("externalUrl").value.trim() || "…"}`;
 
   // wire up
   loadShareUrl();
-  $("secret").value = genSecret();
-  for (const id of ["appName", "externalUrl", "org", "secret"])
+  for (const id of ["appName", "externalUrl", "org"])
     $(id).addEventListener("input", refresh);
   for (const r of document.querySelectorAll('input[name="scope"]'))
     r.addEventListener("change", refresh);
-  $("regen").addEventListener("click", () => {
-    $("secret").value = genSecret();
-    refresh();
-    toast("New secret generated");
-  });
-  $("copySecret").addEventListener("click", () => {
-    navigator.clipboard.writeText($("secret").value).then(() => toast("Secret copied"));
-  });
   $("copyLink").addEventListener("click", () => {
     navigator.clipboard.writeText(buildGithubUrl()).then(() => toast("Prefill link copied"));
   });
