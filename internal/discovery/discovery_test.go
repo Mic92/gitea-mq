@@ -16,188 +16,103 @@ import (
 
 func newTestSetup(t *testing.T) (*registry.RepoRegistry, *gitea.MockClient, context.Context) {
 	t.Helper()
-
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-
 	pool := testutil.TestDB(t)
-	queueSvc := queue.NewService(pool)
 	mock := &gitea.MockClient{}
-
 	forges := forge.NewSet()
 	forges.Register(gitea.NewForge(mock, "https://gitea.example.com"))
-
-	regDeps := &registry.Deps{
+	forges.Register(&forge.MockForge{KindVal: forge.KindGithub})
+	reg := registry.New(ctx, &registry.Deps{
 		Forges:         forges,
-		Queue:          queueSvc,
-		PollInterval:   1 * time.Hour,
-		CheckTimeout:   1 * time.Hour,
+		Queue:          queue.NewService(pool),
+		PollInterval:   time.Hour,
+		CheckTimeout:   time.Hour,
 		SuccessTimeout: 5 * time.Minute,
-	}
-
-	reg := registry.New(ctx, regDeps)
+	})
 	return reg, mock, ctx
 }
 
-func TestDiscoverOnce_TopicMatching(t *testing.T) {
-	reg, mock, ctx := newTestSetup(t)
+func giteaSrc(mock *gitea.MockClient) discovery.Source {
+	return discovery.Source{Kind: forge.KindGitea, List: gitea.TopicSource(mock, "merge-queue")}
+}
 
-	// SearchReposByTopic returns only repos that already have the topic,
-	// so only org/app should be returned by the search.
-	mock.SearchReposByTopicFn = func(_ context.Context, topic string) ([]gitea.Repo, error) {
-		if topic != "merge-queue" {
-			return nil, nil
-		}
+func TestDiscoverOnce_TopicMatching_AdminFilter(t *testing.T) {
+	reg, mock, ctx := newTestSetup(t)
+	mock.SearchReposByTopicFn = func(_ context.Context, _ string) ([]gitea.Repo, error) {
 		return []gitea.Repo{
 			{FullName: "org/app", Owner: gitea.RepoOwner{Login: "org"}, Name: "app", Permissions: gitea.RepoPermissions{Admin: true}},
+			{FullName: "org/ro", Owner: gitea.RepoOwner{Login: "org"}, Name: "ro", Permissions: gitea.RepoPermissions{Pull: true}},
 		}, nil
 	}
 
-	deps := &discovery.Deps{
-		Gitea:    mock,
-		Registry: reg,
-		Topic:    "merge-queue",
-	}
-
-	if err := discovery.DiscoverOnce(ctx, deps); err != nil {
-		t.Fatalf("DiscoverOnce: %v", err)
-	}
+	discovery.DiscoverOnce(ctx, &discovery.Deps{Registry: reg, Sources: []discovery.Source{giteaSrc(mock)}})
 
 	if !reg.Contains("gitea:org/app") {
-		t.Error("expected org/app to be discovered (has merge-queue topic)")
+		t.Error("admin repo not discovered")
+	}
+	if reg.Contains("gitea:org/ro") {
+		t.Error("read-only repo should be skipped")
 	}
 }
 
-func TestDiscoverOnce_AdminFilter(t *testing.T) {
+func TestDiscoverOnce_RemovesAndKeepsExplicit(t *testing.T) {
 	reg, mock, ctx := newTestSetup(t)
-
-	mock.SearchReposByTopicFn = func(_ context.Context, _ string) ([]gitea.Repo, error) {
-		return []gitea.Repo{
-			{FullName: "org/admin-repo", Owner: gitea.RepoOwner{Login: "org"}, Name: "admin-repo", Permissions: gitea.RepoPermissions{Admin: true}},
-			{FullName: "org/read-repo", Owner: gitea.RepoOwner{Login: "org"}, Name: "read-repo", Permissions: gitea.RepoPermissions{Admin: false, Pull: true}},
-		}, nil
-	}
-
-	deps := &discovery.Deps{
-		Gitea:    mock,
-		Registry: reg,
-		Topic:    "merge-queue",
-	}
-
-	if err := discovery.DiscoverOnce(ctx, deps); err != nil {
-		t.Fatalf("DiscoverOnce: %v", err)
-	}
-
-	if !reg.Contains("gitea:org/admin-repo") {
-		t.Error("expected admin-repo to be discovered")
-	}
-	if reg.Contains("gitea:org/read-repo") {
-		t.Error("expected read-repo to be skipped (no admin)")
-	}
-}
-
-func TestDiscoverOnce_RemovesRepoThatLostTopic(t *testing.T) {
-	reg, mock, ctx := newTestSetup(t)
-
 	mock.SearchReposByTopicFn = func(_ context.Context, _ string) ([]gitea.Repo, error) {
 		return []gitea.Repo{
 			{FullName: "org/app", Owner: gitea.RepoOwner{Login: "org"}, Name: "app", Permissions: gitea.RepoPermissions{Admin: true}},
 		}, nil
 	}
-
 	deps := &discovery.Deps{
-		Gitea:    mock,
-		Registry: reg,
-		Topic:    "merge-queue",
-	}
-
-	if err := discovery.DiscoverOnce(ctx, deps); err != nil {
-		t.Fatalf("first cycle: %v", err)
-	}
-	if !reg.Contains("gitea:org/app") {
-		t.Fatal("expected org/app after first cycle")
-	}
-
-	// Second cycle: org/app lost the topic (no longer returned by search).
-	mock.SearchReposByTopicFn = func(_ context.Context, _ string) ([]gitea.Repo, error) {
-		return nil, nil
-	}
-
-	if err := discovery.DiscoverOnce(ctx, deps); err != nil {
-		t.Fatalf("second cycle: %v", err)
-	}
-	if reg.Contains("gitea:org/app") {
-		t.Error("expected org/app to be removed after losing topic")
-	}
-}
-
-func TestDiscoverOnce_ExplicitRepoNeverRemoved(t *testing.T) {
-	reg, mock, ctx := newTestSetup(t)
-
-	mock.SearchReposByTopicFn = func(_ context.Context, _ string) ([]gitea.Repo, error) {
-		return []gitea.Repo{
-			{FullName: "org/app", Owner: gitea.RepoOwner{Login: "org"}, Name: "app", Permissions: gitea.RepoPermissions{Admin: true}},
-		}, nil
-	}
-
-	deps := &discovery.Deps{
-		Gitea:         mock,
 		Registry:      reg,
-		Topic:         "merge-queue",
+		Sources:       []discovery.Source{giteaSrc(mock)},
 		ExplicitRepos: []forge.RepoRef{{Forge: forge.KindGitea, Owner: "org", Name: "legacy"}},
 	}
 
-	if err := discovery.DiscoverOnce(ctx, deps); err != nil {
-		t.Fatalf("first cycle: %v", err)
-	}
-	// Both topic-discovered and explicit should be present.
-	if !reg.Contains("gitea:org/app") {
-		t.Error("expected org/app (topic-discovered)")
-	}
-	if !reg.Contains("gitea:org/legacy") {
-		t.Error("expected org/legacy (explicit)")
+	discovery.DiscoverOnce(ctx, deps)
+	if !reg.Contains("gitea:org/app") || !reg.Contains("gitea:org/legacy") {
+		t.Fatalf("first cycle: app=%v legacy=%v", reg.Contains("gitea:org/app"), reg.Contains("gitea:org/legacy"))
 	}
 
-	// Second cycle: no repos discovered at all, but explicit stays.
-	mock.SearchReposByTopicFn = func(_ context.Context, _ string) ([]gitea.Repo, error) {
-		return nil, nil
-	}
+	mock.SearchReposByTopicFn = func(_ context.Context, _ string) ([]gitea.Repo, error) { return nil, nil }
+	discovery.DiscoverOnce(ctx, deps)
 
-	if err := discovery.DiscoverOnce(ctx, deps); err != nil {
-		t.Fatalf("second cycle: %v", err)
-	}
 	if reg.Contains("gitea:org/app") {
-		t.Error("expected org/app to be removed (lost topic)")
+		t.Error("topic-lost repo should be removed")
 	}
 	if !reg.Contains("gitea:org/legacy") {
-		t.Error("explicit repo should never be removed by discovery")
+		t.Error("explicit repo must never be removed")
 	}
 }
 
-func TestDiscoverOnce_APIFailureKeepsCurrentSet(t *testing.T) {
+// One forge being down must not evict the other forge's repos.
+func TestDiscoverOnce_SourceErrorIsolated(t *testing.T) {
 	reg, mock, ctx := newTestSetup(t)
-
 	mock.SearchReposByTopicFn = func(_ context.Context, _ string) ([]gitea.Repo, error) {
 		return []gitea.Repo{
 			{FullName: "org/app", Owner: gitea.RepoOwner{Login: "org"}, Name: "app", Permissions: gitea.RepoPermissions{Admin: true}},
 		}, nil
 	}
+	ghRefs := []forge.RepoRef{{Forge: forge.KindGithub, Owner: "gh", Name: "proj"}}
+	ghSrc := discovery.Source{Kind: forge.KindGithub, List: func(context.Context) ([]forge.RepoRef, error) { return ghRefs, nil }}
+	deps := &discovery.Deps{Registry: reg, Sources: []discovery.Source{giteaSrc(mock), ghSrc}}
 
-	deps := &discovery.Deps{Gitea: mock, Registry: reg, Topic: "merge-queue"}
-	_ = discovery.DiscoverOnce(ctx, deps)
-	if !reg.Contains("gitea:org/app") {
-		t.Fatal("setup failed")
+	discovery.DiscoverOnce(ctx, deps)
+	if !reg.Contains("gitea:org/app") || !reg.Contains("github:gh/proj") {
+		t.Fatal("seed failed")
 	}
 
+	// Gitea goes down; GitHub source now returns empty.
 	mock.SearchReposByTopicFn = func(_ context.Context, _ string) ([]gitea.Repo, error) {
 		return nil, fmt.Errorf("connection refused")
 	}
+	ghRefs = nil
+	discovery.DiscoverOnce(ctx, deps)
 
-	err := discovery.DiscoverOnce(ctx, deps)
-	if err == nil {
-		t.Fatal("expected error on API failure")
-	}
 	if !reg.Contains("gitea:org/app") {
-		t.Error("expected org/app to remain managed after API failure")
+		t.Error("gitea repo evicted while gitea source is down")
+	}
+	if reg.Contains("github:gh/proj") {
+		t.Error("github repo not removed despite healthy empty source")
 	}
 }

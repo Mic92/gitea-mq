@@ -15,6 +15,7 @@ import (
 	"github.com/Mic92/gitea-mq/internal/discovery"
 	"github.com/Mic92/gitea-mq/internal/forge"
 	"github.com/Mic92/gitea-mq/internal/gitea"
+	"github.com/Mic92/gitea-mq/internal/github"
 	"github.com/Mic92/gitea-mq/internal/queue"
 	"github.com/Mic92/gitea-mq/internal/registry"
 	"github.com/Mic92/gitea-mq/internal/store/pg"
@@ -74,13 +75,36 @@ func run() error {
 
 	queueSvc := queue.NewService(pool)
 	forges := forge.NewSet()
+	var discSources []discovery.Source
 
 	var giteaWebhookSecret string
-	var giteaClient gitea.Client
 	if cfg.Gitea != nil {
-		giteaClient = gitea.NewHTTPClient(cfg.Gitea.URL, cfg.Gitea.Token)
+		giteaClient := gitea.NewHTTPClient(cfg.Gitea.URL, cfg.Gitea.Token)
 		forges.Register(gitea.NewForge(giteaClient, cfg.Gitea.URL))
 		giteaWebhookSecret = cfg.Gitea.WebhookSecret
+		if cfg.Gitea.Topic != "" {
+			discSources = append(discSources, discovery.Source{
+				Kind: forge.KindGitea,
+				List: gitea.TopicSource(giteaClient, cfg.Gitea.Topic),
+			})
+		}
+	}
+
+	if cfg.Github != nil {
+		app, err := github.NewApp(cfg.Github.AppID, cfg.Github.PrivateKey, github.DefaultBaseURL)
+		if err != nil {
+			return fmt.Errorf("init github app: %w", err)
+		}
+		// Populate the installation→repo map before any forge call so the
+		// initial registry.Add for explicit repos can resolve a client.
+		if err := app.Refresh(ctx); err != nil {
+			slog.Warn("github: initial installation refresh failed", "err", err)
+		}
+		forges.Register(github.NewForge(app, ""))
+		discSources = append(discSources, discovery.Source{
+			Kind: forge.KindGithub,
+			List: github.InstallationSource(app),
+		})
 	}
 
 	// Create the repo registry — central coordination for managed repos.
@@ -95,28 +119,15 @@ func run() error {
 		SuccessTimeout: 5 * time.Minute,
 	})
 
-	// Register explicit repos.
-	for _, ref := range cfg.Repos() {
-		if err := reg.Add(ctx, ref); err != nil {
-			return fmt.Errorf("register repo %s: %w", ref, err)
-		}
+	discDeps := &discovery.Deps{
+		Sources:       discSources,
+		Registry:      reg,
+		ExplicitRepos: cfg.Repos(),
 	}
-
-	// Topic-based discovery: run initial discovery, then start background loop.
-	if cfg.Gitea != nil && cfg.Gitea.Topic != "" {
-		discDeps := &discovery.Deps{
-			Gitea:         giteaClient,
-			Registry:      reg,
-			Topic:         cfg.Gitea.Topic,
-			ExplicitRepos: cfg.Repos(),
-		}
-
-		// Initial discovery blocks startup so all repos are ready before serving.
-		if err := discovery.DiscoverOnce(ctx, discDeps); err != nil {
-			slog.Warn("initial discovery failed, continuing with explicit repos", "error", err)
-		}
-
-		// Background discovery loop.
+	// Initial discovery blocks startup so the dashboard and webhook see the
+	// full repo set immediately. Explicit repos are added via the same path.
+	discovery.DiscoverOnce(ctx, discDeps)
+	if len(discSources) > 0 {
 		go discovery.Run(ctx, discDeps, cfg.DiscoveryInterval)
 	}
 

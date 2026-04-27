@@ -67,11 +67,11 @@
 
 ## 8. GitHub auto-setup + discovery source
 
-- [ ] 8.1 Test: `EnsureRepoSetup` PATCHes `allow_auto_merge`; creates ruleset `gitea-mq` (`~ALL`, required check `gitea-mq` with `integration_id`); idempotent on re-run; 403 → warn, no error — RED
-- [ ] 8.2 Implement `EnsureRepoSetup` — GREEN
-- [ ] 8.3 Test `internal/discovery` GitHub source: installations→repos union `Github.Repos`; static-without-install warns+skips; emits `forge=github` refs — RED
-- [ ] 8.4 Implement GitHub discovery source; aggregate with Gitea source in `discovery.Run`; add `TriggerNow()` channel — GREEN
-- [ ] 8.5 Wire GitHub forge into `forge.Set` in `cmd/`; registry `Add` per-forge poll interval
+- [x] 8.1 Test: `EnsureRepoSetup` PATCHes `allow_auto_merge`; creates ruleset `gitea-mq` (`~ALL`, required check `gitea-mq` with `integration_id`); idempotent on re-run; 403 → warn, no error — RED
+- [x] 8.2 Implement `EnsureRepoSetup` — GREEN
+- [x] 8.3 Test `internal/discovery` GitHub source: installations→repos union `Github.Repos`; static-without-install warns+skips; emits `forge=github` refs — RED
+- [x] 8.4 Implement GitHub discovery source; aggregate with Gitea source in `discovery.Run`; add `TriggerNow()` channel — GREEN
+- [x] 8.5 Wire GitHub forge into `forge.Set` in `cmd/`; registry `Add` per-forge poll interval
 
 ## 9. GitHub webhook endpoint
 

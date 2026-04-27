@@ -7,9 +7,11 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 
+	"github.com/Mic92/gitea-mq/internal/forge"
 	githubpkg "github.com/Mic92/gitea-mq/internal/github"
 	"github.com/Mic92/gitea-mq/internal/github/ghfake"
 )
@@ -52,8 +54,12 @@ func TestApp_RefreshRoutesByInstallation(t *testing.T) {
 	app := newTestApp(t, srv)
 
 	repos := app.Repos()
-	slices.Sort(repos)
-	if !slices.Equal(repos, []string{"orgA/app", "orgB/lib"}) {
+	slices.SortFunc(repos, func(a, b forge.RepoRef) int { return strings.Compare(a.String(), b.String()) })
+	want := []forge.RepoRef{
+		{Forge: forge.KindGithub, Owner: "orgA", Name: "app"},
+		{Forge: forge.KindGithub, Owner: "orgB", Name: "lib"},
+	}
+	if !slices.Equal(repos, want) {
 		t.Fatalf("Repos() = %v", repos)
 	}
 

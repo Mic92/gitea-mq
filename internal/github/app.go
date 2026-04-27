@@ -10,6 +10,8 @@ import (
 
 	"github.com/bradleyfalzon/ghinstallation/v2"
 	gh "github.com/google/go-github/v84/github"
+
+	"github.com/Mic92/gitea-mq/internal/forge"
 )
 
 // DefaultBaseURL is github.com's REST root. Tests inject a ghfake URL.
@@ -127,12 +129,16 @@ func (a *App) Refresh(ctx context.Context) error {
 	return nil
 }
 
-func (a *App) Repos() []string {
+func (a *App) Repos() []forge.RepoRef {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	out := make([]string, 0, len(a.repoInstall))
-	for k := range a.repoInstall {
-		out = append(out, k)
+	out := make([]forge.RepoRef, 0, len(a.repoInstall))
+	for full := range a.repoInstall {
+		owner, name, ok := strings.Cut(full, "/")
+		if !ok {
+			continue
+		}
+		out = append(out, forge.RepoRef{Forge: forge.KindGithub, Owner: owner, Name: name})
 	}
 	return out
 }
