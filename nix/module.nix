@@ -6,6 +6,8 @@
 }:
 let
   cfg = config.services.gitea-mq;
+  giteaEnabled = cfg.giteaUrl != null;
+  githubEnabled = cfg.github.appId != null;
 in
 {
   options.services.gitea-mq = {
@@ -19,14 +21,44 @@ in
     };
 
     giteaUrl = lib.mkOption {
-      type = lib.types.str;
-      description = "Gitea instance URL.";
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = "Gitea instance URL. Setting this enables the Gitea backend.";
       example = "https://gitea.example.com";
     };
 
     giteaTokenFile = lib.mkOption {
-      type = lib.types.path;
+      type = lib.types.nullOr lib.types.path;
+      default = null;
       description = "Path to a file containing the Gitea API token.";
+    };
+
+    github = {
+      appId = lib.mkOption {
+        type = lib.types.nullOr lib.types.int;
+        default = null;
+        description = "GitHub App ID. Setting this enables the GitHub backend.";
+      };
+      privateKeyFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.path;
+        default = null;
+        description = "Path to the GitHub App private key (PEM).";
+      };
+      webhookSecretFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.path;
+        default = null;
+        description = "Path to a file containing the GitHub App webhook secret.";
+      };
+      repos = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ];
+        description = "GitHub repos to manage in addition to all repos the App is installed on.";
+      };
+      pollInterval = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Override the reconcile poll interval for GitHub. Defaults to `pollInterval`.";
+      };
     };
 
     repos = lib.mkOption {
@@ -53,8 +85,9 @@ in
     };
 
     webhookSecretFile = lib.mkOption {
-      type = lib.types.path;
-      description = "Path to a file containing the webhook HMAC secret.";
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = "Path to a file containing the Gitea webhook HMAC secret.";
     };
 
     listenAddr = lib.mkOption {
@@ -138,8 +171,17 @@ in
   config = lib.mkIf cfg.enable {
     assertions = [
       {
-        assertion = cfg.topic != null || cfg.repos != [ ];
-        message = "services.gitea-mq: at least one of 'topic' or 'repos' must be set.";
+        assertion = giteaEnabled || githubEnabled;
+        message = "services.gitea-mq: configure at least one backend (giteaUrl or github.appId).";
+      }
+      {
+        assertion = !giteaEnabled || (cfg.giteaTokenFile != null && cfg.webhookSecretFile != null);
+        message = "services.gitea-mq: giteaTokenFile and webhookSecretFile are required when giteaUrl is set.";
+      }
+      {
+        assertion =
+          !githubEnabled || (cfg.github.privateKeyFile != null && cfg.github.webhookSecretFile != null);
+        message = "services.gitea-mq: github.privateKeyFile and github.webhookSecretFile are required when github.appId is set.";
       }
     ];
 
@@ -181,14 +223,18 @@ in
         RestartSec = 5;
 
         # Credentials: systemd loads files and exposes them under /run/credentials.
-        LoadCredential = [
-          "gitea-token:${cfg.giteaTokenFile}"
-          "webhook-secret:${cfg.webhookSecretFile}"
-        ];
+        LoadCredential =
+          lib.optionals giteaEnabled [
+            "gitea-token:${cfg.giteaTokenFile}"
+            "webhook-secret:${cfg.webhookSecretFile}"
+          ]
+          ++ lib.optionals githubEnabled [
+            "github-private-key:${cfg.github.privateKeyFile}"
+            "github-webhook-secret:${cfg.github.webhookSecretFile}"
+          ];
       };
 
       environment = {
-        GITEA_MQ_GITEA_URL = cfg.giteaUrl;
         GITEA_MQ_DATABASE_URL = cfg.databaseUrl;
         GITEA_MQ_LISTEN_ADDR = cfg.listenAddr;
         GITEA_MQ_WEBHOOK_PATH = cfg.webhookPath;
@@ -196,6 +242,7 @@ in
         GITEA_MQ_POLL_INTERVAL = cfg.pollInterval;
         GITEA_MQ_CHECK_TIMEOUT = cfg.checkTimeout;
         GITEA_MQ_REFRESH_INTERVAL = cfg.refreshInterval;
+        GITEA_MQ_DISCOVERY_INTERVAL = cfg.discoveryInterval;
         GITEA_MQ_LOG_LEVEL = cfg.logLevel;
       }
       // lib.optionalAttrs (cfg.repos != [ ]) {
@@ -203,18 +250,37 @@ in
       }
       // lib.optionalAttrs (cfg.topic != null) {
         GITEA_MQ_TOPIC = cfg.topic;
-        GITEA_MQ_DISCOVERY_INTERVAL = cfg.discoveryInterval;
       }
       // lib.optionalAttrs (cfg.requiredChecks != [ ]) {
         GITEA_MQ_REQUIRED_CHECKS = lib.concatStringsSep "," cfg.requiredChecks;
-      };
+      }
+      // lib.optionalAttrs giteaEnabled {
+        GITEA_MQ_GITEA_URL = cfg.giteaUrl;
+      }
+      // lib.optionalAttrs githubEnabled (
+        {
+          GITEA_MQ_GITHUB_APP_ID = toString cfg.github.appId;
+        }
+        // lib.optionalAttrs (cfg.github.repos != [ ]) {
+          GITEA_MQ_GITHUB_REPOS = lib.concatStringsSep "," cfg.github.repos;
+        }
+        // lib.optionalAttrs (cfg.github.pollInterval != null) {
+          GITEA_MQ_GITHUB_POLL_INTERVAL = cfg.github.pollInterval;
+        }
+      );
 
       path = [ pkgs.git ];
 
       # Script wrapper to load secrets from credential files into env vars.
       script = ''
-        export GITEA_MQ_GITEA_TOKEN="$(< "$CREDENTIALS_DIRECTORY/gitea-token")"
-        export GITEA_MQ_WEBHOOK_SECRET="$(< "$CREDENTIALS_DIRECTORY/webhook-secret")"
+        ${lib.optionalString giteaEnabled ''
+          export GITEA_MQ_GITEA_TOKEN="$(< "$CREDENTIALS_DIRECTORY/gitea-token")"
+          export GITEA_MQ_WEBHOOK_SECRET="$(< "$CREDENTIALS_DIRECTORY/webhook-secret")"
+        ''}
+        ${lib.optionalString githubEnabled ''
+          export GITEA_MQ_GITHUB_PRIVATE_KEY_FILE="$CREDENTIALS_DIRECTORY/github-private-key"
+          export GITEA_MQ_GITHUB_WEBHOOK_SECRET="$(< "$CREDENTIALS_DIRECTORY/github-webhook-secret")"
+        ''}
         exec ${lib.getExe cfg.package}
       '';
     };
