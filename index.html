@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>gitea-mq · Create GitHub App</title>
+<style>
+  :root {
+    --bg: #0b0d12;
+    --panel: #14171f;
+    --panel-border: #232734;
+    --text: #e6e8ee;
+    --muted: #8b91a4;
+    --accent: #6ea8fe;
+    --accent-strong: #3d8bfd;
+    --ok: #3fb950;
+    --warn: #d29922;
+    --radius: 10px;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --panel-border: #dfe3ec;
+      --text: #1c1f26;
+      --muted: #5b6270;
+      --accent: #2563eb;
+      --accent-strong: #1d4ed8;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 15px/1.55 var(--sans);
+    color: var(--text);
+    background:
+      radial-gradient(1000px 500px at 80% -10%, rgba(61,139,253,.15), transparent 60%),
+      radial-gradient(800px 400px at -10% 10%, rgba(63,185,80,.10), transparent 55%),
+      var(--bg);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    padding: 48px 20px;
+  }
+  main { width: 100%; max-width: 760px; }
+  header { margin-bottom: 28px; }
+  h1 {
+    margin: 0 0 6px;
+    font-size: 28px;
+    letter-spacing: -.01em;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  h1 .logo {
+    width: 36px; height: 36px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, var(--accent), var(--ok));
+    display: inline-flex;
+    align-items: center; justify-content: center;
+    font: 700 18px var(--mono);
+    color: #fff;
+  }
+  header p { margin: 0; color: var(--muted); }
+  header a { color: var(--accent); }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: var(--radius);
+    padding: 22px;
+    margin-bottom: 20px;
+  }
+  .card h2 {
+    margin: 0 0 14px;
+    font-size: 15px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--muted);
+  }
+
+  label {
+    display: block;
+    font-weight: 600;
+    font-size: 13px;
+    margin-bottom: 6px;
+  }
+  .field { margin-bottom: 16px; }
+  .field:last-child { margin-bottom: 0; }
+  input[type=text], input[type=url] {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text);
+    font: 14px var(--sans);
+  }
+  input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(61,139,253,.25);
+  }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 5px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 560px) { .row { grid-template-columns: 1fr; } }
+
+  .secret-row {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+  }
+  .secret-row input { font-family: var(--mono); font-size: 13px; }
+  .icon-btn {
+    flex: 0 0 auto;
+    border: 1px solid var(--panel-border);
+    background: transparent;
+    color: var(--text);
+    border-radius: 8px;
+    padding: 0 12px;
+    cursor: pointer;
+    font: 13px var(--sans);
+  }
+  .icon-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  .pill-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 8px;
+  }
+  .pill {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 11px;
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    font-size: 13px;
+  }
+  .pill b { font-weight: 600; }
+  .pill .lvl {
+    font: 600 10px var(--mono);
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: rgba(110,168,254,.15);
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+  .pill .lvl.read { background: rgba(139,145,164,.18); color: var(--muted); }
+
+  .events {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .events span {
+    font: 12px var(--mono);
+    padding: 4px 9px;
+    border-radius: 999px;
+    background: rgba(63,185,80,.14);
+    color: var(--ok);
+  }
+
+  .actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  button.primary {
+    background: var(--accent-strong);
+    color: #fff;
+    border: 0;
+    border-radius: 8px;
+    padding: 12px 18px;
+    font: 600 14px var(--sans);
+    cursor: pointer;
+  }
+  button.primary:hover { filter: brightness(1.08); }
+  button.ghost {
+    background: transparent;
+    border: 1px solid var(--panel-border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 12px 18px;
+    font: 500 14px var(--sans);
+    cursor: pointer;
+  }
+  button.ghost:hover { border-color: var(--accent); color: var(--accent); }
+
+  ol.steps { margin: 0; padding-left: 20px; }
+  ol.steps li { margin-bottom: 10px; }
+  ol.steps li::marker { color: var(--accent); font-weight: 700; }
+  code {
+    font: 12.5px var(--mono);
+    background: rgba(139,145,164,.15);
+    padding: 1px 6px;
+    border-radius: 5px;
+  }
+  pre {
+    font: 12.5px/1.5 var(--mono);
+    background: rgba(139,145,164,.10);
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    overflow-x: auto;
+    margin: 10px 0 0;
+  }
+
+  .toast {
+    position: fixed;
+    bottom: 22px; left: 50%;
+    transform: translateX(-50%) translateY(12px);
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-left: 3px solid var(--ok);
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-size: 13px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .15s, transform .15s;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  .seg {
+    display: inline-flex;
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .seg input { display: none; }
+  .seg label {
+    margin: 0;
+    padding: 8px 14px;
+    font-weight: 500;
+    font-size: 13px;
+    cursor: pointer;
+    color: var(--muted);
+  }
+  .seg input:checked + label {
+    background: rgba(110,168,254,.14);
+    color: var(--accent);
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1><span class="logo">mq</span> Create GitHub App for gitea-mq</h1>
+    <p>
+      Pre-fills the GitHub App registration form with the permissions, events
+      and webhook gitea-mq needs.
+      <a href="https://github.com/Mic92/gitea-mq#github-setup" target="_blank" rel="noopener">Docs →</a>
+    </p>
+  </header>
+
+  <form id="f" class="card">
+    <h2>App settings</h2>
+
+    <div class="field">
+      <label>Register under</label>
+      <div class="seg">
+        <input type="radio" name="scope" id="scope-user" value="user" checked>
+        <label for="scope-user">Personal account</label>
+        <input type="radio" name="scope" id="scope-org" value="org">
+        <label for="scope-org">Organization</label>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label for="appName">App name</label>
+        <input id="appName" type="text" value="gitea-mq" required>
+      </div>
+      <div class="field" id="orgField" hidden>
+        <label for="org">Organization slug</label>
+        <input id="org" type="text" placeholder="my-org">
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="externalUrl">gitea-mq external URL</label>
+      <input id="externalUrl" type="url" placeholder="https://mq.example.com" required>
+      <div class="hint">
+        Same value as <code>GITEA_MQ_EXTERNAL_URL</code>. Webhook will be set
+        to <code id="hookPreview">…/webhook/github</code>.
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="secret">Webhook secret</label>
+      <div class="secret-row">
+        <input id="secret" type="text" spellcheck="false" autocomplete="off">
+        <button type="button" class="icon-btn" id="regen" title="Regenerate">↻</button>
+        <button type="button" class="icon-btn" id="copySecret" title="Copy">⧉</button>
+      </div>
+      <div class="hint">
+        Store this as <code>GITEA_MQ_GITHUB_WEBHOOK_SECRET</code>. GitHub asks
+        you to re-enter it on the next page.
+      </div>
+    </div>
+  </form>
+
+  <div class="card">
+    <h2>Permissions</h2>
+    <div class="pill-grid">
+      <div class="pill"><b>Checks</b><span class="lvl">write</span></div>
+      <div class="pill"><b>Contents</b><span class="lvl">write</span></div>
+      <div class="pill"><b>Pull requests</b><span class="lvl">write</span></div>
+      <div class="pill"><b>Administration</b><span class="lvl">write</span></div>
+      <div class="pill"><b>Metadata</b><span class="lvl read">read</span></div>
+    </div>
+    <h2 style="margin-top:18px">Subscribed events</h2>
+    <div class="events">
+      <span>pull_request</span>
+      <span>check_run</span>
+      <span>status</span>
+      <span>installation</span>
+      <span>installation_repositories</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="actions">
+      <button class="primary" id="go">Open GitHub registration →</button>
+      <button class="ghost" type="button" id="copyLink">Copy prefill link</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>After creating the app</h2>
+    <ol class="steps">
+      <li>On the App settings page, note the <b>App ID</b> → set
+        <code>GITEA_MQ_GITHUB_APP_ID</code> (or
+        <code>services.gitea-mq.github.appId</code> on NixOS).</li>
+      <li>Under <b>Private keys</b>, click <i>Generate a private key</i>.
+        Save the downloaded <code>.pem</code> file and point
+        <code>GITEA_MQ_GITHUB_PRIVATE_KEY_FILE</code> at it.</li>
+      <li>Under <b>Webhook</b>, paste the secret from above into the
+        <i>Webhook secret</i> field if it isn’t already filled, then save.</li>
+      <li><b>Install</b> the App on the orgs/repos you want managed. gitea-mq
+        picks up every installation automatically.</li>
+    </ol>
+    <pre id="envPreview"># env
+GITEA_MQ_GITHUB_APP_ID=…
+GITEA_MQ_GITHUB_PRIVATE_KEY_FILE=/path/to/key.pem
+GITEA_MQ_GITHUB_WEBHOOK_SECRET=…
+GITEA_MQ_EXTERNAL_URL=…</pre>
+  </div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const PERMS = {
+    checks: "write",
+    contents: "write",
+    pull_requests: "write",
+    administration: "write",
+    metadata: "read",
+  };
+  const EVENTS = [
+    "pull_request",
+    "check_run",
+    "status",
+    "installation",
+    "installation_repositories",
+  ];
+
+  function toast(msg) {
+    const t = $("toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => t.classList.remove("show"), 1800);
+  }
+
+  function genSecret(bytes = 32) {
+    const buf = new Uint8Array(bytes);
+    crypto.getRandomValues(buf);
+    return Array.from(buf, (b) => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  function hookUrl() {
+    const base = $("externalUrl").value.trim().replace(/\/+$/, "");
+    return base ? base + "/webhook/github" : "";
+  }
+
+  function buildGithubUrl() {
+    const p = new URLSearchParams();
+    p.set("name", $("appName").value.trim() || "gitea-mq");
+    p.set("description", "gitea-mq merge queue");
+    p.set("url", "https://github.com/Mic92/gitea-mq");
+    p.set("public", "false");
+    p.set("webhook_active", "true");
+    const hu = hookUrl();
+    if (hu) p.set("webhook_url", hu);
+    // The /settings/apps/new form does not accept a webhook_secret query
+    // parameter; the user pastes it manually on the next page.
+    for (const [k, v] of Object.entries(PERMS)) p.set(k, v);
+    for (const e of EVENTS) p.append("events[]", e);
+
+    const scope = document.querySelector('input[name="scope"]:checked').value;
+    const org = $("org").value.trim();
+    return scope === "org" && org
+      ? `https://github.com/organizations/${encodeURIComponent(org)}/settings/apps/new?${p}`
+      : `https://github.com/settings/apps/new?${p}`;
+  }
+
+  function refresh() {
+    $("hookPreview").textContent = hookUrl() || "…/webhook/github";
+    $("envPreview").textContent =
+`# env
+GITEA_MQ_GITHUB_APP_ID=…
+GITEA_MQ_GITHUB_PRIVATE_KEY_FILE=/path/to/key.pem
+GITEA_MQ_GITHUB_WEBHOOK_SECRET=${$("secret").value || "…"}
+GITEA_MQ_EXTERNAL_URL=${$("externalUrl").value.trim() || "…"}`;
+    $("orgField").hidden =
+      document.querySelector('input[name="scope"]:checked').value !== "org";
+    syncShareUrl();
+  }
+
+  function syncShareUrl() {
+    const p = new URLSearchParams();
+    if ($("appName").value.trim()) p.set("name", $("appName").value.trim());
+    if ($("externalUrl").value.trim()) p.set("url", $("externalUrl").value.trim());
+    const scope = document.querySelector('input[name="scope"]:checked').value;
+    if (scope === "org") {
+      p.set("scope", "org");
+      if ($("org").value.trim()) p.set("org", $("org").value.trim());
+    }
+    history.replaceState(null, "", p.toString() ? "?" + p : location.pathname);
+  }
+
+  function loadShareUrl() {
+    const p = new URLSearchParams(location.search);
+    if (p.get("name")) $("appName").value = p.get("name");
+    if (p.get("url")) $("externalUrl").value = p.get("url");
+    if (p.get("scope") === "org") {
+      $("scope-org").checked = true;
+      if (p.get("org")) $("org").value = p.get("org");
+    }
+  }
+
+  // wire up
+  loadShareUrl();
+  $("secret").value = genSecret();
+  for (const id of ["appName", "externalUrl", "org", "secret"])
+    $(id).addEventListener("input", refresh);
+  for (const r of document.querySelectorAll('input[name="scope"]'))
+    r.addEventListener("change", refresh);
+  $("regen").addEventListener("click", () => {
+    $("secret").value = genSecret();
+    refresh();
+    toast("New secret generated");
+  });
+  $("copySecret").addEventListener("click", () => {
+    navigator.clipboard.writeText($("secret").value).then(() => toast("Secret copied"));
+  });
+  $("copyLink").addEventListener("click", () => {
+    navigator.clipboard.writeText(buildGithubUrl()).then(() => toast("Prefill link copied"));
+  });
+  $("go").addEventListener("click", (e) => {
+    e.preventDefault();
+    if (!$("externalUrl").value.trim()) {
+      $("externalUrl").focus();
+      toast("Enter the external URL first");
+      return;
+    }
+    window.open(buildGithubUrl(), "_blank", "noopener");
+  });
+  refresh();
+})();
+</script>
+</body>
+</html>
