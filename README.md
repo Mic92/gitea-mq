@@ -84,7 +84,7 @@ Use the [App creation helper](https://mic92.github.io/gitea-mq/) to pre-fill
 the registration form, or register one manually with:
 
 - **Webhook URL**: `${GITEA_MQ_EXTERNAL_URL}/webhook/github`, secret = `GITEA_MQ_GITHUB_WEBHOOK_SECRET`
-- **Permissions** (Repository): Checks **read & write**, Contents **read & write**, Pull requests **read & write**, Administration **read & write**, Metadata **read**
+- **Permissions** (Repository): Checks **read & write**, Commit statuses **read**, Contents **read & write**, Pull requests **read & write**, Administration **read & write**, Metadata **read**
 - **Subscribed events**: `pull_request`, `check_run`, `status`, `installation`, `installation_repositories`
 
 Generate a private key, then set `GITEA_MQ_GITHUB_APP_ID` and
