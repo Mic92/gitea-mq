@@ -88,7 +88,10 @@ the registration form, or register one manually with:
 - **Subscribed events**: `pull_request`, `check_run`, `status`, `installation`, `installation_repositories`
 
 Generate a private key, then set `GITEA_MQ_GITHUB_APP_ID` and
-`GITEA_MQ_GITHUB_PRIVATE_KEY_FILE`. Install the App on the orgs/repos you
+`GITEA_MQ_GITHUB_PRIVATE_KEY_FILE`. On startup gitea-mq patches the App's
+webhook URL and secret to match `GITEA_MQ_EXTERNAL_URL` /
+`GITEA_MQ_GITHUB_WEBHOOK_SECRET`, so you can leave those fields blank when
+registering the App. Install the App on the orgs/repos you
 want managed; gitea-mq picks up every installation automatically.
 `GITEA_MQ_GITHUB_REPOS` is optional and additive: listed repos stay managed
 even if the installation is later removed.

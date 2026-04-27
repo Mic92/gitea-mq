@@ -129,6 +129,24 @@ func (a *App) Refresh(ctx context.Context) error {
 	return nil
 }
 
+// SyncHookConfig points the App's single global webhook at this instance so
+// the secret never has to be entered in the GitHub UI by hand.
+func (a *App) SyncHookConfig(ctx context.Context, externalURL, secret string) error {
+	if externalURL == "" || secret == "" {
+		return nil
+	}
+	url := strings.TrimRight(externalURL, "/") + "/webhook/github"
+	_, _, err := a.appClient.Apps.UpdateHookConfig(ctx, &gh.HookConfig{
+		URL:         gh.Ptr(url),
+		Secret:      gh.Ptr(secret),
+		ContentType: gh.Ptr("json"),
+	})
+	if err != nil {
+		return fmt.Errorf("update app hook config: %w", err)
+	}
+	return nil
+}
+
 func (a *App) Repos() []forge.RepoRef {
 	a.mu.Lock()
 	defer a.mu.Unlock()

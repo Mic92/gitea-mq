@@ -62,3 +62,21 @@ func TestApp_RefreshRoutesByInstallation(t *testing.T) {
 		t.Error("expected error for repo without installation")
 	}
 }
+
+func TestApp_SyncHookConfig(t *testing.T) {
+	srv := ghfake.New()
+	defer srv.Close()
+	app := newTestApp(t, srv)
+
+	if err := app.SyncHookConfig(context.Background(), "https://mq.example.com/", "s3cr3t"); err != nil {
+		t.Fatalf("SyncHookConfig: %v", err)
+	}
+	want := ghfake.HookConfig{
+		URL:         "https://mq.example.com/webhook/github",
+		Secret:      "s3cr3t",
+		ContentType: "json", // form-encoded payloads are not parsed by the handler
+	}
+	if got := srv.HookConfig(); got != want {
+		t.Errorf("hook config = %+v, want %+v", got, want)
+	}
+}

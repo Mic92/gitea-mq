@@ -79,12 +79,20 @@ type Repo struct {
 	RequiredChecks map[string][]string
 }
 
+// HookConfig mirrors the App-level webhook config (PATCH /app/hook/config).
+type HookConfig struct {
+	URL         string `json:"url,omitempty"`
+	Secret      string `json:"secret,omitempty"`
+	ContentType string `json:"content_type,omitempty"`
+}
+
 type Server struct {
 	*httptest.Server
 
 	mu       sync.Mutex
 	installs map[int64]*Installation
 	repos    map[string]*Repo // owner/name
+	hookCfg  HookConfig
 	idSeq    atomic.Int64
 }
 
@@ -100,6 +108,37 @@ func New() *Server {
 }
 
 func (s *Server) nextID() int64 { return s.idSeq.Add(1) }
+
+func (s *Server) HookConfig() HookConfig {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.hookCfg
+}
+
+func (s *Server) hGetHookConfig(w http.ResponseWriter, _ *http.Request) {
+	s.mu.Lock()
+	cfg := s.hookCfg
+	s.mu.Unlock()
+	writeJSON(w, 200, cfg)
+}
+
+func (s *Server) hUpdateHookConfig(w http.ResponseWriter, r *http.Request) {
+	var in HookConfig
+	_ = json.NewDecoder(r.Body).Decode(&in)
+	s.mu.Lock()
+	if in.URL != "" {
+		s.hookCfg.URL = in.URL
+	}
+	if in.Secret != "" {
+		s.hookCfg.Secret = in.Secret
+	}
+	if in.ContentType != "" {
+		s.hookCfg.ContentType = in.ContentType
+	}
+	cfg := s.hookCfg
+	s.mu.Unlock()
+	writeJSON(w, 200, cfg)
+}
 
 func (s *Server) AddInstallation(id int64, fullNames ...string) *Installation {
 	s.mu.Lock()
@@ -165,6 +204,8 @@ const apiV3 = "/api/v3"
 
 func (s *Server) routes(mux *http.ServeMux) {
 	// App / installation.
+	mux.HandleFunc("GET "+apiV3+"/app/hook/config", s.hGetHookConfig)
+	mux.HandleFunc("PATCH "+apiV3+"/app/hook/config", s.hUpdateHookConfig)
 	mux.HandleFunc("GET "+apiV3+"/app/installations", s.hListInstalls)
 	mux.HandleFunc("POST "+apiV3+"/app/installations/{id}/access_tokens", s.hAccessToken)
 	mux.HandleFunc("GET "+apiV3+"/installation/repositories", s.hInstallRepos)
@@ -534,9 +575,8 @@ func (s *Server) hCreateRef(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 422, map[string]any{"message": "Reference already exists"})
 		return
 	}
-	// Mirror git's directory/file ref conflict: refs/heads/foo blocks
-	// refs/heads/foo/bar (and vice versa). GitHub reports this as the
-	// generic 422 "Reference update failed", same as a ruleset rejection.
+	// Git D/F conflict (foo blocks foo/bar) surfaces as the generic 422,
+	// indistinguishable from a ruleset rejection.
 	for existing := range rp.Refs {
 		if strings.HasPrefix(branch, existing+"/") || strings.HasPrefix(existing, branch+"/") {
 			s.mu.Unlock()

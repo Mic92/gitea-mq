@@ -100,6 +100,9 @@ func run() error {
 		if err := app.Refresh(ctx); err != nil {
 			slog.Warn("github: initial installation refresh failed", "err", err)
 		}
+		if err := app.SyncHookConfig(ctx, cfg.ExternalURL, cfg.Github.WebhookSecret); err != nil {
+			slog.Warn("github: sync app webhook config failed", "err", err)
+		}
 		forges.Register(github.NewForge(app, ""))
 		discSources = append(discSources, discovery.Source{
 			Kind: forge.KindGithub,
