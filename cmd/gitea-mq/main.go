@@ -54,8 +54,9 @@ func run() error {
 
 	slog.Info("starting gitea-mq",
 		"listen", cfg.ListenAddr,
-		"repos", cfg.Repos,
-		"topic", cfg.Topic,
+		"repos", cfg.Repos(),
+		"gitea", cfg.Gitea != nil,
+		"github", cfg.Github != nil,
 		"poll_interval", cfg.PollInterval,
 		"check_timeout", cfg.CheckTimeout,
 	)
@@ -72,16 +73,21 @@ func run() error {
 	defer pool.Close()
 
 	queueSvc := queue.NewService(pool)
-	giteaClient := gitea.NewHTTPClient(cfg.GiteaURL, cfg.GiteaToken)
-
 	forges := forge.NewSet()
-	forges.Register(gitea.NewForge(giteaClient, cfg.GiteaURL))
+
+	var giteaWebhookSecret string
+	var giteaClient gitea.Client
+	if cfg.Gitea != nil {
+		giteaClient = gitea.NewHTTPClient(cfg.Gitea.URL, cfg.Gitea.Token)
+		forges.Register(gitea.NewForge(giteaClient, cfg.Gitea.URL))
+		giteaWebhookSecret = cfg.Gitea.WebhookSecret
+	}
 
 	// Create the repo registry — central coordination for managed repos.
 	reg := registry.New(ctx, &registry.Deps{
 		Forges:         forges,
 		Queue:          queueSvc,
-		WebhookSecret:  cfg.WebhookSecret,
+		WebhookSecret:  giteaWebhookSecret,
 		ExternalURL:    cfg.ExternalURL,
 		PollInterval:   cfg.PollInterval,
 		CheckTimeout:   cfg.CheckTimeout,
@@ -90,19 +96,19 @@ func run() error {
 	})
 
 	// Register explicit repos.
-	for _, ref := range cfg.Repos {
+	for _, ref := range cfg.Repos() {
 		if err := reg.Add(ctx, ref); err != nil {
 			return fmt.Errorf("register repo %s: %w", ref, err)
 		}
 	}
 
 	// Topic-based discovery: run initial discovery, then start background loop.
-	if cfg.Topic != "" {
+	if cfg.Gitea != nil && cfg.Gitea.Topic != "" {
 		discDeps := &discovery.Deps{
 			Gitea:         giteaClient,
 			Registry:      reg,
-			Topic:         cfg.Topic,
-			ExplicitRepos: cfg.Repos,
+			Topic:         cfg.Gitea.Topic,
+			ExplicitRepos: cfg.Repos(),
 		}
 
 		// Initial discovery blocks startup so all repos are ready before serving.
@@ -118,8 +124,10 @@ func run() error {
 	mux := http.NewServeMux()
 
 	// Webhook handler — uses registry for dynamic repo lookup.
-	webhookHandler := webhook.Handler(cfg.WebhookSecret, reg, queueSvc)
-	mux.Handle(cfg.WebhookPath, webhookHandler)
+	if cfg.Gitea != nil {
+		webhookHandler := webhook.Handler(giteaWebhookSecret, reg, queueSvc)
+		mux.Handle(cfg.WebhookPath, webhookHandler)
+	}
 
 	// Health check.
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {

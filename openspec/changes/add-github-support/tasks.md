@@ -37,9 +37,9 @@
 
 ## 5. Config split (Gitea optional, GitHub block)
 
-- [ ] 5.1 Write `config_test.go` cases: GitHub-only OK; no-forge fails; `APP_ID` without key fails; `_FILE` read; `GITHUB_POLL_INTERVAL` inherits `POLL_INTERVAL`; `GITEA_MQ_GITHUB_REPOS` parsed as `github` refs — RED
-- [ ] 5.2 Refactor `internal/config`: `Config{Gitea *GiteaConfig; Github *GithubConfig; ...}`; `Load()` validates ≥1 forge — GREEN
-- [ ] 5.3 Update `cmd/` wiring for optional Gitea / optional GitHub; `go build` succeeds with each subset
+- [x] 5.1 Write `config_test.go` cases: GitHub-only OK; no-forge fails; `APP_ID` without key fails; `_FILE` read; `GITHUB_POLL_INTERVAL` inherits `POLL_INTERVAL`; `GITEA_MQ_GITHUB_REPOS` parsed as `github` refs — RED
+- [x] 5.2 Refactor `internal/config`: `Config{Gitea *GiteaConfig; Github *GithubConfig; ...}`; `Load()` validates ≥1 forge — GREEN
+- [x] 5.3 Update `cmd/` wiring for optional Gitea / optional GitHub; `go build` succeeds with each subset
 
 ## 6. GitHub fake server + client foundations
 

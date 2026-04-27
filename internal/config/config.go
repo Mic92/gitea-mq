@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -11,126 +12,214 @@ import (
 
 // Config holds all configuration for the gitea-mq service.
 type Config struct {
-	GiteaURL          string
-	GiteaToken        string
-	Repos             []forge.RepoRef
-	Topic             string // optional: discover repos by this Gitea topic
+	Gitea  *GiteaConfig  // nil if unconfigured
+	Github *GithubConfig // nil if unconfigured
+
 	DatabaseURL       string
-	WebhookSecret     string
 	ListenAddr        string
 	WebhookPath       string
-	ExternalURL       string // required: external URL for webhook auto-setup (GITEA_MQ_EXTERNAL_URL)
+	ExternalURL       string
 	PollInterval      time.Duration
 	CheckTimeout      time.Duration
 	RequiredChecks    []string
 	RefreshInterval   time.Duration
 	DiscoveryInterval time.Duration
-	LogLevel          string // "debug", "info", "warn", "error"
+	LogLevel          string
+}
+
+type GiteaConfig struct {
+	URL           string
+	Token         string
+	WebhookSecret string
+	Topic         string
+	Repos         []forge.RepoRef
+}
+
+type GithubConfig struct {
+	AppID         int64
+	PrivateKey    []byte
+	WebhookSecret string
+	Repos         []forge.RepoRef
+	// PollInterval defaults to Config.PollInterval; override via
+	// GITEA_MQ_GITHUB_POLL_INTERVAL when GitHub's higher rate limit
+	// warrants a different cadence.
+	PollInterval time.Duration
+}
+
+func (c *Config) Repos() []forge.RepoRef {
+	var out []forge.RepoRef
+	if c.Gitea != nil {
+		out = append(out, c.Gitea.Repos...)
+	}
+	if c.Github != nil {
+		out = append(out, c.Github.Repos...)
+	}
+	return out
 }
 
 // Load reads configuration from environment variables, validates required
 // fields, and applies defaults.
 func Load() (*Config, error) {
 	cfg := &Config{
-		ListenAddr:      envOrDefault("GITEA_MQ_LISTEN_ADDR", ":8080"),
-		WebhookPath:     envOrDefault("GITEA_MQ_WEBHOOK_PATH", "/webhook"),
-		PollInterval:    0,
-		CheckTimeout:    0,
-		RefreshInterval: 0,
+		ListenAddr:  envOrDefault("GITEA_MQ_LISTEN_ADDR", ":8080"),
+		WebhookPath: envOrDefault("GITEA_MQ_WEBHOOK_PATH", "/webhook"),
 	}
 
-	// Required variables
 	var missing []string
-
-	cfg.GiteaURL = os.Getenv("GITEA_MQ_GITEA_URL")
-	if cfg.GiteaURL == "" {
-		missing = append(missing, "GITEA_MQ_GITEA_URL")
-	}
-	cfg.GiteaURL = strings.TrimRight(cfg.GiteaURL, "/")
-
-	cfg.GiteaToken = os.Getenv("GITEA_MQ_GITEA_TOKEN")
-	if cfg.GiteaToken == "" {
-		missing = append(missing, "GITEA_MQ_GITEA_TOKEN")
-	}
-
-	cfg.Topic = os.Getenv("GITEA_MQ_TOPIC")
-
-	reposStr := os.Getenv("GITEA_MQ_REPOS")
-	if reposStr == "" && cfg.Topic == "" {
-		missing = append(missing, "GITEA_MQ_REPOS")
-	}
 
 	cfg.DatabaseURL = os.Getenv("GITEA_MQ_DATABASE_URL")
 	if cfg.DatabaseURL == "" {
 		missing = append(missing, "GITEA_MQ_DATABASE_URL")
 	}
 
-	cfg.WebhookSecret = os.Getenv("GITEA_MQ_WEBHOOK_SECRET")
-	if cfg.WebhookSecret == "" {
-		missing = append(missing, "GITEA_MQ_WEBHOOK_SECRET")
-	}
-
-	cfg.ExternalURL = os.Getenv("GITEA_MQ_EXTERNAL_URL")
+	cfg.ExternalURL = strings.TrimRight(os.Getenv("GITEA_MQ_EXTERNAL_URL"), "/")
 	if cfg.ExternalURL == "" {
 		missing = append(missing, "GITEA_MQ_EXTERNAL_URL")
 	}
-	cfg.ExternalURL = strings.TrimRight(cfg.ExternalURL, "/")
+
+	var err error
+	cfg.Gitea, err = loadGitea(&missing)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Github, err = loadGithub(&missing)
+	if err != nil {
+		return nil, err
+	}
 
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))
 	}
 
-	// Parse repos (may be empty when topic-based discovery is used).
-	if reposStr != "" {
-		repos, err := parseRepos(reposStr, forge.KindGitea)
-		if err != nil {
-			return nil, fmt.Errorf("GITEA_MQ_REPOS: %w", err)
-		}
-		cfg.Repos = repos
+	if cfg.Gitea == nil && cfg.Github == nil {
+		return nil, fmt.Errorf("no forge configured: set GITEA_MQ_GITEA_URL or GITEA_MQ_GITHUB_APP_ID")
 	}
 
-	// Parse durations with defaults
-	var err error
 	cfg.PollInterval, err = parseDurationOrDefault("GITEA_MQ_POLL_INTERVAL", 30*time.Second)
 	if err != nil {
 		return nil, err
 	}
-
 	cfg.CheckTimeout, err = parseDurationOrDefault("GITEA_MQ_CHECK_TIMEOUT", 1*time.Hour)
 	if err != nil {
 		return nil, err
 	}
-
 	cfg.RefreshInterval, err = parseDurationOrDefault("GITEA_MQ_REFRESH_INTERVAL", 10*time.Second)
 	if err != nil {
 		return nil, err
 	}
-
 	cfg.DiscoveryInterval, err = parseDurationOrDefault("GITEA_MQ_DISCOVERY_INTERVAL", 5*time.Minute)
 	if err != nil {
 		return nil, err
 	}
 
-	// Optional: required checks fallback
+	if cfg.Github != nil {
+		cfg.Github.PollInterval, err = parseDurationOrDefault("GITEA_MQ_GITHUB_POLL_INTERVAL", cfg.PollInterval)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	if checks := os.Getenv("GITEA_MQ_REQUIRED_CHECKS"); checks != "" {
 		for _, c := range strings.Split(checks, ",") {
-			c = strings.TrimSpace(c)
-			if c != "" {
+			if c = strings.TrimSpace(c); c != "" {
 				cfg.RequiredChecks = append(cfg.RequiredChecks, c)
 			}
 		}
 	}
 
-	// Optional: log level
 	cfg.LogLevel = envOrDefault("GITEA_MQ_LOG_LEVEL", "info")
 	switch cfg.LogLevel {
 	case "debug", "info", "warn", "error":
-		// valid
 	default:
 		return nil, fmt.Errorf("GITEA_MQ_LOG_LEVEL: invalid value %q, must be one of: debug, info, warn, error", cfg.LogLevel)
 	}
 
 	return cfg, nil
+}
+
+// loadGitea returns a GiteaConfig if GITEA_MQ_GITEA_URL is set; otherwise nil.
+// Dependent variables are reported missing only when Gitea is configured so a
+// GitHub-only deployment carries no Gitea baggage.
+func loadGitea(missing *[]string) (*GiteaConfig, error) {
+	url := strings.TrimRight(os.Getenv("GITEA_MQ_GITEA_URL"), "/")
+	if url == "" {
+		return nil, nil
+	}
+	gc := &GiteaConfig{
+		URL:   url,
+		Topic: os.Getenv("GITEA_MQ_TOPIC"),
+	}
+
+	gc.Token = os.Getenv("GITEA_MQ_GITEA_TOKEN")
+	if gc.Token == "" {
+		*missing = append(*missing, "GITEA_MQ_GITEA_TOKEN")
+	}
+	gc.WebhookSecret = os.Getenv("GITEA_MQ_WEBHOOK_SECRET")
+	if gc.WebhookSecret == "" {
+		*missing = append(*missing, "GITEA_MQ_WEBHOOK_SECRET")
+	}
+
+	reposStr := os.Getenv("GITEA_MQ_REPOS")
+	if reposStr == "" && gc.Topic == "" {
+		*missing = append(*missing, "GITEA_MQ_REPOS")
+	}
+	if reposStr != "" {
+		repos, err := parseRepos(reposStr, forge.KindGitea)
+		if err != nil {
+			return nil, fmt.Errorf("GITEA_MQ_REPOS: %w", err)
+		}
+		gc.Repos = repos
+	}
+	return gc, nil
+}
+
+func loadGithub(missing *[]string) (*GithubConfig, error) {
+	appIDStr := os.Getenv("GITEA_MQ_GITHUB_APP_ID")
+	if appIDStr == "" {
+		return nil, nil
+	}
+	appID, err := strconv.ParseInt(appIDStr, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("GITEA_MQ_GITHUB_APP_ID: %w", err)
+	}
+	gc := &GithubConfig{AppID: appID}
+
+	gc.PrivateKey, err = readSecret("GITEA_MQ_GITHUB_PRIVATE_KEY")
+	if err != nil {
+		return nil, err
+	}
+	if len(gc.PrivateKey) == 0 {
+		*missing = append(*missing, "GITEA_MQ_GITHUB_PRIVATE_KEY")
+	}
+
+	gc.WebhookSecret = os.Getenv("GITEA_MQ_GITHUB_WEBHOOK_SECRET")
+	if gc.WebhookSecret == "" {
+		*missing = append(*missing, "GITEA_MQ_GITHUB_WEBHOOK_SECRET")
+	}
+
+	if reposStr := os.Getenv("GITEA_MQ_GITHUB_REPOS"); reposStr != "" {
+		gc.Repos, err = parseRepos(reposStr, forge.KindGithub)
+		if err != nil {
+			return nil, fmt.Errorf("GITEA_MQ_GITHUB_REPOS: %w", err)
+		}
+	}
+	return gc, nil
+}
+
+// readSecret reads <key> or, if unset, the file at <key>_FILE. The _FILE form
+// keeps multi-line PEM keys out of process environment listings.
+func readSecret(key string) ([]byte, error) {
+	if v := os.Getenv(key); v != "" {
+		return []byte(v), nil
+	}
+	if path := os.Getenv(key + "_FILE"); path != "" {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("%s_FILE: %w", key, err)
+		}
+		return b, nil
+	}
+	return nil, nil
 }
 
 func envOrDefault(key, defaultVal string) string {
