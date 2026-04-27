@@ -96,10 +96,10 @@
 
 ## 11. Integration
 
-- [ ] 11.1 Add `internal/integration/github_e2e_test.go` using `ghfake.Server` + `testutil.TestDB` + real wiring (registry/poller/webhook mux/monitor); scenario enable-auto-merge → enqueue → merge-branch → check_run success → `gitea-mq` check `success` → `closed merged` → advance — RED then GREEN against already-shipped components
-- [ ] 11.2 Mixed-forge integration test: `gitea:org/app` + `github:org/app` queues independent
-- [ ] 11.3 Reconcile-poll test: skip webhook, poll alone enqueues GitHub PR
-- [ ] 11.4 `go test ./...` clean; existing Gitea e2e unchanged
+- [x] 11.1 Add `internal/integration/github_e2e_test.go` using `ghfake.Server` + `testutil.TestDB` + real wiring (registry/poller/webhook mux/monitor); scenario enable-auto-merge → enqueue → merge-branch → check_run success → `gitea-mq` check `success` → `closed merged` → advance — RED then GREEN against already-shipped components
+- [x] 11.2 Mixed-forge integration test: `gitea:org/app` + `github:org/app` queues independent
+- [x] 11.3 Reconcile-poll test: skip webhook, poll alone enqueues GitHub PR
+- [x] 11.4 `go test ./...` clean; existing Gitea e2e unchanged
 
 ## 12. Docs + polish
 
