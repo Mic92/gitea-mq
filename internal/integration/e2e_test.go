@@ -111,7 +111,7 @@ func TestFullMergeQueueFlow(t *testing.T) {
 	}
 
 	// Register repo in DB.
-	repo, err := svc.GetOrCreateRepo(ctx, "testuser", repoName)
+	repo, err := svc.GetOrCreateRepo(ctx, "gitea", "testuser", repoName)
 	if err != nil {
 		t.Fatalf("register repo: %v", err)
 	}

@@ -1,6 +1,7 @@
 package queue_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/Mic92/gitea-mq/internal/merge"
@@ -136,8 +137,8 @@ func TestQueueIsolation(t *testing.T) {
 	svc := queue.NewService(pool)
 	ctx := t.Context()
 
-	repoA, _ := svc.GetOrCreateRepo(ctx, "org", "app-a")
-	repoB, _ := svc.GetOrCreateRepo(ctx, "org", "app-b")
+	repoA, _ := svc.GetOrCreateRepo(ctx, "gitea", "org", "app-a")
+	repoB, _ := svc.GetOrCreateRepo(ctx, "gitea", "org", "app-b")
 
 	// Different repos.
 	if _, err := svc.Enqueue(ctx, repoA.ID, 1, "sha", "main"); err != nil {
@@ -215,6 +216,35 @@ func TestStateLifecycleAndChecks(t *testing.T) {
 	// Upsert must also update target_url.
 	if checks[0].TargetUrl != "https://ci.example.com/build/1" {
 		t.Fatalf("expected target_url from latest upsert, got %q", checks[0].TargetUrl)
+	}
+}
+
+// Same owner/name on different forges must yield distinct repo rows so their
+// queues are independent.
+func TestGetOrCreateRepo_ForgeDisambiguates(t *testing.T) {
+	pool := testutil.TestDB(t)
+	svc := queue.NewService(pool)
+	ctx := context.Background()
+
+	a, err := svc.GetOrCreateRepo(ctx, "gitea", "org", "app")
+	if err != nil {
+		t.Fatalf("gitea: %v", err)
+	}
+	b, err := svc.GetOrCreateRepo(ctx, "github", "org", "app")
+	if err != nil {
+		t.Fatalf("github: %v", err)
+	}
+	if a.ID == b.ID {
+		t.Fatalf("expected distinct rows, both got id=%d", a.ID)
+	}
+
+	// Idempotent on the (forge, owner, name) tuple.
+	a2, err := svc.GetOrCreateRepo(ctx, "gitea", "org", "app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a2.ID != a.ID {
+		t.Fatalf("idempotent: got %d, want %d", a2.ID, a.ID)
 	}
 }
 

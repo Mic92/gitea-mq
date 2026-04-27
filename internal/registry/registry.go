@@ -82,7 +82,7 @@ func (r *RepoRegistry) Add(ctx context.Context, ref forge.RepoRef) error {
 		slog.Warn("auto-setup failed", "repo", key, "error", err)
 	}
 
-	repo, err := r.deps.Queue.GetOrCreateRepo(ctx, ref.Owner, ref.Name)
+	repo, err := r.deps.Queue.GetOrCreateRepo(ctx, string(ref.Forge), ref.Owner, ref.Name)
 	if err != nil {
 		return err
 	}

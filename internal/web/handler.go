@@ -184,7 +184,7 @@ func overviewHandler(deps *Deps) http.HandlerFunc {
 		for _, ref := range deps.Repos.List() {
 			overview := RepoOverview{Owner: ref.Owner, Name: ref.Name}
 
-			repo, err := deps.Queue.GetOrCreateRepo(ctx, ref.Owner, ref.Name)
+			repo, err := deps.Queue.GetOrCreateRepo(ctx, string(ref.Forge), ref.Owner, ref.Name)
 			if err != nil {
 				slog.Error("failed to get repo", "repo", ref, "error", err)
 				data.Repos = append(data.Repos, overview)
@@ -263,7 +263,7 @@ func repoHandler(deps *Deps) http.HandlerFunc {
 func serveRepoDetail(w http.ResponseWriter, r *http.Request, deps *Deps, ref forge.RepoRef) {
 	owner, name := ref.Owner, ref.Name
 	ctx := r.Context()
-	repo, err := deps.Queue.GetOrCreateRepo(ctx, owner, name)
+	repo, err := deps.Queue.GetOrCreateRepo(ctx, string(ref.Forge), owner, name)
 	if err != nil {
 		slog.Error("failed to get repo", "owner", owner, "name", name, "error", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
@@ -308,7 +308,7 @@ func servePRDetail(w http.ResponseWriter, r *http.Request, deps *Deps, ref forge
 	}
 
 	ctx := r.Context()
-	repo, err := deps.Queue.GetOrCreateRepo(ctx, owner, name)
+	repo, err := deps.Queue.GetOrCreateRepo(ctx, string(ref.Forge), owner, name)
 	if err != nil {
 		slog.Error("failed to get repo", "owner", owner, "name", name, "error", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)

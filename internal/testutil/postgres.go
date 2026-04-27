@@ -167,6 +167,33 @@ func NewTestDB(t *testing.T, server *PostgresServer) *pgxpool.Pool {
 	return pool
 }
 
+// NewRawTestDB creates a fresh database and returns a pool with no migrations
+// applied, for tests that need to step through migrations manually.
+func NewRawTestDB(t *testing.T, server *PostgresServer) *pgxpool.Pool {
+	t.Helper()
+
+	if server == nil {
+		t.Fatal("postgres server not started")
+	}
+
+	dbName := fmt.Sprintf("testdb%d", server.dbCount.Add(1))
+	cmd := exec.CommandContext(t.Context(), "createdb", "-h", server.TempDir, "-U", "postgres", dbName)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("createdb: %v", err)
+	}
+
+	connStr := fmt.Sprintf("postgres://?dbname=%s&user=postgres&host=%s", dbName, server.TempDir)
+	pool, err := pgxpool.New(t.Context(), connStr)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	return pool
+}
+
 // RunWithPostgres is a helper for TestMain: starts postgres, runs tests,
 // cleans up. Returns the exit code for os.Exit.
 func RunWithPostgres(m *testing.M) int {
@@ -219,7 +246,7 @@ func TestQueueService(t *testing.T) (*queue.Service, context.Context, int64) {
 	svc := queue.NewService(pool)
 	ctx := t.Context()
 
-	repo, err := svc.GetOrCreateRepo(ctx, "org", "app")
+	repo, err := svc.GetOrCreateRepo(ctx, "gitea", "org", "app")
 	if err != nil {
 		t.Fatalf("create test repo: %v", err)
 	}

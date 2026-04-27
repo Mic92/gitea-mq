@@ -29,11 +29,11 @@
 
 ## 4. Database forge column
 
-- [ ] 4.1 Write failing store test: `GetOrCreateRepo(forge, owner, name)` distinct rows for `gitea`/`github` same `owner/name` — RED
-- [ ] 4.2 Add `internal/store/pg/migrations/002_add_forge.sql`: `ALTER TABLE repos ADD COLUMN forge TEXT NOT NULL DEFAULT 'gitea'`; drop old unique; add `UNIQUE(forge, owner, name)`
-- [ ] 4.3 Update `query.sql` (`GetOrCreateRepo`, `GetRepoByOwnerName` → take `forge`); regenerate sqlc
-- [ ] 4.4 Update `internal/queue` + `internal/registry` callers to pass forge — store test GREEN
-- [ ] 4.5 Migration test: apply `001` then `002` on testdb with seeded row → `forge='gitea'` backfilled
+- [x] 4.1 Write failing store test: `GetOrCreateRepo(forge, owner, name)` distinct rows for `gitea`/`github` same `owner/name` — RED
+- [x] 4.2 Add `internal/store/pg/migrations/002_add_forge.sql`: `ALTER TABLE repos ADD COLUMN forge TEXT NOT NULL DEFAULT 'gitea'`; drop old unique; add `UNIQUE(forge, owner, name)`
+- [x] 4.3 Update `query.sql` (`GetOrCreateRepo`, `GetRepoByOwnerName` → take `forge`); regenerate sqlc
+- [x] 4.4 Update `internal/queue` + `internal/registry` callers to pass forge — store test GREEN
+- [x] 4.5 Migration test: apply `001` then `002` on testdb with seeded row → `forge='gitea'` backfilled
 
 ## 5. Config split (Gitea optional, GitHub block)
 

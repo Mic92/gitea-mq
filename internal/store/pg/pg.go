@@ -36,3 +36,15 @@ func Connect(ctx context.Context, connString string) (*pgxpool.Pool, error) {
 
 	return pool, nil
 }
+
+// MigrateTo runs embedded migrations up to and including version on an
+// existing pool. Exposed so migration tests can stop partway, seed data,
+// then continue.
+func MigrateTo(pool *pgxpool.Pool, version int64) error {
+	goose.SetBaseFS(embedMigrations)
+	db := stdlib.OpenDBFromPool(pool)
+	if err := goose.SetDialect("postgres"); err != nil {
+		return err
+	}
+	return goose.UpTo(db, "migrations", version)
+}

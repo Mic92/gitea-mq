@@ -304,8 +304,9 @@ func (s *Service) ListActiveEntries(ctx context.Context, repoID int64) ([]pg.Que
 }
 
 // GetOrCreateRepo ensures a repo row exists and returns it.
-func (s *Service) GetOrCreateRepo(ctx context.Context, owner, name string) (pg.Repo, error) {
+func (s *Service) GetOrCreateRepo(ctx context.Context, forge, owner, name string) (pg.Repo, error) {
 	return s.queries().GetOrCreateRepo(ctx, pg.GetOrCreateRepoParams{
+		Forge: forge,
 		Owner: owner,
 		Name:  name,
 	})

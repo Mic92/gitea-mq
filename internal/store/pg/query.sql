@@ -1,7 +1,7 @@
 -- name: GetOrCreateRepo :one
-INSERT INTO repos (owner, name)
-VALUES ($1, $2)
-ON CONFLICT (owner, name) DO UPDATE SET owner = EXCLUDED.owner
+INSERT INTO repos (forge, owner, name)
+VALUES ($1, $2, $3)
+ON CONFLICT (forge, owner, name) DO UPDATE SET owner = EXCLUDED.owner
 RETURNING *;
 
 -- name: EnqueuePR :one
@@ -56,7 +56,7 @@ SELECT * FROM check_statuses
 WHERE queue_entry_id = $1;
 
 -- name: LoadActiveQueues :many
-SELECT qe.*, r.owner, r.name AS repo_name
+SELECT qe.*, r.forge, r.owner, r.name AS repo_name
 FROM queue_entries qe
 JOIN repos r ON r.id = qe.repo_id
 WHERE qe.state NOT IN ('failed', 'cancelled')
