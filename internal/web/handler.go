@@ -37,6 +37,14 @@ var funcMap = template.FuncMap{
 			return "⏳"
 		}
 	},
+	"forgeName": func(k forge.Kind) string {
+		switch k {
+		case forge.KindGithub:
+			return "GitHub"
+		default:
+			return "Gitea"
+		}
+	},
 }
 
 var templates = template.Must(
@@ -129,9 +137,9 @@ type PRDetailData struct {
 	EnqueuedAt      time.Time
 	CheckStatuses   []pg.CheckStatus
 	InQueue         bool
-	PRURL           string // link to the PR on Gitea
-	MergeBranchURL  string // link to the merge branch on Gitea
-	RefreshInterval int    // seconds
+	PRURL           string
+	MergeBranchURL  string
+	RefreshInterval int // seconds
 }
 
 // RepoLister abstracts how the dashboard gets the current managed repo set.
