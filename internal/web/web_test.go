@@ -311,30 +311,6 @@ func TestPRDetailNonHeadQueued(t *testing.T) {
 	}
 }
 
-func TestPRDetailNotInQueue(t *testing.T) {
-	svc, _, _ := testutil.TestQueueService(t)
-
-	deps := &web.Deps{
-		Queue:           svc,
-		Repos:           &staticRepoLister{repos: []forge.RepoRef{giteaRef("org", "app")}},
-		RefreshInterval: 10,
-	}
-
-	mux := web.NewMux(deps)
-	req := httptest.NewRequest(http.MethodGet, "/repo/org/app/pr/99", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 for PR not in queue, got %d", rec.Code)
-	}
-
-	body := rec.Body.String()
-	if !strings.Contains(body, "not in the merge queue") {
-		t.Errorf("expected 'not in the merge queue' message, got:\n%s", body)
-	}
-}
-
 func TestPRDetailGiteaAPIFailure(t *testing.T) {
 	svc, ctx, repoID := testutil.TestQueueService(t)
 
@@ -374,25 +350,6 @@ func TestPRDetailGiteaAPIFailure(t *testing.T) {
 	}
 }
 
-func TestRepoDetailUnknownRepoReturns404(t *testing.T) {
-	svc, _, _ := testutil.TestQueueService(t)
-
-	deps := &web.Deps{
-		Queue:           svc,
-		Repos:           &staticRepoLister{repos: []forge.RepoRef{giteaRef("org", "app")}},
-		RefreshInterval: 10,
-	}
-
-	mux := web.NewMux(deps)
-	req := httptest.NewRequest(http.MethodGet, "/repo/org/unknown", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 for unknown repo, got %d", rec.Code)
-	}
-}
-
 func TestRepoHandler_ForgeRouting(t *testing.T) {
 	svc, _, _ := testutil.TestQueueService(t)
 	deps := &web.Deps{
@@ -403,21 +360,26 @@ func TestRepoHandler_ForgeRouting(t *testing.T) {
 	mux := web.NewMux(deps)
 
 	for _, tc := range []struct {
-		path string
-		code int
+		path     string
+		code     int
+		wantBody string
 	}{
-		{"/repo/gitea/org/app", 200},
-		{"/repo/org/app", 200},             // legacy: missing forge segment defaults to gitea
-		{"/repo/gitea/org/app/pr/99", 200}, // not in queue → friendly page
-		{"/repo/org/app/pr/99", 200},       // legacy PR path
-		{"/repo/github/org/app", 404},      // forge known but repo not registered for it
-		{"/repo/gitlab/org/app", 404},      // unknown forge segment
-		{"/repo/gitea/org", 404},
+		{"/repo/gitea/org/app", 200, ""},
+		{"/repo/org/app", 200, ""}, // legacy: missing forge segment defaults to gitea
+		{"/repo/gitea/org/app/pr/99", 200, "not in the merge queue"},
+		{"/repo/org/app/pr/99", 200, "not in the merge queue"}, // legacy PR path
+		{"/repo/org/unknown", 404, ""},
+		{"/repo/github/org/app", 404, ""}, // forge known but repo not registered for it
+		{"/repo/gitlab/org/app", 404, ""}, // unknown forge segment
+		{"/repo/gitea/org", 404, ""},
 	} {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
 		if rec.Code != tc.code {
 			t.Errorf("%s: code=%d want %d", tc.path, rec.Code, tc.code)
+		}
+		if tc.wantBody != "" && !strings.Contains(rec.Body.String(), tc.wantBody) {
+			t.Errorf("%s: body missing %q", tc.path, tc.wantBody)
 		}
 	}
 }

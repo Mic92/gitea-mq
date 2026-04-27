@@ -27,26 +27,6 @@ func ghHandler(repos webhook.MapRepoLookup, disc func()) http.Handler {
 	return webhook.GithubHandler([]byte(testSecret), repos, nil, disc)
 }
 
-func TestGithubHandler_Signature(t *testing.T) {
-	h := ghHandler(webhook.MapRepoLookup{}, nil)
-
-	if w := ghPost(t, h, "ping", `{}`, false); w.Code != http.StatusUnauthorized {
-		t.Errorf("missing sig: code=%d", w.Code)
-	}
-	req := httptest.NewRequest(http.MethodPost, "/webhook/github", bytes.NewReader([]byte(`{}`)))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-GitHub-Event", "ping")
-	req.Header.Set("X-Hub-Signature-256", "sha256=deadbeef")
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("bad sig: code=%d", w.Code)
-	}
-	if w := ghPost(t, h, "ping", `{}`, true); w.Code != http.StatusOK {
-		t.Errorf("valid sig: code=%d", w.Code)
-	}
-}
-
 func TestGithubHandler_PRTriggersPoll(t *testing.T) {
 	var polled int
 	rm := &webhook.RepoMonitor{TriggerPoll: func() { polled++ }}

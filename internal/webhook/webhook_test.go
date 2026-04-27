@@ -86,19 +86,48 @@ func doRequest(handler http.Handler, body []byte, sig string) *httptest.Response
 	return rec
 }
 
-// HMAC is the security boundary — verify valid/missing/invalid signatures.
+// HMAC is the security boundary for both forge endpoints.
 func TestHandler_SignatureValidation(t *testing.T) {
-	env := setup(t)
-	body := makePayload("abc", "ci/build", "success", "org/app")
-
-	if rec := doRequest(env.handler, body, sign(body)); rec.Code != http.StatusOK {
-		t.Fatalf("valid sig: expected 200, got %d", rec.Code)
-	}
-	if rec := doRequest(env.handler, body, ""); rec.Code != http.StatusUnauthorized {
-		t.Fatalf("missing sig: expected 401, got %d", rec.Code)
-	}
-	if rec := doRequest(env.handler, body, "deadbeef"); rec.Code != http.StatusUnauthorized {
-		t.Fatalf("wrong sig: expected 401, got %d", rec.Code)
+	giteaBody := string(makePayload("abc", "ci/build", "success", "x/y"))
+	for _, tc := range []struct {
+		name    string
+		handler http.Handler
+		header  string
+		body    string
+		good    string
+	}{
+		{
+			"gitea", webhook.Handler(testSecret, webhook.MapRepoLookup{}, nil),
+			"X-Gitea-Signature", giteaBody, sign([]byte(giteaBody)),
+		},
+		{
+			"github", webhook.GithubHandler([]byte(testSecret), webhook.MapRepoLookup{}, nil, nil),
+			"X-Hub-Signature-256", `{}`, "sha256=" + sign([]byte(`{}`)),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, sig := range []struct {
+				name string
+				val  string
+				code int
+			}{
+				{"valid", tc.good, http.StatusOK},
+				{"missing", "", http.StatusUnauthorized},
+				{"wrong", "deadbeef", http.StatusUnauthorized},
+			} {
+				req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(tc.body))
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("X-GitHub-Event", "ping")
+				if sig.val != "" {
+					req.Header.Set(tc.header, sig.val)
+				}
+				rec := httptest.NewRecorder()
+				tc.handler.ServeHTTP(rec, req)
+				if rec.Code != sig.code {
+					t.Errorf("%s sig: code=%d want %d", sig.name, rec.Code, sig.code)
+				}
+			}
+		})
 	}
 }
 

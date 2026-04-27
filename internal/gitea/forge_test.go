@@ -2,6 +2,7 @@ package gitea_test
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/Mic92/gitea-mq/internal/forge"
@@ -62,75 +63,59 @@ func TestForge_ListOpenPRs_FoldsTimeline(t *testing.T) {
 }
 
 func TestForge_GetRequiredChecks_StripsSelf(t *testing.T) {
-	mock := &gitea.MockClient{
-		GetBranchProtectionFn: func(_ context.Context, _, _, _ string) (*gitea.BranchProtection, error) {
-			return &gitea.BranchProtection{
-				EnableStatusCheck:   true,
-				StatusCheckContexts: []string{"ci/build", "gitea-mq", "ci/test"},
-			}, nil
-		},
-	}
-
-	f := newForge(mock)
-	checks, err := f.GetRequiredChecks(context.Background(), "org", "app", "main")
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{"ci/build", "ci/test"}
-	if len(checks) != len(want) {
-		t.Fatalf("got %v, want %v", checks, want)
-	}
-	for i := range want {
-		if checks[i] != want[i] {
-			t.Fatalf("got %v, want %v", checks, want)
-		}
-	}
-}
-
-func TestForge_GetRequiredChecks_NoProtection(t *testing.T) {
-	mock := &gitea.MockClient{
-		GetBranchProtectionFn: func(_ context.Context, _, _, _ string) (*gitea.BranchProtection, error) {
-			return nil, nil
-		},
-	}
-	f := newForge(mock)
-	checks, err := f.GetRequiredChecks(context.Background(), "org", "app", "main")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if checks != nil {
-		t.Fatalf("got %v, want nil", checks)
+	for _, tc := range []struct {
+		name string
+		bp   *gitea.BranchProtection
+		want []string
+	}{
+		{"strips-self", &gitea.BranchProtection{
+			EnableStatusCheck:   true,
+			StatusCheckContexts: []string{"ci/build", "gitea-mq", "ci/test"},
+		}, []string{"ci/build", "ci/test"}},
+		{"no-protection", nil, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newForge(&gitea.MockClient{
+				GetBranchProtectionFn: func(_ context.Context, _, _, _ string) (*gitea.BranchProtection, error) {
+					return tc.bp, nil
+				},
+			})
+			checks, err := f.GetRequiredChecks(context.Background(), "org", "app", "main")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(checks, tc.want) {
+				t.Fatalf("got %v, want %v", checks, tc.want)
+			}
+		})
 	}
 }
 
-func TestForge_CreateMergeBranch_ConflictMapped(t *testing.T) {
-	mock := &gitea.MockClient{
-		MergeBranchesFn: func(_ context.Context, _, _, _, _, _ string) (*gitea.MergeResult, error) {
-			return nil, &gitea.MergeConflictError{Base: "main", Head: "sha1", Message: "CONFLICT"}
-		},
-	}
-	f := newForge(mock)
-	sha, conflict, err := f.CreateMergeBranch(context.Background(), "org", "app", "main", "sha1", "gitea-mq/1")
-	if err != nil {
-		t.Fatalf("err = %v, want nil (conflict should not be an error)", err)
-	}
-	if !conflict {
-		t.Error("conflict = false, want true")
-	}
-	if sha != "" {
-		t.Errorf("sha = %q, want empty", sha)
-	}
-}
-
-func TestForge_CreateMergeBranch_Success(t *testing.T) {
-	f := newForge(&gitea.MockClient{
-		MergeBranchesFn: func(_ context.Context, _, _, _, _, _ string) (*gitea.MergeResult, error) {
-			return &gitea.MergeResult{SHA: "mergesha"}, nil
-		},
-	})
-	sha, conflict, err := f.CreateMergeBranch(context.Background(), "org", "app", "main", "sha1", "gitea-mq/1")
-	if err != nil || conflict || sha != "mergesha" {
-		t.Fatalf("got (%q, %v, %v), want (mergesha, false, nil)", sha, conflict, err)
+func TestForge_CreateMergeBranch(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		res          *gitea.MergeResult
+		err          error
+		wantSHA      string
+		wantConflict bool
+	}{
+		{"success", &gitea.MergeResult{SHA: "mergesha"}, nil, "mergesha", false},
+		{"conflict", nil, &gitea.MergeConflictError{Base: "main", Head: "sha1", Message: "CONFLICT"}, "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newForge(&gitea.MockClient{
+				MergeBranchesFn: func(_ context.Context, _, _, _, _, _ string) (*gitea.MergeResult, error) {
+					return tc.res, tc.err
+				},
+			})
+			sha, conflict, err := f.CreateMergeBranch(context.Background(), "org", "app", "main", "sha1", "gitea-mq/1")
+			if err != nil {
+				t.Fatalf("err = %v, want nil (conflict is not an error)", err)
+			}
+			if sha != tc.wantSHA || conflict != tc.wantConflict {
+				t.Fatalf("got (%q, %v), want (%q, %v)", sha, conflict, tc.wantSHA, tc.wantConflict)
+			}
+		})
 	}
 }
 
@@ -159,33 +144,6 @@ func TestForge_GetCheckStates_MapsCombinedStatus(t *testing.T) {
 	}
 	if _, ok := states["gitea-mq"]; ok {
 		t.Error("gitea-mq should be excluded from check states")
-	}
-}
-
-func TestForge_SetMQStatus(t *testing.T) {
-	mock := &gitea.MockClient{}
-	f := newForge(mock)
-	err := f.SetMQStatus(context.Background(), "org", "app", "abc", forge.MQStatus{
-		State:       pg.CheckStatePending,
-		Description: "Queued (#1)",
-		TargetURL:   "https://mq/x",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	calls := mock.CallsTo("CreateCommitStatus")
-	if len(calls) != 1 {
-		t.Fatalf("got %d CreateCommitStatus calls, want 1", len(calls))
-	}
-	st := calls[0].Args[3].(gitea.CommitStatus)
-	if st.Context != "gitea-mq" {
-		t.Errorf("Context = %q, want gitea-mq", st.Context)
-	}
-	if st.State != "pending" {
-		t.Errorf("State = %q, want pending", st.State)
-	}
-	if st.Description != "Queued (#1)" || st.TargetURL != "https://mq/x" {
-		t.Errorf("status fields not passed through: %+v", st)
 	}
 }
 

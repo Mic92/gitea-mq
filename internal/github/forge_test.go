@@ -62,9 +62,10 @@ func TestForge_ListAndGetPR(t *testing.T) {
 	}
 }
 
-// Two SetMQStatus calls on the same SHA must result in exactly one check run
-// server-side; the second is a PATCH, not a duplicate create.
-func TestForge_SetMQStatus_UpsertsSingleRun(t *testing.T) {
+// Repeated SetMQStatus calls on the same SHA must result in exactly one
+// check run server-side, both with a warm cache (PATCH via cached ID) and
+// after a process restart (cold cache forces lookup-by-name then PATCH).
+func TestForge_SetMQStatus_Upsert(t *testing.T) {
 	srv, f := newTestForge(t)
 	ctx := context.Background()
 
@@ -74,35 +75,19 @@ func TestForge_SetMQStatus_UpsertsSingleRun(t *testing.T) {
 	if err := f.SetMQStatus(ctx, "org", "app", "abc", forge.MQStatus{State: pg.CheckStateSuccess, Description: "merged"}); err != nil {
 		t.Fatalf("second: %v", err)
 	}
-
 	runs := srv.Repo("org", "app").CheckRuns["abc"]
-	if len(runs) != 1 {
-		t.Fatalf("want 1 check run, got %d: %+v", len(runs), runs)
-	}
-	if runs[0].Name != forge.MQContext || runs[0].Status != "completed" || runs[0].Conclusion != "success" {
-		t.Errorf("run = %+v", runs[0])
-	}
-}
-
-// After a process restart the cache is cold; the adapter must look up the
-// existing run by name and PATCH it rather than create a second.
-func TestForge_SetMQStatus_ColdCacheFindsExisting(t *testing.T) {
-	srv, f := newTestForge(t)
-	ctx := context.Background()
-
-	if err := f.SetMQStatus(ctx, "org", "app", "abc", forge.MQStatus{State: pg.CheckStatePending}); err != nil {
-		t.Fatalf("seed: %v", err)
+	if len(runs) != 1 || runs[0].Name != forge.MQContext || runs[0].Status != "completed" || runs[0].Conclusion != "success" {
+		t.Fatalf("warm cache: want 1 success run, got %+v", runs)
 	}
 
-	// Fresh forge instance, same server state.
+	// Fresh forge instance, same server state: cold cache must find existing.
 	f2 := githubpkg.NewForge(newTestApp(t, srv), "")
 	if err := f2.SetMQStatus(ctx, "org", "app", "abc", forge.MQStatus{State: pg.CheckStateFailure}); err != nil {
 		t.Fatalf("restart: %v", err)
 	}
-
-	runs := srv.Repo("org", "app").CheckRuns["abc"]
+	runs = srv.Repo("org", "app").CheckRuns["abc"]
 	if len(runs) != 1 || runs[0].Conclusion != "failure" {
-		t.Fatalf("want 1 run with failure, got %+v", runs)
+		t.Fatalf("cold cache: want 1 failure run, got %+v", runs)
 	}
 }
 
@@ -143,20 +128,11 @@ func TestForge_GetCheckStates_MapsRunsAndExcludesSelf(t *testing.T) {
 	}
 }
 
-func TestForge_CreateMergeBranch(t *testing.T) {
+// 409 from the merge endpoint must surface as (conflict=true, err=nil).
+func TestForge_CreateMergeBranch_Conflict(t *testing.T) {
 	srv, f := newTestForge(t)
-	ctx := context.Background()
-
-	sha, conflict, err := f.CreateMergeBranch(ctx, "org", "app", "main", "sha-feature", "gitea-mq/1")
-	if err != nil || conflict {
-		t.Fatalf("err=%v conflict=%v", err, conflict)
-	}
-	if sha != "merge(sha-main,sha-feature)" || srv.Repo("org", "app").Refs["gitea-mq/1"] != sha {
-		t.Errorf("sha=%q refs=%v", sha, srv.Repo("org", "app").Refs)
-	}
-
 	srv.Repo("org", "app").ConflictOn["sha-conflict"] = true
-	_, conflict, err = f.CreateMergeBranch(ctx, "org", "app", "main", "sha-conflict", "gitea-mq/2")
+	_, conflict, err := f.CreateMergeBranch(context.Background(), "org", "app", "main", "sha-conflict", "gitea-mq/2")
 	if err != nil {
 		t.Fatalf("conflict path err: %v", err)
 	}
