@@ -7,30 +7,30 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"slices"
+	"sync"
 	"testing"
 
 	githubpkg "github.com/Mic92/gitea-mq/internal/github"
 	"github.com/Mic92/gitea-mq/internal/github/ghfake"
 )
 
-// testKey generates a small RSA key so ghinstallation can sign real JWTs;
+// testKey generates an RSA key once so ghinstallation can sign real JWTs;
 // ghfake never verifies them but the transport refuses to construct without
-// valid PEM.
-func testKey(t *testing.T) []byte {
-	t.Helper()
+// valid PEM. Shared across tests because keygen dominates test time.
+var testKey = sync.OnceValue(func() []byte {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		t.Fatal(err)
+		panic(err)
 	}
 	return pem.EncodeToMemory(&pem.Block{
 		Type:  "RSA PRIVATE KEY",
 		Bytes: x509.MarshalPKCS1PrivateKey(key),
 	})
-}
+})
 
 func newTestApp(t *testing.T, srv *ghfake.Server) *githubpkg.App {
 	t.Helper()
-	app, err := githubpkg.NewApp(1, testKey(t), srv.URL+"/api/v3")
+	app, err := githubpkg.NewApp(1, testKey(), srv.URL+"/api/v3")
 	if err != nil {
 		t.Fatalf("NewApp: %v", err)
 	}

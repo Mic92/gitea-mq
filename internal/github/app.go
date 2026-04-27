@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/bradleyfalzon/ghinstallation/v2"
@@ -67,6 +68,15 @@ func newClient(hc *http.Client, baseURL string) (*gh.Client, error) {
 }
 
 func (a *App) AppID() int64 { return a.appID }
+
+// graphqlURL derives the GraphQL endpoint from the REST base. github.com and
+// GHES place it differently relative to the REST root.
+func (a *App) graphqlURL() string {
+	if a.baseURL == DefaultBaseURL {
+		return "https://api.github.com/graphql"
+	}
+	return strings.TrimSuffix(a.baseURL, "/api/v3") + "/api/graphql"
+}
 
 func (a *App) installationClient(id int64) (*gh.Client, error) {
 	a.mu.Lock()

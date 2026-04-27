@@ -1,13 +1,18 @@
 package github
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"strings"
 
 	gh "github.com/google/go-github/v84/github"
 
 	"github.com/Mic92/gitea-mq/internal/forge"
+	"github.com/Mic92/gitea-mq/internal/store/pg"
 )
 
 var _ forge.Forge = (*githubForge)(nil)
@@ -15,8 +20,9 @@ var _ forge.Forge = (*githubForge)(nil)
 var errNotImplemented = errors.New("github: not implemented")
 
 type githubForge struct {
-	app     *App
-	htmlURL string // https://github.com or GHES web root
+	app       *App
+	htmlURL   string // https://github.com or GHES web root
+	checkRuns checkRunCache
 }
 
 // NewForge wraps a GitHub App as a forge. htmlURL is the user-facing web root
@@ -102,42 +108,219 @@ func (f *githubForge) ListAutoMergePRs(ctx context.Context, owner, name string) 
 	return out, nil
 }
 
-// --- stubs filled in by sections 7/8 ---
-
-func (f *githubForge) SetMQStatus(context.Context, string, string, string, forge.MQStatus) error {
-	return errNotImplemented
+func (f *githubForge) SetMQStatus(ctx context.Context, owner, name, sha string, st forge.MQStatus) error {
+	status, concl := mqStateToCheckRun(st.State)
+	return f.upsertCheckRun(ctx, owner, name, sha, MQCheckName, status, concl, st.Description, st.TargetURL)
 }
 
-func (f *githubForge) MirrorCheck(context.Context, string, string, string, string, string, string, string) error {
-	return errNotImplemented
+func (f *githubForge) MirrorCheck(ctx context.Context, owner, name, sha, checkContext, state, description, targetURL string) error {
+	status, concl := rawStateToCheckRun(state)
+	return f.upsertCheckRun(ctx, owner, name, sha, checkContext, status, concl, description, targetURL)
 }
 
-func (f *githubForge) GetRequiredChecks(context.Context, string, string, string) ([]string, error) {
-	return nil, errNotImplemented
+func (f *githubForge) GetRequiredChecks(ctx context.Context, owner, name, branch string) ([]string, error) {
+	c, err := f.app.ClientForRepo(owner, name)
+	if err != nil {
+		return nil, err
+	}
+	rules, _, err := c.Repositories.GetRulesForBranch(ctx, owner, name, branch, nil)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, r := range rules.RequiredStatusChecks {
+		for _, sc := range r.Parameters.RequiredStatusChecks {
+			if sc.Context != MQCheckName {
+				out = append(out, sc.Context)
+			}
+		}
+	}
+	return out, nil
 }
 
-func (f *githubForge) GetCheckStates(context.Context, string, string, string) (map[string]forge.Check, error) {
-	return nil, errNotImplemented
+func (f *githubForge) GetCheckStates(ctx context.Context, owner, name, sha string) (map[string]forge.Check, error) {
+	c, err := f.app.ClientForRepo(owner, name)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]forge.Check{}
+
+	opts := &gh.ListCheckRunsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
+	for cr, err := range c.Checks.ListCheckRunsForRefIter(ctx, owner, name, sha, opts) {
+		if err != nil {
+			return nil, err
+		}
+		if cr.GetName() == MQCheckName {
+			continue
+		}
+		out[cr.GetName()] = forge.Check{
+			State:       checkRunToState(cr.GetStatus(), cr.GetConclusion()),
+			Description: cr.GetOutput().GetSummary(),
+			TargetURL:   cr.GetDetailsURL(),
+		}
+	}
+
+	// Legacy commit statuses (third-party CI not on Checks API). Check runs
+	// win on context collision because they are the App-native surface.
+	for st, err := range c.Repositories.ListStatusesIter(ctx, owner, name, sha, &gh.ListOptions{PerPage: 100}) {
+		if err != nil {
+			return nil, err
+		}
+		if st.GetContext() == MQCheckName {
+			continue
+		}
+		if _, ok := out[st.GetContext()]; ok {
+			continue
+		}
+		out[st.GetContext()] = forge.Check{
+			State:       statusToState(st.GetState()),
+			Description: st.GetDescription(),
+			TargetURL:   st.GetTargetURL(),
+		}
+	}
+	return out, nil
 }
 
-func (f *githubForge) CreateMergeBranch(context.Context, string, string, string, string, string) (string, bool, error) {
-	return "", false, errNotImplemented
+func statusToState(s string) forge.CheckState {
+	switch s {
+	case "success":
+		return pg.CheckStateSuccess
+	case "failure":
+		return pg.CheckStateFailure
+	case "error":
+		return pg.CheckStateError
+	default:
+		return pg.CheckStatePending
+	}
 }
 
-func (f *githubForge) DeleteBranch(context.Context, string, string, string) error {
-	return errNotImplemented
+func (f *githubForge) CreateMergeBranch(ctx context.Context, owner, name, base, headSHA, branch string) (string, bool, error) {
+	c, err := f.app.ClientForRepo(owner, name)
+	if err != nil {
+		return "", false, err
+	}
+
+	baseRef, _, err := c.Git.GetRef(ctx, owner, name, "heads/"+base)
+	if err != nil {
+		return "", false, fmt.Errorf("resolve base %s: %w", base, err)
+	}
+	baseSHA := baseRef.GetObject().GetSHA()
+
+	_, resp, err := c.Git.CreateRef(ctx, owner, name, gh.CreateRef{
+		Ref: "refs/heads/" + branch,
+		SHA: baseSHA,
+	})
+	if err != nil {
+		if resp == nil || resp.StatusCode != http.StatusUnprocessableEntity {
+			return "", false, fmt.Errorf("create ref %s: %w", branch, err)
+		}
+		// 422: ref already exists from a crashed previous attempt. Force it
+		// to the current base tip so the merge result reflects fresh base.
+		if _, _, err := c.Git.UpdateRef(ctx, owner, name, "heads/"+branch,
+			gh.UpdateRef{SHA: baseSHA, Force: gh.Ptr(true)}); err != nil {
+			return "", false, fmt.Errorf("reset stale ref %s: %w", branch, err)
+		}
+	}
+
+	commit, resp, err := c.Repositories.Merge(ctx, owner, name, &gh.RepositoryMergeRequest{
+		Base: gh.Ptr(branch),
+		Head: gh.Ptr(headSHA),
+	})
+	if err != nil {
+		if resp != nil && resp.StatusCode == http.StatusConflict {
+			return "", true, nil
+		}
+		return "", false, fmt.Errorf("merge %s into %s: %w", headSHA, branch, err)
+	}
+	// 204: head already contained in base; the branch tip is the result.
+	if commit.GetSHA() == "" {
+		return baseSHA, false, nil
+	}
+	return commit.GetSHA(), false, nil
 }
 
-func (f *githubForge) ListBranches(context.Context, string, string) ([]string, error) {
-	return nil, errNotImplemented
+func (f *githubForge) DeleteBranch(ctx context.Context, owner, name, branch string) error {
+	c, err := f.app.ClientForRepo(owner, name)
+	if err != nil {
+		return err
+	}
+	resp, err := c.Git.DeleteRef(ctx, owner, name, "heads/"+branch)
+	// Idempotent: callers delete defensively after success/failure. GitHub
+	// returns 422 for a missing ref on an existing repo, 404 otherwise.
+	if resp != nil && (resp.StatusCode == http.StatusUnprocessableEntity || resp.StatusCode == http.StatusNotFound) {
+		return nil
+	}
+	return err
 }
 
-func (f *githubForge) CancelAutoMerge(context.Context, string, string, int64) error {
-	return errNotImplemented
+func (f *githubForge) ListBranches(ctx context.Context, owner, name string) ([]string, error) {
+	c, err := f.app.ClientForRepo(owner, name)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	opts := &gh.BranchListOptions{ListOptions: gh.ListOptions{PerPage: 100}}
+	for b, err := range c.Repositories.ListBranchesIter(ctx, owner, name, opts) {
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, b.GetName())
+	}
+	return out, nil
 }
 
-func (f *githubForge) Comment(context.Context, string, string, int64, string) error {
-	return errNotImplemented
+const disableAutoMergeMutation = `mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}`
+
+func (f *githubForge) CancelAutoMerge(ctx context.Context, owner, name string, number int64) error {
+	c, err := f.app.ClientForRepo(owner, name)
+	if err != nil {
+		return err
+	}
+	pr, _, err := c.PullRequests.Get(ctx, owner, name, int(number))
+	if err != nil {
+		return err
+	}
+
+	payload, _ := json.Marshal(map[string]any{
+		"query":     disableAutoMergeMutation,
+		"variables": map[string]any{"id": pr.GetNodeID()},
+	})
+	req, err := http.NewRequestWithContext(ctx, "POST", f.app.graphqlURL(), bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.Client().Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var body struct {
+		Errors []struct{ Message string } `json:"errors"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return fmt.Errorf("decode graphql response: %w", err)
+	}
+	if len(body.Errors) > 0 {
+		msg := body.Errors[0].Message
+		// Already disabled is success for the queue's purposes.
+		if strings.Contains(strings.ToLower(msg), "not enabled") {
+			return nil
+		}
+		return fmt.Errorf("disablePullRequestAutoMerge: %s", msg)
+	}
+	return nil
+}
+
+func (f *githubForge) Comment(ctx context.Context, owner, name string, number int64, body string) error {
+	c, err := f.app.ClientForRepo(owner, name)
+	if err != nil {
+		return err
+	}
+	_, _, err = c.Issues.CreateComment(ctx, owner, name, int(number), &gh.IssueComment{Body: gh.Ptr(body)})
+	return err
 }
 
 func (f *githubForge) EnsureRepoSetup(context.Context, string, string, forge.SetupConfig) error {

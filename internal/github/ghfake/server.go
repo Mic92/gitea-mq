@@ -188,7 +188,9 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+apiV3+"/repos/{o}/{r}/commits/{sha}/statuses", s.hListStatuses)
 
 	// Git refs / branches.
+	mux.HandleFunc("GET "+apiV3+"/repos/{o}/{r}/git/ref/{ref...}", s.hGetRef)
 	mux.HandleFunc("POST "+apiV3+"/repos/{o}/{r}/git/refs", s.hCreateRef)
+	mux.HandleFunc("PATCH "+apiV3+"/repos/{o}/{r}/git/refs/{ref...}", s.hUpdateRef)
 	mux.HandleFunc("DELETE "+apiV3+"/repos/{o}/{r}/git/refs/{ref...}", s.hDeleteRef)
 	mux.HandleFunc("GET "+apiV3+"/repos/{o}/{r}/branches", s.hListBranches)
 	mux.HandleFunc("POST "+apiV3+"/repos/{o}/{r}/merges", s.hMerge)
@@ -497,6 +499,23 @@ func (s *Server) hListStatuses(w http.ResponseWriter, r *http.Request) {
 
 // --- handlers: refs / merge ---
 
+func (s *Server) hGetRef(w http.ResponseWriter, r *http.Request) {
+	rp, ok := s.repo(r)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	branch := strings.TrimPrefix(r.PathValue("ref"), "heads/")
+	s.mu.Lock()
+	sha, ok := rp.Refs[branch]
+	s.mu.Unlock()
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ref": "refs/" + r.PathValue("ref"), "object": map[string]any{"sha": sha, "type": "commit"}})
+}
+
 func (s *Server) hCreateRef(w http.ResponseWriter, r *http.Request) {
 	rp, ok := s.repo(r)
 	if !ok {
@@ -520,6 +539,24 @@ func (s *Server) hCreateRef(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 201, map[string]any{"ref": body.Ref, "object": map[string]any{"sha": body.SHA}})
 }
 
+func (s *Server) hUpdateRef(w http.ResponseWriter, r *http.Request) {
+	rp, ok := s.repo(r)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	branch := strings.TrimPrefix(r.PathValue("ref"), "heads/")
+	var body struct {
+		SHA   string `json:"sha"`
+		Force bool   `json:"force"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	s.mu.Lock()
+	rp.Refs[branch] = body.SHA
+	s.mu.Unlock()
+	writeJSON(w, 200, map[string]any{"ref": "refs/heads/" + branch, "object": map[string]any{"sha": body.SHA}})
+}
+
 func (s *Server) hDeleteRef(w http.ResponseWriter, r *http.Request) {
 	rp, ok := s.repo(r)
 	if !ok {
@@ -528,8 +565,13 @@ func (s *Server) hDeleteRef(w http.ResponseWriter, r *http.Request) {
 	}
 	branch := strings.TrimPrefix(r.PathValue("ref"), "heads/")
 	s.mu.Lock()
+	_, exists := rp.Refs[branch]
 	delete(rp.Refs, branch)
 	s.mu.Unlock()
+	if !exists {
+		writeJSON(w, 422, map[string]any{"message": "Reference does not exist"})
+		return
+	}
 	w.WriteHeader(204)
 }
 
@@ -566,7 +608,8 @@ func (s *Server) hMerge(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	mergeSHA := fmt.Sprintf("merge-%s-%s", body.Base, body.Head)
+	// Encode the base SHA so tests can verify the merge used a fresh base.
+	mergeSHA := fmt.Sprintf("merge(%s,%s)", rp.Refs[body.Base], body.Head)
 	rp.Refs[body.Base] = mergeSHA
 	writeJSON(w, 201, map[string]any{"sha": mergeSHA})
 }
@@ -645,16 +688,19 @@ func (s *Server) hGraphQL(w http.ResponseWriter, r *http.Request) {
 	for _, rp := range s.repos {
 		for _, p := range rp.PRs {
 			if p.NodeID == nodeID {
-				p.AutoMerge = false
 				found = p
 			}
 		}
 	}
-	s.mu.Unlock()
-	if found == nil {
+	// Match real GitHub: disabling when not enabled is a GraphQL error so the
+	// adapter's tolerance path is exercised.
+	if found == nil || !found.AutoMerge {
+		s.mu.Unlock()
 		writeJSON(w, 200, map[string]any{"errors": []any{map[string]any{"message": "Pull request auto merge is not enabled."}}})
 		return
 	}
+	found.AutoMerge = false
+	s.mu.Unlock()
 	writeJSON(w, 200, map[string]any{"data": map[string]any{
 		"disablePullRequestAutoMerge": map[string]any{"clientMutationId": nil},
 	}})

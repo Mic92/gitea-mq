@@ -54,16 +54,16 @@
 
 ## 7. GitHub forge: status, checks, branches, cancel
 
-- [ ] 7.1 Test: two `SetMQStatus` calls on same SHA result in exactly one `gitea-mq` check run server-side (assert via fake server state, not call sequence) — RED
-- [ ] 7.2 Implement `SetMQStatus` with state→`status/conclusion` mapping + in-mem `(repo,sha)→checkRunID` cache — GREEN
-- [ ] 7.3 Test: `GetRequiredChecks` reads `/rules/branches/{b}`, falls back to classic protection, excludes `gitea-mq` — RED
-- [ ] 7.4 Implement `GetRequiredChecks` — GREEN
-- [ ] 7.5 Test: `GetCheckStates` merges check-runs + commit statuses into `context→state` — RED
-- [ ] 7.6 Implement `GetCheckStates` — GREEN
-- [ ] 7.7 Test: `CreateMergeBranch` POSTs `git/refs` then `merges`; 409 → `conflict=true`; `DeleteBranch`; `ListBranches` — RED
-- [ ] 7.8 Implement branch ops — GREEN
-- [ ] 7.9 Test: `CancelAutoMerge` POSTs GraphQL `disablePullRequestAutoMerge`; "not enabled" error → nil — RED
-- [ ] 7.10 Implement `CancelAutoMerge` (raw `/graphql` POST) + `Comment` — GREEN
+- [x] 7.1 Test: two `SetMQStatus` calls on same SHA result in exactly one `gitea-mq` check run server-side (assert via fake server state, not call sequence) — RED
+- [x] 7.2 Implement `SetMQStatus` with state→`status/conclusion` mapping + in-mem `(repo,sha)→checkRunID` cache — GREEN
+- [x] 7.3 Test: `GetRequiredChecks` reads `/rules/branches/{b}`, falls back to classic protection, excludes `gitea-mq` — RED
+- [x] 7.4 Implement `GetRequiredChecks` — GREEN
+- [x] 7.5 Test: `GetCheckStates` merges check-runs + commit statuses into `context→state` — RED
+- [x] 7.6 Implement `GetCheckStates` — GREEN
+- [x] 7.7 Test: `CreateMergeBranch` POSTs `git/refs` then `merges`; 409 → `conflict=true`; `DeleteBranch`; `ListBranches` — RED
+- [x] 7.8 Implement branch ops — GREEN
+- [x] 7.9 Test: `CancelAutoMerge` POSTs GraphQL `disablePullRequestAutoMerge`; "not enabled" error → nil — RED
+- [x] 7.10 Implement `CancelAutoMerge` (raw `/graphql` POST) + `Comment` — GREEN
 
 ## 8. GitHub auto-setup + discovery source
 
