@@ -323,9 +323,26 @@ func startQueuedHeads(ctx context.Context, deps *Deps, result *PollResult) {
 func Run(ctx context.Context, deps *Deps, interval time.Duration) {
 	slog.Info("poller started", "owner", deps.Owner, "repo", deps.Repo, "interval", interval)
 
-	if _, err := PollOnce(ctx, deps); err != nil {
-		slog.Error("poll error", "owner", deps.Owner, "repo", deps.Repo, "error", err)
+	// periodic ticks log paused/issue diagnostics; the initial and
+	// webhook-triggered polls stay quiet to avoid log noise on bursts.
+	doPoll := func(periodic bool) {
+		result, err := PollOnce(ctx, deps)
+		if err != nil {
+			slog.Error("poll error", "owner", deps.Owner, "repo", deps.Repo, "error", err)
+			return
+		}
+		if !periodic {
+			return
+		}
+		if result.Paused {
+			slog.Warn("forge unavailable, pausing", "owner", deps.Owner, "repo", deps.Repo)
+		}
+		for _, e := range result.Errors {
+			slog.Warn("poll issue", "owner", deps.Owner, "repo", deps.Repo, "error", e)
+		}
 	}
+
+	doPoll(false)
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -336,21 +353,9 @@ func Run(ctx context.Context, deps *Deps, interval time.Duration) {
 			slog.Info("poller stopped", "owner", deps.Owner, "repo", deps.Repo)
 			return
 		case <-deps.Trigger:
-			if _, err := PollOnce(ctx, deps); err != nil {
-				slog.Error("poll error", "owner", deps.Owner, "repo", deps.Repo, "error", err)
-			}
+			doPoll(false)
 		case <-ticker.C:
-			result, err := PollOnce(ctx, deps)
-			if err != nil {
-				slog.Error("poll error", "owner", deps.Owner, "repo", deps.Repo, "error", err)
-				continue
-			}
-			if result.Paused {
-				slog.Warn("forge unavailable, pausing", "owner", deps.Owner, "repo", deps.Repo)
-			}
-			for _, e := range result.Errors {
-				slog.Warn("poll issue", "owner", deps.Owner, "repo", deps.Repo, "error", e)
-			}
+			doPoll(true)
 		}
 	}
 }
