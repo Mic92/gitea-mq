@@ -73,10 +73,10 @@ func rawStateToCheckRun(state string) (status, conclusion string) {
 	}
 }
 
-// checkRunToState maps a GitHub check run back to a forge.CheckState for
-// GetCheckStates. Unfinished runs are pending; neutral/skipped count as
-// success so they do not block the queue.
-func checkRunToState(status, conclusion string) forge.CheckState {
+// CheckRunToState maps a GitHub check run back to a forge.CheckState.
+// Unfinished runs are pending; neutral/skipped count as success so they do
+// not block the queue.
+func CheckRunToState(status, conclusion string) forge.CheckState {
 	if status != "completed" {
 		return pg.CheckStatePending
 	}

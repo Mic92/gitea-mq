@@ -75,16 +75,16 @@
 
 ## 9. GitHub webhook endpoint
 
-- [ ] 9.1 Test `internal/webhook`: mux serves `/webhook/gitea`, alias `{WebhookPath}`, `/webhook/github`; github 404 when unconfigured — RED
-- [ ] 9.2 Implement webhook mux + per-forge handler registration — GREEN
-- [ ] 9.3 Test: `X-Hub-Signature-256` validation (valid/missing/bad) — RED
-- [ ] 9.4 Implement `internal/webhook/github_signature.go` — GREEN
-- [ ] 9.5 Test: `pull_request` dispatch — `auto_merge_enabled`→enqueue, `auto_merge_disabled`→dequeue, `closed merged=true`→merged, `closed merged=false`→silent dequeue, `synchronize`→new-push, `labeled`→noop — RED
-- [ ] 9.6 Implement `internal/webhook/github_handler.go` PR dispatch — GREEN
-- [ ] 9.7 Test: `check_run completed` + `status` → monitor handler; `gitea-mq` context ignored; SHA not on merge branch ignored — RED
-- [ ] 9.8 Implement check/status routing — GREEN
-- [ ] 9.9 Test: `installation`/`installation_repositories` → `discovery.TriggerNow()` called — RED
-- [ ] 9.10 Implement installation event routing — GREEN
+- [x] 9.1 Test `internal/webhook`: mux serves `/webhook/gitea`, alias `{WebhookPath}`, `/webhook/github`; github 404 when unconfigured — RED
+- [x] 9.2 Implement webhook mux + per-forge handler registration — GREEN
+- [x] 9.3 Test: `X-Hub-Signature-256` validation (valid/missing/bad) — RED
+- [x] 9.4 Implement `internal/webhook/github_signature.go` — GREEN
+- [x] 9.5 Test: `pull_request` dispatch — `auto_merge_enabled`→enqueue, `auto_merge_disabled`→dequeue, `closed merged=true`→merged, `closed merged=false`→silent dequeue, `synchronize`→new-push, `labeled`→noop — RED
+- [x] 9.6 Implement `internal/webhook/github_handler.go` PR dispatch — GREEN
+- [x] 9.7 Test: `check_run completed` + `status` → monitor handler; `gitea-mq` context ignored; SHA not on merge branch ignored — RED
+- [x] 9.8 Implement check/status routing — GREEN
+- [x] 9.9 Test: `installation`/`installation_repositories` → `discovery.TriggerNow()` called — RED
+- [x] 9.10 Implement installation event routing — GREEN
 
 ## 10. Dashboard forge-aware paths
 

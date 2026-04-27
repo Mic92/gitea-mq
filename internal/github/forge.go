@@ -151,7 +151,7 @@ func (f *githubForge) GetCheckStates(ctx context.Context, owner, name, sha strin
 			continue
 		}
 		out[cr.GetName()] = forge.Check{
-			State:       checkRunToState(cr.GetStatus(), cr.GetConclusion()),
+			State:       CheckRunToState(cr.GetStatus(), cr.GetConclusion()),
 			Description: cr.GetOutput().GetSummary(),
 			TargetURL:   cr.GetDetailsURL(),
 		}
@@ -170,7 +170,7 @@ func (f *githubForge) GetCheckStates(ctx context.Context, owner, name, sha strin
 			continue
 		}
 		out[st.GetContext()] = forge.Check{
-			State:       statusToState(st.GetState()),
+			State:       StatusToState(st.GetState()),
 			Description: st.GetDescription(),
 			TargetURL:   st.GetTargetURL(),
 		}
@@ -178,7 +178,7 @@ func (f *githubForge) GetCheckStates(ctx context.Context, owner, name, sha strin
 	return out, nil
 }
 
-func statusToState(s string) forge.CheckState {
+func StatusToState(s string) forge.CheckState {
 	switch s {
 	case "success":
 		return pg.CheckStateSuccess

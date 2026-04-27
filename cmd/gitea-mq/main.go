@@ -119,10 +119,12 @@ func run() error {
 		SuccessTimeout: 5 * time.Minute,
 	})
 
+	discTrigger := make(chan struct{}, 1)
 	discDeps := &discovery.Deps{
 		Sources:       discSources,
 		Registry:      reg,
 		ExplicitRepos: cfg.Repos(),
+		Trigger:       discTrigger,
 	}
 	// Initial discovery blocks startup so the dashboard and webhook see the
 	// full repo set immediately. Explicit repos are added via the same path.
@@ -134,10 +136,24 @@ func run() error {
 	// HTTP server: webhook + dashboard on the same mux.
 	mux := http.NewServeMux()
 
-	// Webhook handler — uses registry for dynamic repo lookup.
 	if cfg.Gitea != nil {
-		webhookHandler := webhook.Handler(giteaWebhookSecret, reg, queueSvc)
-		mux.Handle(cfg.WebhookPath, webhookHandler)
+		h := webhook.Handler(giteaWebhookSecret, reg, queueSvc)
+		mux.Handle("/webhook/gitea", h)
+		// Legacy alias kept so existing per-repo webhooks created by earlier
+		// versions keep working.
+		if cfg.WebhookPath != "" && cfg.WebhookPath != "/webhook/gitea" {
+			mux.Handle(cfg.WebhookPath, h)
+		}
+	}
+	if cfg.Github != nil {
+		mux.Handle("/webhook/github", webhook.GithubHandler(
+			[]byte(cfg.Github.WebhookSecret), reg, queueSvc,
+			func() {
+				select {
+				case discTrigger <- struct{}{}:
+				default:
+				}
+			}))
 	}
 
 	// Health check.
