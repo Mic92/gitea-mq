@@ -88,6 +88,15 @@ type MQStatus struct {
 // CheckState aliases pg.CheckState so callers do not import the store package.
 type CheckState = pg.CheckState
 
+// Check is a single context's status as reported by GetCheckStates.
+// Description and TargetURL are passed through so callers can implement
+// status mirroring and stale-mirror cleanup without forge-specific code.
+type Check struct {
+	State       CheckState
+	Description string
+	TargetURL   string
+}
+
 // SetupConfig holds inputs to EnsureRepoSetup.
 type SetupConfig struct {
 	// ExternalURL is the public base URL of the gitea-mq instance. Used by
@@ -103,6 +112,7 @@ type Forge interface {
 	Kind() Kind
 	RepoHTMLURL(owner, name string) string
 	PRHTMLURL(owner, name string, number int64) string
+	BranchHTMLURL(owner, name, branch string) string
 
 	ListOpenPRs(ctx context.Context, owner, name string) ([]PR, error)
 	GetPR(ctx context.Context, owner, name string, number int64) (*PR, error)
@@ -110,8 +120,12 @@ type Forge interface {
 	ListAutoMergePRs(ctx context.Context, owner, name string) ([]PR, error)
 
 	SetMQStatus(ctx context.Context, owner, name, sha string, st MQStatus) error
+	// MirrorCheck posts a status/check with an arbitrary context name on sha,
+	// used to surface merge-branch CI results on the PR head. State values are
+	// the standard set: pending, success, failure, error, skipped.
+	MirrorCheck(ctx context.Context, owner, name, sha, checkContext, state, description, targetURL string) error
 	GetRequiredChecks(ctx context.Context, owner, name, branch string) ([]string, error)
-	GetCheckStates(ctx context.Context, owner, name, sha string) (map[string]CheckState, error)
+	GetCheckStates(ctx context.Context, owner, name, sha string) (map[string]Check, error)
 
 	// CreateMergeBranch creates branch at base's tip and merges headSHA into it.
 	// conflict=true (err=nil) indicates the merge could not complete.

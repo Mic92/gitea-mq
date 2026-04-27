@@ -21,12 +21,14 @@ type MockForge struct {
 
 	RepoHTMLURLFn       func(owner, name string) string
 	PRHTMLURLFn         func(owner, name string, number int64) string
+	BranchHTMLURLFn     func(owner, name, branch string) string
 	ListOpenPRsFn       func(ctx context.Context, owner, name string) ([]PR, error)
 	GetPRFn             func(ctx context.Context, owner, name string, number int64) (*PR, error)
 	ListAutoMergePRsFn  func(ctx context.Context, owner, name string) ([]PR, error)
 	SetMQStatusFn       func(ctx context.Context, owner, name, sha string, st MQStatus) error
+	MirrorCheckFn       func(ctx context.Context, owner, name, sha, checkContext, state, description, targetURL string) error
 	GetRequiredChecksFn func(ctx context.Context, owner, name, branch string) ([]string, error)
-	GetCheckStatesFn    func(ctx context.Context, owner, name, sha string) (map[string]CheckState, error)
+	GetCheckStatesFn    func(ctx context.Context, owner, name, sha string) (map[string]Check, error)
 	CreateMergeBranchFn func(ctx context.Context, owner, name, base, headSHA, branch string) (string, bool, error)
 	DeleteBranchFn      func(ctx context.Context, owner, name, branch string) error
 	ListBranchesFn      func(ctx context.Context, owner, name string) ([]string, error)
@@ -79,6 +81,14 @@ func (m *MockForge) PRHTMLURL(owner, name string, number int64) string {
 	return ""
 }
 
+func (m *MockForge) BranchHTMLURL(owner, name, branch string) string {
+	m.record("BranchHTMLURL", owner, name, branch)
+	if m.BranchHTMLURLFn != nil {
+		return m.BranchHTMLURLFn(owner, name, branch)
+	}
+	return ""
+}
+
 func (m *MockForge) ListOpenPRs(ctx context.Context, owner, name string) ([]PR, error) {
 	m.record("ListOpenPRs", owner, name)
 	if m.ListOpenPRsFn != nil {
@@ -111,6 +121,14 @@ func (m *MockForge) SetMQStatus(ctx context.Context, owner, name, sha string, st
 	return nil
 }
 
+func (m *MockForge) MirrorCheck(ctx context.Context, owner, name, sha, checkContext, state, description, targetURL string) error {
+	m.record("MirrorCheck", owner, name, sha, checkContext, state, description, targetURL)
+	if m.MirrorCheckFn != nil {
+		return m.MirrorCheckFn(ctx, owner, name, sha, checkContext, state, description, targetURL)
+	}
+	return nil
+}
+
 func (m *MockForge) GetRequiredChecks(ctx context.Context, owner, name, branch string) ([]string, error) {
 	m.record("GetRequiredChecks", owner, name, branch)
 	if m.GetRequiredChecksFn != nil {
@@ -119,7 +137,7 @@ func (m *MockForge) GetRequiredChecks(ctx context.Context, owner, name, branch s
 	return nil, nil
 }
 
-func (m *MockForge) GetCheckStates(ctx context.Context, owner, name, sha string) (map[string]CheckState, error) {
+func (m *MockForge) GetCheckStates(ctx context.Context, owner, name, sha string) (map[string]Check, error) {
 	m.record("GetCheckStates", owner, name, sha)
 	if m.GetCheckStatesFn != nil {
 		return m.GetCheckStatesFn(ctx, owner, name, sha)

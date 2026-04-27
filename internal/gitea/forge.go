@@ -37,6 +37,10 @@ func (f *giteaForge) PRHTMLURL(owner, name string, number int64) string {
 	return fmt.Sprintf("%s/%s/%s/pulls/%d", f.baseURL, owner, name, number)
 }
 
+func (f *giteaForge) BranchHTMLURL(owner, name, branch string) string {
+	return fmt.Sprintf("%s/%s/%s/src/branch/%s", f.baseURL, owner, name, branch)
+}
+
 func toForgePR(pr *PR, autoMerge bool) forge.PR {
 	out := forge.PR{
 		Number:           pr.Index,
@@ -60,6 +64,9 @@ func toForgePR(pr *PR, autoMerge bool) forge.PR {
 	return out
 }
 
+// ListOpenPRs populates AutoMergeEnabled per PR by inspecting timelines so
+// the poller can stay forge-agnostic. This costs one extra request per open
+// PR, matching what the Gitea poller did before the forge refactor.
 func (f *giteaForge) ListOpenPRs(ctx context.Context, owner, name string) ([]forge.PR, error) {
 	prs, err := f.client.ListOpenPRs(ctx, owner, name)
 	if err != nil {
@@ -67,7 +74,11 @@ func (f *giteaForge) ListOpenPRs(ctx context.Context, owner, name string) ([]for
 	}
 	out := make([]forge.PR, 0, len(prs))
 	for i := range prs {
-		out = append(out, toForgePR(&prs[i], false))
+		timeline, err := f.client.GetPRTimeline(ctx, owner, name, prs[i].Index)
+		if err != nil {
+			return nil, fmt.Errorf("get timeline for PR #%d: %w", prs[i].Index, err)
+		}
+		out = append(out, toForgePR(&prs[i], HasAutomergeScheduled(timeline)))
 	}
 	return out, nil
 }
@@ -85,23 +96,16 @@ func (f *giteaForge) GetPR(ctx context.Context, owner, name string, number int64
 	return &fp, nil
 }
 
-// ListAutoMergePRs hides Gitea's timeline-comment signalling: callers see
-// only PRs whose latest automerge-related event is "scheduled".
 func (f *giteaForge) ListAutoMergePRs(ctx context.Context, owner, name string) ([]forge.PR, error) {
-	prs, err := f.client.ListOpenPRs(ctx, owner, name)
+	prs, err := f.ListOpenPRs(ctx, owner, name)
 	if err != nil {
 		return nil, err
 	}
 	var out []forge.PR
-	for i := range prs {
-		timeline, err := f.client.GetPRTimeline(ctx, owner, name, prs[i].Index)
-		if err != nil {
-			return nil, fmt.Errorf("get timeline for PR #%d: %w", prs[i].Index, err)
+	for _, pr := range prs {
+		if pr.AutoMergeEnabled {
+			out = append(out, pr)
 		}
-		if !HasAutomergeScheduled(timeline) {
-			continue
-		}
-		out = append(out, toForgePR(&prs[i], true))
 	}
 	return out, nil
 }
@@ -109,6 +113,15 @@ func (f *giteaForge) ListAutoMergePRs(ctx context.Context, owner, name string) (
 func (f *giteaForge) SetMQStatus(ctx context.Context, owner, name, sha string, st forge.MQStatus) error {
 	return f.client.CreateCommitStatus(ctx, owner, name, sha,
 		MQStatus(string(st.State), st.Description, st.TargetURL))
+}
+
+func (f *giteaForge) MirrorCheck(ctx context.Context, owner, name, sha, checkContext, state, description, targetURL string) error {
+	return f.client.CreateCommitStatus(ctx, owner, name, sha, CommitStatus{
+		Context:     checkContext,
+		State:       state,
+		Description: description,
+		TargetURL:   targetURL,
+	})
 }
 
 func (f *giteaForge) GetRequiredChecks(ctx context.Context, owner, name, branch string) ([]string, error) {
@@ -130,18 +143,22 @@ func (f *giteaForge) GetRequiredChecks(ctx context.Context, owner, name, branch 
 	return out, nil
 }
 
-func (f *giteaForge) GetCheckStates(ctx context.Context, owner, name, sha string) (map[string]forge.CheckState, error) {
+func (f *giteaForge) GetCheckStates(ctx context.Context, owner, name, sha string) (map[string]forge.Check, error) {
 	cs, err := f.client.GetCombinedCommitStatus(ctx, owner, name, sha)
 	if err != nil {
 		return nil, err
 	}
 	// Exclude our own status so the monitor never gates on it.
-	out := make(map[string]forge.CheckState, len(cs.Statuses))
+	out := make(map[string]forge.Check, len(cs.Statuses))
 	for _, s := range cs.Statuses {
 		if s.Context == "gitea-mq" {
 			continue
 		}
-		out[s.Context] = MapState(s.Status)
+		out[s.Context] = forge.Check{
+			State:       MapState(s.Status),
+			Description: s.Description,
+			TargetURL:   s.TargetURL,
+		}
 	}
 	return out, nil
 }

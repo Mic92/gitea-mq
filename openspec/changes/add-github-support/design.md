@@ -40,14 +40,16 @@ type Forge interface {
     Kind() Kind
     RepoHTMLURL(owner, name string) string
     PRHTMLURL(owner, name string, number int64) string
+    BranchHTMLURL(owner, name, branch string) string
 
     ListOpenPRs(ctx, owner, name string) ([]PR, error)
     GetPR(ctx, owner, name string, number int64) (*PR, error)
     ListAutoMergePRs(ctx, owner, name string) ([]PR, error) // reconcile
 
     SetMQStatus(ctx, owner, name, sha string, st MQStatus) error
+    MirrorCheck(ctx, owner, name, sha, context, state, desc, url string) error
     GetRequiredChecks(ctx, owner, name, branch string) ([]string, error)
-    GetCheckStates(ctx, owner, name, sha string) (map[string]CheckState, error)
+    GetCheckStates(ctx, owner, name, sha string) (map[string]Check, error)
 
     CreateMergeBranch(ctx, owner, name, base, headSHA, branch string) (sha string, conflict bool, err error)
     DeleteBranch(ctx, owner, name, branch string) error
@@ -60,7 +62,9 @@ type Forge interface {
 }
 ```
 
-`forge.PR` carries `AutoMergeEnabled bool` so callers no longer parse Gitea timeline comments themselves; the Gitea adapter folds timeline inspection into `ListAutoMergePRs`/`GetPR`.
+`forge.PR` carries `AutoMergeEnabled bool` so callers no longer parse Gitea timeline comments themselves; the Gitea adapter folds timeline inspection into `ListOpenPRs`/`ListAutoMergePRs`/`GetPR`.
+
+`MirrorCheck` and the richer `GetCheckStates` (returning `{State, Description, TargetURL}` per context) exist so the existing status-mirroring UX — copying merge-branch CI results onto the PR head as `gitea-mq/<ctx>` and clearing/skipping stale mirrors on retest/success — can be expressed forge-agnostically. On GitHub these map to per-context check runs.
 
 A `forge.Set` holds `map[Kind]Forge` and resolves a `Forge` from a `RepoRef`. `registry.Deps.Gitea` is replaced by `Forges *forge.Set`.
 

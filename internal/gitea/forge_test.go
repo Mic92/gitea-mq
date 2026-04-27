@@ -154,11 +154,11 @@ func TestForge_GetCheckStates_MapsCombinedStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if states["ci/build"] != pg.CheckStateSuccess {
-		t.Errorf("ci/build = %q, want success", states["ci/build"])
+	if states["ci/build"].State != pg.CheckStateSuccess {
+		t.Errorf("ci/build = %q, want success", states["ci/build"].State)
 	}
-	if states["ci/test"] != pg.CheckStateFailure {
-		t.Errorf("ci/test = %q, want failure", states["ci/test"])
+	if states["ci/test"].State != pg.CheckStateFailure {
+		t.Errorf("ci/test = %q, want failure", states["ci/test"].State)
 	}
 	if _, ok := states["gitea-mq"]; ok {
 		t.Error("gitea-mq should be excluded from check states")
@@ -246,5 +246,8 @@ func TestForge_URLHelpers(t *testing.T) {
 	}
 	if got := f.PRHTMLURL("org", "app", 42); got != "https://gitea.example.com/org/app/pulls/42" {
 		t.Errorf("PRHTMLURL = %q", got)
+	}
+	if got := f.BranchHTMLURL("org", "app", "gitea-mq/1"); got != "https://gitea.example.com/org/app/src/branch/gitea-mq/1" {
+		t.Errorf("BranchHTMLURL = %q", got)
 	}
 }
