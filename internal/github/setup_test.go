@@ -36,11 +36,22 @@ func TestForge_EnsureRepoSetup(t *testing.T) {
 	if err := json.Unmarshal(rs.Conditions, &conds); err != nil {
 		t.Fatalf("decode conditions: %v", err)
 	}
-	if len(conds.RefName.Exclude) != 1 || conds.RefName.Exclude[0] != "refs/heads/gitea-mq/**" {
+	if len(conds.RefName.Exclude) == 0 || conds.RefName.Exclude[0] != "refs/heads/gitea-mq/**" {
 		t.Errorf("exclude = %v", conds.RefName.Exclude)
 	}
 	if len(rs.Rules) != 1 || rs.Rules[0].Type != "required_status_checks" {
 		t.Fatalf("rules = %+v", rs.Rules)
+	}
+	// The default (false) would also gate branch *creation* on the check,
+	// breaking normal pushes for everyone except the bypass actor.
+	var params struct {
+		DoNotEnforceOnCreate bool `json:"do_not_enforce_on_create"`
+	}
+	if err := json.Unmarshal(rs.Rules[0].Parameters, &params); err != nil {
+		t.Fatalf("decode rule params: %v", err)
+	}
+	if !params.DoNotEnforceOnCreate {
+		t.Error("do_not_enforce_on_create=false: ruleset would block all branch creation")
 	}
 
 	// Second run is a no-op: must not create a duplicate ruleset.

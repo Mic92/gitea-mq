@@ -69,6 +69,9 @@ func (f *githubForge) EnsureRepoSetup(ctx context.Context, owner, name string, _
 					IntegrationID: gh.Ptr(f.app.AppID()),
 				}},
 				StrictRequiredStatusChecksPolicy: false,
+				// Otherwise the rule also gates branch *creation* and only
+				// the bypass actor could push a new branch.
+				DoNotEnforceOnCreate: gh.Ptr(true),
 			},
 		},
 	})
