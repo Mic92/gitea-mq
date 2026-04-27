@@ -9,10 +9,10 @@
 
 ## 2. Gitea adapter implements Forge
 
-- [ ] 2.1 Write `internal/gitea/forge_test.go` covering only adapter *transforms* (passthroughs to `gitea.Client` are already covered): `ListAutoMergePRs` folds timeline into `PR.AutoMergeEnabled`; `GetRequiredChecks` strips `gitea-mq`; `CreateMergeBranch` maps `MergeConflictError` → `conflict=true` — RED
-- [ ] 2.2 Implement `internal/gitea/forge.go` (`giteaForge` wrapping existing `Client`): `Kind`, URL helpers, `ListAutoMergePRs`, `GetPR`, `SetMQStatus`, `GetRequiredChecks`, `GetCheckStates`, `CreateMergeBranch`, `DeleteBranch`, `ListBranches`, `CancelAutoMerge`, `Comment`, `EnsureRepoSetup` — GREEN (passthroughs are one-liners, no dedicated tests)
-- [ ] 2.3 Move timeline-inspection logic from `internal/poller/automerge.go` into `giteaForge.ListAutoMergePRs`; keep `poller` test fixtures, assert behaviour unchanged
-- [ ] 2.4 Move `internal/setup` Gitea branch-protection + webhook ensure into `giteaForge.EnsureRepoSetup`; existing `setup` tests pass against adapter
+- [x] 2.1 Write `internal/gitea/forge_test.go` covering only adapter *transforms* (passthroughs to `gitea.Client` are already covered): `ListAutoMergePRs` folds timeline into `PR.AutoMergeEnabled`; `GetRequiredChecks` strips `gitea-mq`; `CreateMergeBranch` maps `MergeConflictError` → `conflict=true` — RED
+- [x] 2.2 Implement `internal/gitea/forge.go` (`giteaForge` wrapping existing `Client`): `Kind`, URL helpers, `ListAutoMergePRs`, `GetPR`, `SetMQStatus`, `GetRequiredChecks`, `GetCheckStates`, `CreateMergeBranch`, `DeleteBranch`, `ListBranches`, `CancelAutoMerge`, `Comment`, `EnsureRepoSetup` — GREEN (passthroughs are one-liners, no dedicated tests)
+- [x] 2.3 Move timeline-inspection logic from `internal/poller/automerge.go` into `giteaForge.ListAutoMergePRs`; keep `poller` test fixtures, assert behaviour unchanged
+- [x] 2.4 Move `internal/setup` Gitea branch-protection + webhook ensure into `giteaForge.EnsureRepoSetup`; existing `setup` tests pass against adapter
 
 ## 3. Migrate callers to forge.Forge (no behaviour change)
 
