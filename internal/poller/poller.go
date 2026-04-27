@@ -119,7 +119,16 @@ func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 		openPRMap[openPRs[i].Number] = &openPRs[i]
 	}
 
-	// Enqueue newly auto-merge-enabled PRs whose own CI is green.
+	enqueueAutoMergePRs(ctx, deps, result, openPRs)
+	reconcileEntries(ctx, deps, result, openPRMap)
+	startQueuedHeads(ctx, deps, result)
+
+	return result, nil
+}
+
+// enqueueAutoMergePRs adds open PRs that have auto-merge enabled and green CI
+// to the queue if they are not already tracked.
+func enqueueAutoMergePRs(ctx context.Context, deps *Deps, result *PollResult, openPRs []forge.PR) {
 	for i := range openPRs {
 		pr := &openPRs[i]
 		if !pr.AutoMergeEnabled {
@@ -163,12 +172,15 @@ func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 			slog.Info("enqueued PR from automerge detection", "pr", pr.Number, "position", enqResult.Position)
 		}
 	}
+}
 
-	// Reconcile existing queue entries against forge state.
+// reconcileEntries removes queue entries whose PR was merged, closed,
+// retargeted, pushed to, or had auto-merge cancelled.
+func reconcileEntries(ctx context.Context, deps *Deps, result *PollResult, openPRMap map[int64]*forge.PR) {
 	activeEntries, err := deps.Queue.ListActiveEntries(ctx, deps.RepoID)
 	if err != nil {
 		result.Errors = append(result.Errors, fmt.Errorf("list active entries: %w", err))
-		return result, nil
+		return
 	}
 
 	for _, entry := range activeEntries {
@@ -249,12 +261,15 @@ func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 			}
 		}
 	}
+}
 
-	// Kick off testing for any branch whose head is still queued.
-	activeEntries, err = deps.Queue.ListActiveEntries(ctx, deps.RepoID)
+// startQueuedHeads kicks off testing for any target branch whose head entry is
+// still in the queued state.
+func startQueuedHeads(ctx context.Context, deps *Deps, result *PollResult) {
+	activeEntries, err := deps.Queue.ListActiveEntries(ctx, deps.RepoID)
 	if err != nil {
 		result.Errors = append(result.Errors, fmt.Errorf("list active entries for testing: %w", err))
-		return result, nil
+		return
 	}
 
 	seenBranches := make(map[string]bool)
@@ -286,8 +301,6 @@ func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 			slog.Info("started testing for head-of-queue", "pr", head.PrNumber, "branch", startResult.MergeBranchName)
 		}
 	}
-
-	return result, nil
 }
 
 // Run starts the polling loop. The first poll happens immediately.
