@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-    <nav class="breadcrumb"><a href="/">gitea-mq</a> › <a href="/repo/{{.Owner}}/{{.Name}}">{{.Owner}}/{{.Name}}</a> › PR #{{.PrNumber}}</nav>
+    <nav class="breadcrumb"><a href="/">gitea-mq</a> › <a href="/repo/{{.Forge}}/{{.Owner}}/{{.Name}}">{{.Forge}}:{{.Owner}}/{{.Name}}</a> › PR #{{.PrNumber}}</nav>
 
     {{if not .InQueue}}
     <h1>PR #{{.PrNumber}}</h1>

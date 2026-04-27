@@ -87,6 +87,7 @@ func pluralize(n int, unit string) string {
 
 // RepoOverview holds the data for one repo in the overview page.
 type RepoOverview struct {
+	Forge     forge.Kind
 	Owner     string
 	Name      string
 	QueueSize int
@@ -107,14 +108,17 @@ type RepoDetailEntry struct {
 
 // RepoDetailData is the template data for the repo detail page.
 type RepoDetailData struct {
+	Forge           forge.Kind
 	Owner           string
 	Name            string
+	RepoURL         string // link to the repo on the forge
 	Entries         []RepoDetailEntry
 	RefreshInterval int // seconds
 }
 
 // PRDetailData is the template data for the PR detail page.
 type PRDetailData struct {
+	Forge           forge.Kind
 	Owner           string
 	Name            string
 	PrNumber        int64
@@ -182,7 +186,7 @@ func overviewHandler(deps *Deps) http.HandlerFunc {
 		}
 
 		for _, ref := range deps.Repos.List() {
-			overview := RepoOverview{Owner: ref.Owner, Name: ref.Name}
+			overview := RepoOverview{Forge: ref.Forge, Owner: ref.Owner, Name: ref.Name}
 
 			repo, err := deps.Queue.GetOrCreateRepo(ctx, string(ref.Forge), ref.Owner, ref.Name)
 			if err != nil {
@@ -211,41 +215,37 @@ func overviewHandler(deps *Deps) http.HandlerFunc {
 }
 
 // repoHandler serves repo and PR detail pages:
-//   - GET /repo/{owner}/{name} — repo queue listing
-//   - GET /repo/{owner}/{name}/pr/{number} — PR detail
+//   - GET /repo/{forge}/{owner}/{name} — repo queue listing
+//   - GET /repo/{forge}/{owner}/{name}/pr/{number} — PR detail
+//
+// Legacy two-/three-segment paths without {forge} resolve as gitea so existing
+// MQStatus target_urls and bookmarks keep working.
 func repoHandler(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Parse /repo/{owner}/{name}[/pr/{number}] from path.
-		path := strings.TrimPrefix(r.URL.Path, "/repo/")
-		owner, rest, ok := strings.Cut(path, "/")
-		if !ok || owner == "" || rest == "" {
+		parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/repo/"), "/"), "/")
+
+		kind := forge.KindGitea
+		if len(parts) > 0 && forge.Kind(parts[0]).Valid() {
+			kind = forge.Kind(parts[0])
+			parts = parts[1:]
+		}
+
+		var owner, name, prNumberStr string
+		switch {
+		case len(parts) == 2:
+			owner, name = parts[0], parts[1]
+		case len(parts) == 4 && parts[2] == "pr":
+			owner, name, prNumberStr = parts[0], parts[1], parts[3]
+		default:
+			http.NotFound(w, r)
+			return
+		}
+		if owner == "" || name == "" {
 			http.NotFound(w, r)
 			return
 		}
 
-		// Split rest into name and optional /pr/{number}.
-		var name string
-		var prNumberStr string
-		if idx := strings.Index(rest, "/"); idx >= 0 {
-			name = rest[:idx]
-			suffix := rest[idx+1:] // e.g. "pr/42"
-			prPrefix, numStr, hasPR := strings.Cut(suffix, "/")
-			if !hasPR || prPrefix != "pr" || numStr == "" {
-				http.NotFound(w, r)
-				return
-			}
-			prNumberStr = numStr
-		} else {
-			name = rest
-		}
-
-		if name == "" {
-			http.NotFound(w, r)
-			return
-		}
-
-		// Legacy 2-segment paths assume Gitea until section-10 routing lands.
-		ref := forge.RepoRef{Forge: forge.KindGitea, Owner: owner, Name: name}
+		ref := forge.RepoRef{Forge: kind, Owner: owner, Name: name}
 		if !deps.Repos.Contains(ref.String()) {
 			http.NotFound(w, r)
 			return
@@ -278,9 +278,15 @@ func serveRepoDetail(w http.ResponseWriter, r *http.Request, deps *Deps, ref for
 	}
 
 	data := RepoDetailData{
+		Forge:           ref.Forge,
 		Owner:           owner,
 		Name:            name,
 		RefreshInterval: deps.RefreshInterval,
+	}
+	if deps.Forges != nil {
+		if f, _ := deps.Forges.For(ref); f != nil {
+			data.RepoURL = f.RepoHTMLURL(owner, name)
+		}
 	}
 
 	for _, e := range entries {
@@ -323,6 +329,7 @@ func servePRDetail(w http.ResponseWriter, r *http.Request, deps *Deps, ref forge
 	}
 
 	data := PRDetailData{
+		Forge:           ref.Forge,
 		Owner:           owner,
 		Name:            name,
 		PrNumber:        prNumber,

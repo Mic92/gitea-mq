@@ -8,8 +8,8 @@
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-    <nav class="breadcrumb"><a href="/">gitea-mq</a> › {{.Owner}}/{{.Name}}</nav>
-    <h1>🚦 {{.Owner}}/{{.Name}}</h1>
+    <nav class="breadcrumb"><a href="/">gitea-mq</a> › {{.Forge}}:{{.Owner}}/{{.Name}}</nav>
+    <h1>🚦 {{if .RepoURL}}<a href="{{.RepoURL}}">{{.Owner}}/{{.Name}}</a>{{else}}{{.Owner}}/{{.Name}}{{end}}</h1>
     <p class="subtitle">Merge Queue</p>
 
     {{if .Entries}}
@@ -27,7 +27,7 @@
                 {{range $i, $e := .Entries}}
                 <tr>
                     <td>{{inc $i}}</td>
-                    <td><a href="/repo/{{$.Owner}}/{{$.Name}}/pr/{{$e.PrNumber}}">PR #{{$e.PrNumber}}</a></td>
+                    <td><a href="/repo/{{$.Forge}}/{{$.Owner}}/{{$.Name}}/pr/{{$e.PrNumber}}">PR #{{$e.PrNumber}}</a></td>
                     <td>{{$e.TargetBranch}}</td>
                     <td><span class="state state-{{$e.State}}">{{$e.State}}</span></td>
                 </tr>

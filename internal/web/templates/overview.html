@@ -16,7 +16,7 @@
     <div class="repo-list">
         {{range .Repos}}
         <div class="repo-item">
-            <a href="/repo/{{.Owner}}/{{.Name}}">{{.Owner}}/{{.Name}}</a>
+            <a href="/repo/{{.Forge}}/{{.Owner}}/{{.Name}}"><span class="forge-badge forge-{{.Forge}}">{{.Forge}}</span> {{.Owner}}/{{.Name}}</a>
             <span class="badge {{if eq .QueueSize 0}}badge-empty{{else}}badge-active{{end}}">{{.QueueSize}}</span>
         </div>
         {{end}}

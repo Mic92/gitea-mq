@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/Mic92/gitea-mq/internal/forge"
-	"github.com/Mic92/gitea-mq/internal/gitea"
 	"github.com/Mic92/gitea-mq/internal/queue"
 	"github.com/Mic92/gitea-mq/internal/store/pg"
 )
@@ -37,7 +36,7 @@ type StartTestingResult struct {
 // is removed from the queue with automerge cancelled and a comment posted.
 func StartTesting(ctx context.Context, f forge.Forge, svc *queue.Service, owner, repo string, repoID int64, entry *pg.QueueEntry, externalURL string) (*StartTestingResult, error) {
 	branchName := BranchName(entry.PrNumber)
-	targetURL := gitea.DashboardPRURL(externalURL, owner, repo, entry.PrNumber)
+	targetURL := forge.DashboardPRURL(externalURL, f.Kind(), owner, repo, entry.PrNumber)
 
 	mergeSHA, conflict, err := f.CreateMergeBranch(ctx, owner, repo, entry.TargetBranch, entry.PrHeadSha, branchName)
 	if conflict {

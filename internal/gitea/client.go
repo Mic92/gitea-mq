@@ -5,8 +5,6 @@ package gitea
 
 import (
 	"context"
-	"fmt"
-	"strings"
 	"time"
 
 	"github.com/Mic92/gitea-mq/internal/store/pg"
@@ -69,12 +67,6 @@ type CommitStatus struct {
 // Centralises the context string so callers don't repeat it.
 func MQStatus(state, description, targetURL string) CommitStatus {
 	return CommitStatus{Context: "gitea-mq", State: state, Description: description, TargetURL: targetURL}
-}
-
-// DashboardPRURL constructs the dashboard URL for a specific PR.
-// The baseURL should be the GITEA_MQ_EXTERNAL_URL value.
-func DashboardPRURL(baseURL, owner, repo string, prNumber int64) string {
-	return strings.TrimRight(baseURL, "/") + fmt.Sprintf("/repo/%s/%s/pr/%d", owner, repo, prNumber)
 }
 
 // Branch represents a branch from the Gitea API.

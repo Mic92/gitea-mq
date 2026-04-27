@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/Mic92/gitea-mq/internal/forge"
-	"github.com/Mic92/gitea-mq/internal/gitea"
 	"github.com/Mic92/gitea-mq/internal/merge"
 	"github.com/Mic92/gitea-mq/internal/queue"
 	"github.com/Mic92/gitea-mq/internal/store/pg"
@@ -106,7 +105,7 @@ func CheckTimeout(entry *pg.QueueEntry, timeout time.Duration) bool {
 func HandleSuccess(ctx context.Context, deps *Deps, entry *pg.QueueEntry) error {
 	slog.Info("all checks passed", "pr", entry.PrNumber)
 
-	targetURL := gitea.DashboardPRURL(deps.ExternalURL, deps.Owner, deps.Repo, entry.PrNumber)
+	targetURL := forge.DashboardPRURL(deps.ExternalURL, deps.Forge.Kind(), deps.Owner, deps.Repo, entry.PrNumber)
 
 	if err := deps.Forge.SetMQStatus(ctx, deps.Owner, deps.Repo, entry.PrHeadSha, forge.MQStatus{
 		State: pg.CheckStateSuccess, Description: "Merge queue passed", TargetURL: targetURL,
@@ -167,7 +166,7 @@ func HandleTimeout(ctx context.Context, deps *Deps, entry *pg.QueueEntry) error 
 }
 
 func removeFromQueue(ctx context.Context, deps *Deps, entry *pg.QueueEntry, statusState pg.CheckState, statusDesc, comment string) error {
-	targetURL := gitea.DashboardPRURL(deps.ExternalURL, deps.Owner, deps.Repo, entry.PrNumber)
+	targetURL := forge.DashboardPRURL(deps.ExternalURL, deps.Forge.Kind(), deps.Owner, deps.Repo, entry.PrNumber)
 	if err := deps.Forge.SetMQStatus(ctx, deps.Owner, deps.Repo, entry.PrHeadSha, forge.MQStatus{
 		State: statusState, Description: statusDesc, TargetURL: targetURL,
 	}); err != nil {

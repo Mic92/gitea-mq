@@ -19,6 +19,13 @@ const (
 	KindGithub Kind = "github"
 )
 
+// DashboardPRURL builds the gitea-mq dashboard link for a PR. It is the
+// target_url of every MQStatus so users land on the queue page from the
+// forge's check UI.
+func DashboardPRURL(base string, kind Kind, owner, repo string, n int64) string {
+	return fmt.Sprintf("%s/repo/%s/%s/%s/pr/%d", strings.TrimRight(base, "/"), kind, owner, repo, n)
+}
+
 // Valid reports whether k is a known forge kind.
 func (k Kind) Valid() bool {
 	switch k {

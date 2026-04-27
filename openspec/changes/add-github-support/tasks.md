@@ -88,11 +88,11 @@
 
 ## 10. Dashboard forge-aware paths
 
-- [ ] 10.1 Test `internal/web`: `DashboardPRURL(base, forge, owner, repo, n)` includes forge segment — RED
-- [ ] 10.2 Update `DashboardPRURL` + all `MQStatus` call sites — GREEN
-- [ ] 10.3 Test: router serves `/repo/{forge}/{owner}/{name}` and `/repo/{forge}/{owner}/{name}/pr/{n}`; legacy 2/3-segment paths resolve as `forge=gitea`; unknown forge → 404 — RED
-- [ ] 10.4 Implement route changes + template updates (forge indicator on overview, `forge:owner/name` breadcrumb, forge-host repo/PR links) — GREEN
-- [ ] 10.5 Overview render test with mixed `gitea`+`github` repos: assert presence of forge badge text and `href="/repo/github/..."` / `href="/repo/gitea/..."` (targeted substring checks, no HTML snapshot)
+- [x] 10.1 Test `internal/web`: `DashboardPRURL(base, forge, owner, repo, n)` includes forge segment — RED
+- [x] 10.2 Update `DashboardPRURL` + all `MQStatus` call sites — GREEN
+- [x] 10.3 Test: router serves `/repo/{forge}/{owner}/{name}` and `/repo/{forge}/{owner}/{name}/pr/{n}`; legacy 2/3-segment paths resolve as `forge=gitea`; unknown forge → 404 — RED
+- [x] 10.4 Implement route changes + template updates (forge indicator on overview, `forge:owner/name` breadcrumb, forge-host repo/PR links) — GREEN
+- [x] 10.5 Overview render test with mixed `gitea`+`github` repos: assert presence of forge badge text and `href="/repo/github/..."` / `href="/repo/gitea/..."` (targeted substring checks, no HTML snapshot)
 
 ## 11. Integration
 

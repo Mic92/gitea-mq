@@ -75,7 +75,7 @@ func TestStartTesting_Success(t *testing.T) {
 		t.Fatalf("expected 1 CreateCommitStatus call, got %d", len(statusCalls))
 	}
 	status := statusCalls[0].Args[3].(gitea.CommitStatus)
-	wantURL := "https://mq.example.com/repo/org/app/pr/42"
+	wantURL := "https://mq.example.com/repo/gitea/org/app/pr/42"
 	if status.TargetURL != wantURL {
 		t.Fatalf("expected TargetURL %s, got %s", wantURL, status.TargetURL)
 	}
@@ -121,7 +121,7 @@ func TestStartTesting_Conflict(t *testing.T) {
 	if status.State != "failure" {
 		t.Fatal("expected failure state")
 	}
-	wantURL := "https://mq.example.com/repo/org/app/pr/42"
+	wantURL := "https://mq.example.com/repo/gitea/org/app/pr/42"
 	if status.TargetURL != wantURL {
 		t.Fatalf("expected TargetURL %s, got %s", wantURL, status.TargetURL)
 	}

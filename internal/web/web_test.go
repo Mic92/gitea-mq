@@ -55,6 +55,7 @@ func TestOverviewShowsRepoAndQueueData(t *testing.T) {
 		Repos: &staticRepoLister{repos: []forge.RepoRef{
 			giteaRef("org", "app"),
 			giteaRef("org", "lib"),
+			{Forge: forge.KindGithub, Owner: "ghorg", Name: "proj"},
 		}},
 		RefreshInterval: 5,
 	}
@@ -71,11 +72,14 @@ func TestOverviewShowsRepoAndQueueData(t *testing.T) {
 	body := rec.Body.String()
 
 	// Both repos listed as links.
-	if !strings.Contains(body, `href="/repo/org/app"`) {
-		t.Error("expected link to org/app repo page")
+	if !strings.Contains(body, `href="/repo/gitea/org/app"`) {
+		t.Error("expected forge-qualified link to org/app")
 	}
-	if !strings.Contains(body, `href="/repo/org/lib"`) {
-		t.Error("expected link to org/lib repo page")
+	if !strings.Contains(body, `href="/repo/gitea/org/lib"`) {
+		t.Error("expected forge-qualified link to org/lib")
+	}
+	if !strings.Contains(body, `href="/repo/github/ghorg/proj"`) || !strings.Contains(body, `forge-github`) {
+		t.Error("expected github forge href and badge")
 	}
 
 	// Queue count badge for org/app should be 2.
@@ -152,10 +156,10 @@ func TestRepoDetailShowsPRs(t *testing.T) {
 	body := rec.Body.String()
 
 	// Both PRs listed as links to PR detail pages.
-	if !strings.Contains(body, `href="/repo/org/app/pr/42"`) {
+	if !strings.Contains(body, `href="/repo/gitea/org/app/pr/42"`) {
 		t.Errorf("expected link to PR #42 detail page, body:\n%s", body)
 	}
-	if !strings.Contains(body, `href="/repo/org/app/pr/43"`) {
+	if !strings.Contains(body, `href="/repo/gitea/org/app/pr/43"`) {
 		t.Errorf("expected link to PR #43 detail page, body:\n%s", body)
 	}
 
@@ -396,5 +400,34 @@ func TestRepoDetailUnknownRepoReturns404(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for unknown repo, got %d", rec.Code)
+	}
+}
+
+func TestRepoHandler_ForgeRouting(t *testing.T) {
+	svc, _, _ := testutil.TestQueueService(t)
+	deps := &web.Deps{
+		Queue:  svc,
+		Forges: giteaForges(&gitea.MockClient{}),
+		Repos:  &staticRepoLister{repos: []forge.RepoRef{giteaRef("org", "app")}},
+	}
+	mux := web.NewMux(deps)
+
+	for _, tc := range []struct {
+		path string
+		code int
+	}{
+		{"/repo/gitea/org/app", 200},
+		{"/repo/org/app", 200},             // legacy: missing forge segment defaults to gitea
+		{"/repo/gitea/org/app/pr/99", 200}, // not in queue → friendly page
+		{"/repo/org/app/pr/99", 200},       // legacy PR path
+		{"/repo/github/org/app", 404},      // forge known but repo not registered for it
+		{"/repo/gitlab/org/app", 404},      // unknown forge segment
+		{"/repo/gitea/org", 404},
+	} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
+		if rec.Code != tc.code {
+			t.Errorf("%s: code=%d want %d", tc.path, rec.Code, tc.code)
+		}
 	}
 }

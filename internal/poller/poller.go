@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/Mic92/gitea-mq/internal/forge"
-	"github.com/Mic92/gitea-mq/internal/gitea"
 	"github.com/Mic92/gitea-mq/internal/merge"
 	"github.com/Mic92/gitea-mq/internal/monitor"
 	"github.com/Mic92/gitea-mq/internal/queue"
@@ -154,7 +153,7 @@ func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 
 		if enqResult.IsNew {
 			desc := fmt.Sprintf("Queued (position #%d)", enqResult.Position)
-			targetURL := gitea.DashboardPRURL(deps.ExternalURL, deps.Owner, deps.Repo, pr.Number)
+			targetURL := forge.DashboardPRURL(deps.ExternalURL, deps.Forge.Kind(), deps.Owner, deps.Repo, pr.Number)
 			if err := deps.Forge.SetMQStatus(ctx, deps.Owner, deps.Repo, pr.HeadSHA, forge.MQStatus{
 				State: pg.CheckStatePending, Description: desc, TargetURL: targetURL,
 			}); err != nil {
@@ -235,7 +234,7 @@ func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 
 		if entry.State == pg.EntryStateSuccess && deps.SuccessTimeout > 0 &&
 			entry.CompletedAt.Valid && time.Since(entry.CompletedAt.Time) > deps.SuccessTimeout {
-			targetURL := gitea.DashboardPRURL(deps.ExternalURL, deps.Owner, deps.Repo, entry.PrNumber)
+			targetURL := forge.DashboardPRURL(deps.ExternalURL, deps.Forge.Kind(), deps.Owner, deps.Repo, entry.PrNumber)
 			_ = deps.Forge.SetMQStatus(ctx, deps.Owner, deps.Repo, entry.PrHeadSha, forge.MQStatus{
 				State: pg.CheckStateError, Description: "Automerge did not complete in time", TargetURL: targetURL,
 			})
