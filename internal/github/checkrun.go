@@ -34,27 +34,10 @@ func (c *checkRunCache) set(repo, sha, name string, id int64) {
 	c.ids[[3]string{repo, sha, name}] = id
 }
 
-// mqStateToCheckRun maps the queue lifecycle onto GitHub check-run fields.
-// "error" surfaces as cancelled rather than failure so dashboards distinguish
-// infrastructure problems from CI verdicts.
-func mqStateToCheckRun(state forge.CheckState) (status, conclusion string) {
-	switch state {
-	case pg.CheckStatePending:
-		return "in_progress", ""
-	case pg.CheckStateSuccess:
-		return "completed", "success"
-	case pg.CheckStateFailure:
-		return "completed", "failure"
-	case pg.CheckStateError:
-		return "completed", "cancelled"
-	default:
-		return "queued", ""
-	}
-}
-
-// rawStateToCheckRun maps a forge.MirrorCheck state string. It accepts the
-// "skipped" sentinel monitor uses for stale-mirror cleanup.
-func rawStateToCheckRun(state string) (status, conclusion string) {
+// checkRunFields renders a CheckState as GitHub check-run fields. "error"
+// becomes cancelled so dashboards separate infra problems from CI verdicts;
+// "skipped" is the stale-mirror cleanup sentinel.
+func checkRunFields(state string) (status, conclusion string) {
 	switch state {
 	case "pending":
 		return "in_progress", ""

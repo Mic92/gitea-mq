@@ -136,7 +136,7 @@ func (f *giteaForge) GetCheckStates(ctx context.Context, owner, name, sha string
 			continue
 		}
 		out[s.Context] = forge.Check{
-			State:       MapState(s.Status),
+			State:       forge.ParseCheckState(s.Status),
 			Description: s.Description,
 			TargetURL:   s.TargetURL,
 		}

@@ -103,6 +103,21 @@ type MQStatus struct {
 // CheckState aliases pg.CheckState so callers do not import the store package.
 type CheckState = pg.CheckState
 
+// ParseCheckState folds a forge status string to a CheckState. Gitea's
+// "warning"/"skipped" are treated as success; GitHub's vocabulary is a subset.
+func ParseCheckState(s string) CheckState {
+	switch s {
+	case "success", "warning", "skipped":
+		return pg.CheckStateSuccess
+	case "failure":
+		return pg.CheckStateFailure
+	case "error":
+		return pg.CheckStateError
+	default:
+		return pg.CheckStatePending
+	}
+}
+
 // Check is a single context's status as reported by GetCheckStates.
 // Description and TargetURL are passed through so callers can implement
 // status mirroring and stale-mirror cleanup without forge-specific code.

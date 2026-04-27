@@ -75,7 +75,7 @@ func GithubHandler(secret []byte, repos RepoLookup, queueSvc *queue.Service, tri
 				break
 			}
 			routeCheck(r.Context(), rm, queueSvc, e.GetSHA(), e.GetContext(),
-				github.StatusToState(e.GetState()), e.GetState(), e.GetDescription(), e.GetTargetURL())
+				forge.ParseCheckState(e.GetState()), e.GetState(), e.GetDescription(), e.GetTargetURL())
 
 		case *gh.InstallationEvent, *gh.InstallationRepositoriesEvent:
 			if triggerDiscovery != nil {

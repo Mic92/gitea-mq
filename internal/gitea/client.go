@@ -6,8 +6,6 @@ package gitea
 import (
 	"context"
 	"time"
-
-	"github.com/Mic92/gitea-mq/internal/store/pg"
 )
 
 // PR represents a pull request from the Gitea API.
@@ -150,22 +148,6 @@ type CommitStatusResult struct {
 	Status      string `json:"status"`
 	Description string `json:"description"`
 	TargetURL   string `json:"target_url"`
-}
-
-// MapState maps Gitea's API status strings to internal CheckState values.
-// Gitea uses states like "warning" and "skipped" that don't exist in our DB
-// enum but are passing states.
-func MapState(s string) pg.CheckState {
-	switch s {
-	case "success", "warning", "skipped":
-		return pg.CheckStateSuccess
-	case "failure":
-		return pg.CheckStateFailure
-	case "error":
-		return pg.CheckStateError
-	default:
-		return pg.CheckStatePending
-	}
 }
 
 // Client defines the Gitea API surface used by gitea-mq.

@@ -11,7 +11,6 @@ import (
 	gh "github.com/google/go-github/v84/github"
 
 	"github.com/Mic92/gitea-mq/internal/forge"
-	"github.com/Mic92/gitea-mq/internal/store/pg"
 )
 
 var _ forge.Forge = (*githubForge)(nil)
@@ -86,12 +85,12 @@ func (f *githubForge) GetPR(ctx context.Context, owner, name string, number int6
 }
 
 func (f *githubForge) SetMQStatus(ctx context.Context, owner, name, sha string, st forge.MQStatus) error {
-	status, concl := mqStateToCheckRun(st.State)
+	status, concl := checkRunFields(string(st.State))
 	return f.upsertCheckRun(ctx, owner, name, sha, forge.MQContext, status, concl, st.Description, st.TargetURL)
 }
 
 func (f *githubForge) MirrorCheck(ctx context.Context, owner, name, sha, checkContext, state, description, targetURL string) error {
-	status, concl := rawStateToCheckRun(state)
+	status, concl := checkRunFields(state)
 	return f.upsertCheckRun(ctx, owner, name, sha, checkContext, status, concl, description, targetURL)
 }
 
@@ -152,25 +151,12 @@ func (f *githubForge) GetCheckStates(ctx context.Context, owner, name, sha strin
 			continue
 		}
 		out[st.GetContext()] = forge.Check{
-			State:       StatusToState(st.GetState()),
+			State:       forge.ParseCheckState(st.GetState()),
 			Description: st.GetDescription(),
 			TargetURL:   st.GetTargetURL(),
 		}
 	}
 	return out, nil
-}
-
-func StatusToState(s string) forge.CheckState {
-	switch s {
-	case "success":
-		return pg.CheckStateSuccess
-	case "failure":
-		return pg.CheckStateFailure
-	case "error":
-		return pg.CheckStateError
-	default:
-		return pg.CheckStatePending
-	}
 }
 
 func (f *githubForge) CreateMergeBranch(ctx context.Context, owner, name, base, headSHA, branch string) (string, bool, error) {

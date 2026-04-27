@@ -11,7 +11,6 @@ import (
 	"net/http"
 
 	"github.com/Mic92/gitea-mq/internal/forge"
-	"github.com/Mic92/gitea-mq/internal/gitea"
 	"github.com/Mic92/gitea-mq/internal/monitor"
 	"github.com/Mic92/gitea-mq/internal/queue"
 	"github.com/Mic92/gitea-mq/internal/store/pg"
@@ -90,7 +89,7 @@ func Handler(secret string, repos RepoLookup, queueSvc *queue.Service) http.Hand
 			return
 		}
 
-		routeCheck(r.Context(), rm, queueSvc, event.SHA, event.Context, gitea.MapState(event.State), event.State, event.Description, event.TargetURL)
+		routeCheck(r.Context(), rm, queueSvc, event.SHA, event.Context, forge.ParseCheckState(event.State), event.State, event.Description, event.TargetURL)
 		w.WriteHeader(http.StatusOK)
 	})
 }
