@@ -101,7 +101,7 @@ even if the installation is later removed.
 On startup, gitea-mq automatically configures each managed repository:
 
 - **Gitea**: adds `gitea-mq` as a required status check to all existing branch protection rules and creates a `status` webhook pointed at the service
-- **GitHub**: enables `allow_auto_merge` and creates a `gitea-mq` repository ruleset that requires the `gitea-mq` check on all branches except `gitea-mq/**`; the App is added as a bypass actor so it can manage its own merge branches
+- **GitHub**: enables `allow_auto_merge` and creates a `gitea-mq` repository ruleset that requires the `gitea-mq` check on the default branch (the App and repo admins are bypass actors). Add further target branches to the ruleset's include list if you queue PRs against more than the default branch.
 
 If the GitHub App lacks the Administration permission, auto-setup is skipped
 with a warning and the queue still runs against whatever the operator

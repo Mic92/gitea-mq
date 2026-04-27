@@ -28,16 +28,14 @@ func TestForge_EnsureRepoSetup(t *testing.T) {
 	if rs.Enforcement != "active" || rs.Target != "branch" {
 		t.Errorf("ruleset meta = %+v", rs)
 	}
-	// The ruleset must exclude our own merge branches or CreateMergeBranch
-	// deadlocks on the gate it produces.
 	var conds struct {
 		RefName struct{ Include, Exclude []string } `json:"ref_name"`
 	}
 	if err := json.Unmarshal(rs.Conditions, &conds); err != nil {
 		t.Fatalf("decode conditions: %v", err)
 	}
-	if len(conds.RefName.Exclude) == 0 || conds.RefName.Exclude[0] != "refs/heads/gitea-mq/**" {
-		t.Errorf("exclude = %v", conds.RefName.Exclude)
+	if got := conds.RefName.Include; len(got) != 1 || got[0] != "~DEFAULT_BRANCH" {
+		t.Errorf("include = %v, want [~DEFAULT_BRANCH]", got)
 	}
 	if len(rs.Rules) != 1 || rs.Rules[0].Type != "required_status_checks" {
 		t.Fatalf("rules = %+v", rs.Rules)

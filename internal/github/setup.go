@@ -10,6 +10,9 @@ import (
 	"github.com/Mic92/gitea-mq/internal/forge"
 )
 
+// GitHub's built-in repository role ID for "admin".
+const repoAdminRoleID int64 = 5
+
 func (f *githubForge) EnsureRepoSetup(ctx context.Context, owner, name string, _ forge.SetupConfig) error {
 	c, err := f.app.ClientForRepo(owner, name)
 	if err != nil {
@@ -47,19 +50,27 @@ func (f *githubForge) EnsureRepoSetup(ctx context.Context, owner, name string, _
 		Name:        forge.MQContext,
 		Target:      gh.Ptr(gh.RulesetTargetBranch),
 		Enforcement: gh.RulesetEnforcementActive,
-		// The App must bypass its own gate to create/populate merge branches
-		// and to let GitHub fast-forward when it reports success.
-		BypassActors: []*gh.BypassActor{{
-			ActorID:    gh.Ptr(f.app.AppID()),
-			ActorType:  gh.Ptr(gh.BypassActorTypeIntegration),
-			BypassMode: gh.Ptr(gh.BypassModeAlways),
-		}},
+		BypassActors: []*gh.BypassActor{
+			// The App must bypass its own gate to manage merge branches and
+			// to let GitHub fast-forward when it reports success.
+			{
+				ActorID:    gh.Ptr(f.app.AppID()),
+				ActorType:  gh.Ptr(gh.BypassActorTypeIntegration),
+				BypassMode: gh.Ptr(gh.BypassModeAlways),
+			},
+			// Repo admins keep an escape hatch for hotfixes.
+			{
+				ActorID:    gh.Ptr(repoAdminRoleID),
+				ActorType:  gh.Ptr(gh.BypassActorTypeRepositoryRole),
+				BypassMode: gh.Ptr(gh.BypassModeAlways),
+			},
+		},
 		Conditions: &gh.RepositoryRulesetConditions{
 			RefName: &gh.RepositoryRulesetRefConditionParameters{
-				Include: []string{"~ALL"},
-				// Merge branches are an internal workspace; gating them would
-				// deadlock CreateMergeBranch on the very check it produces.
-				Exclude: []string{"refs/heads/gitea-mq/**"},
+				// ~ALL would also gate every feature-branch push on a check
+				// that only ever reports for queued PRs.
+				Include: []string{"~DEFAULT_BRANCH"},
+				Exclude: []string{},
 			},
 		},
 		Rules: &gh.RepositoryRulesetRules{
