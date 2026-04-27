@@ -24,7 +24,7 @@ type MockForge struct {
 	ListOpenPRsFn       func(ctx context.Context, owner, name string) ([]PR, error)
 	GetPRFn             func(ctx context.Context, owner, name string, number int64) (*PR, error)
 	SetMQStatusFn       func(ctx context.Context, owner, name, sha string, st MQStatus) error
-	MirrorCheckFn       func(ctx context.Context, owner, name, sha, checkContext, state, description, targetURL string) error
+	MirrorCheckFn       func(ctx context.Context, owner, name, sha, checkContext string, c Check) error
 	GetRequiredChecksFn func(ctx context.Context, owner, name, branch string) ([]string, error)
 	GetCheckStatesFn    func(ctx context.Context, owner, name, sha string) (map[string]Check, error)
 	CreateMergeBranchFn func(ctx context.Context, owner, name, base, headSHA, branch string) (string, bool, error)
@@ -103,10 +103,10 @@ func (m *MockForge) SetMQStatus(ctx context.Context, owner, name, sha string, st
 	return nil
 }
 
-func (m *MockForge) MirrorCheck(ctx context.Context, owner, name, sha, checkContext, state, description, targetURL string) error {
-	m.record("MirrorCheck", owner, name, sha, checkContext, state, description, targetURL)
+func (m *MockForge) MirrorCheck(ctx context.Context, owner, name, sha, checkContext string, c Check) error {
+	m.record("MirrorCheck", owner, name, sha, checkContext, c)
 	if m.MirrorCheckFn != nil {
-		return m.MirrorCheckFn(ctx, owner, name, sha, checkContext, state, description, targetURL)
+		return m.MirrorCheckFn(ctx, owner, name, sha, checkContext, c)
 	}
 	return nil
 }

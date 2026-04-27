@@ -148,9 +148,8 @@ type Forge interface {
 
 	SetMQStatus(ctx context.Context, owner, name, sha string, st MQStatus) error
 	// MirrorCheck posts a status/check with an arbitrary context name on sha,
-	// used to surface merge-branch CI results on the PR head. State values are
-	// the standard set: pending, success, failure, error, skipped.
-	MirrorCheck(ctx context.Context, owner, name, sha, checkContext, state, description, targetURL string) error
+	// used to surface merge-branch CI results on the PR head.
+	MirrorCheck(ctx context.Context, owner, name, sha, checkContext string, c Check) error
 	GetRequiredChecks(ctx context.Context, owner, name, branch string) ([]string, error)
 	GetCheckStates(ctx context.Context, owner, name, sha string) (map[string]Check, error)
 

@@ -62,9 +62,11 @@ func GithubHandler(secret []byte, repos RepoLookup, queueSvc *queue.Service, tri
 			if !ok {
 				break
 			}
-			state := github.CheckRunToState(cr.GetStatus(), cr.GetConclusion())
-			routeCheck(r.Context(), rm, queueSvc, cr.GetHeadSHA(), cr.GetName(),
-				state, string(state), cr.GetOutput().GetSummary(), cr.GetDetailsURL())
+			routeCheck(r.Context(), rm, queueSvc, cr.GetHeadSHA(), cr.GetName(), forge.Check{
+				State:       github.CheckRunToState(cr.GetStatus(), cr.GetConclusion()),
+				Description: cr.GetOutput().GetSummary(),
+				TargetURL:   cr.GetDetailsURL(),
+			})
 
 		case *gh.StatusEvent:
 			if forge.IsOwnContext(e.GetContext()) {
@@ -74,8 +76,11 @@ func GithubHandler(secret []byte, repos RepoLookup, queueSvc *queue.Service, tri
 			if !ok {
 				break
 			}
-			routeCheck(r.Context(), rm, queueSvc, e.GetSHA(), e.GetContext(),
-				forge.ParseCheckState(e.GetState()), e.GetState(), e.GetDescription(), e.GetTargetURL())
+			routeCheck(r.Context(), rm, queueSvc, e.GetSHA(), e.GetContext(), forge.Check{
+				State:       forge.ParseCheckState(e.GetState()),
+				Description: e.GetDescription(),
+				TargetURL:   e.GetTargetURL(),
+			})
 
 		case *gh.InstallationEvent, *gh.InstallationRepositoriesEvent:
 			if triggerDiscovery != nil {

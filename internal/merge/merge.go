@@ -102,7 +102,10 @@ func clearStaleMirroredStatuses(ctx context.Context, f forge.Forge, owner, repo,
 		if !forge.IsOwnContext(ctxName) {
 			continue
 		}
-		_ = f.MirrorCheck(ctx, owner, repo, sha, ctxName, "pending", StaleMirrorDescription, "")
+		_ = f.MirrorCheck(ctx, owner, repo, sha, ctxName, forge.Check{
+			State:       pg.CheckStatePending,
+			Description: StaleMirrorDescription,
+		})
 	}
 }
 

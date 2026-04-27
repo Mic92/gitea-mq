@@ -140,7 +140,10 @@ func skipPendingMirroredStatuses(ctx context.Context, f forge.Forge, owner, repo
 		if c.State != pg.CheckStatePending || c.Description != merge.StaleMirrorDescription {
 			continue
 		}
-		_ = f.MirrorCheck(ctx, owner, repo, sha, ctxName, "skipped", merge.StaleMirrorDescription, "")
+		_ = f.MirrorCheck(ctx, owner, repo, sha, ctxName, forge.Check{
+			State:       forge.CheckState("skipped"),
+			Description: merge.StaleMirrorDescription,
+		})
 	}
 }
 

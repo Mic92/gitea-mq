@@ -96,12 +96,12 @@ func (f *giteaForge) SetMQStatus(ctx context.Context, owner, name, sha string, s
 		MQStatus(string(st.State), st.Description, st.TargetURL))
 }
 
-func (f *giteaForge) MirrorCheck(ctx context.Context, owner, name, sha, checkContext, state, description, targetURL string) error {
+func (f *giteaForge) MirrorCheck(ctx context.Context, owner, name, sha, checkContext string, c forge.Check) error {
 	return f.client.CreateCommitStatus(ctx, owner, name, sha, CommitStatus{
 		Context:     checkContext,
-		State:       state,
-		Description: description,
-		TargetURL:   targetURL,
+		State:       string(c.State),
+		Description: c.Description,
+		TargetURL:   c.TargetURL,
 	})
 }
 

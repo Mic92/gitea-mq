@@ -89,9 +89,9 @@ func (f *githubForge) SetMQStatus(ctx context.Context, owner, name, sha string, 
 	return f.upsertCheckRun(ctx, owner, name, sha, forge.MQContext, status, concl, st.Description, st.TargetURL)
 }
 
-func (f *githubForge) MirrorCheck(ctx context.Context, owner, name, sha, checkContext, state, description, targetURL string) error {
-	status, concl := checkRunFields(state)
-	return f.upsertCheckRun(ctx, owner, name, sha, checkContext, status, concl, description, targetURL)
+func (f *githubForge) MirrorCheck(ctx context.Context, owner, name, sha, checkContext string, c forge.Check) error {
+	status, concl := checkRunFields(string(c.State))
+	return f.upsertCheckRun(ctx, owner, name, sha, checkContext, status, concl, c.Description, c.TargetURL)
 }
 
 func (f *githubForge) GetRequiredChecks(ctx context.Context, owner, name, branch string) ([]string, error) {

@@ -89,7 +89,11 @@ func Handler(secret string, repos RepoLookup, queueSvc *queue.Service) http.Hand
 			return
 		}
 
-		routeCheck(r.Context(), rm, queueSvc, event.SHA, event.Context, forge.ParseCheckState(event.State), event.State, event.Description, event.TargetURL)
+		routeCheck(r.Context(), rm, queueSvc, event.SHA, event.Context, forge.Check{
+			State:       forge.ParseCheckState(event.State),
+			Description: event.Description,
+			TargetURL:   event.TargetURL,
+		})
 		w.WriteHeader(http.StatusOK)
 	})
 }
@@ -98,19 +102,18 @@ func Handler(secret string, repos RepoLookup, queueSvc *queue.Service) http.Hand
 // SHA to a testing queue entry, mirror onto the PR head, and feed the monitor.
 // Returning 200 even on internal errors avoids forge retries causing duplicate
 // processing.
-func routeCheck(ctx context.Context, rm *RepoMonitor, svc *queue.Service, sha, checkCtx string, state pg.CheckState, rawState, desc, targetURL string) {
+func routeCheck(ctx context.Context, rm *RepoMonitor, svc *queue.Service, sha, checkCtx string, c forge.Check) {
 	entry := findEntryForCommit(ctx, svc, rm.Deps.RepoID, sha)
 	if entry == nil {
 		return
 	}
 
 	mirrorCtx := forge.MirrorContextPrefix + checkCtx
-	if err := rm.Deps.Forge.MirrorCheck(ctx, rm.Deps.Owner, rm.Deps.Repo, entry.PrHeadSha,
-		mirrorCtx, rawState, desc, targetURL); err != nil {
+	if err := rm.Deps.Forge.MirrorCheck(ctx, rm.Deps.Owner, rm.Deps.Repo, entry.PrHeadSha, mirrorCtx, c); err != nil {
 		slog.Warn("failed to mirror status to PR head", "pr", entry.PrNumber, "context", mirrorCtx, "err", err)
 	}
 
-	if err := monitor.ProcessCheckStatus(ctx, rm.Deps, entry, checkCtx, state, targetURL); err != nil {
+	if err := monitor.ProcessCheckStatus(ctx, rm.Deps, entry, checkCtx, c.State, c.TargetURL); err != nil {
 		slog.Error("failed to process check status", "pr", entry.PrNumber, "err", err)
 	}
 }
