@@ -80,7 +80,8 @@ GITEA_MQ_TOPIC=merge-queue
 ## GitHub setup
 
 gitea-mq talks to GitHub as a [GitHub App](https://docs.github.com/en/apps/creating-github-apps).
-Register one with:
+Use the [App creation helper](https://mic92.github.io/gitea-mq/) to pre-fill
+the registration form, or register one manually with:
 
 - **Webhook URL**: `${GITEA_MQ_EXTERNAL_URL}/webhook/github`, secret = `GITEA_MQ_GITHUB_WEBHOOK_SECRET`
 - **Permissions** (Repository): Checks **read & write**, Contents **read & write**, Pull requests **read & write**, Administration **read & write**, Metadata **read**
