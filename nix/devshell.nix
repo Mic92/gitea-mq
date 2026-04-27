@@ -2,6 +2,7 @@
   mkShell,
   sqlc,
   golangci-lint,
+  postgresql,
   gitea-mq,
 }:
 mkShell {
@@ -9,5 +10,7 @@ mkShell {
   packages = [
     sqlc
     golangci-lint
+    # testutil spawns a temporary postgres via initdb/postgres/pg_isready
+    postgresql
   ];
 }
