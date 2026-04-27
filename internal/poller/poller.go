@@ -185,81 +185,97 @@ func reconcileEntries(ctx context.Context, deps *Deps, result *PollResult, openP
 
 	for _, entry := range activeEntries {
 		pr, isOpen := openPRMap[entry.PrNumber]
-
 		if !isOpen {
+			// PR no longer in the open list: fetch directly to learn merged/closed.
 			fullPR, err := deps.Forge.GetPR(ctx, deps.Owner, deps.Repo, entry.PrNumber)
 			if err != nil {
 				result.Errors = append(result.Errors, fmt.Errorf("get PR #%d: %w", entry.PrNumber, err))
 				continue
 			}
+			pr = fullPR
+		}
 
-			if fullPR.Merged {
-				if err := removePR(ctx, deps, result, &entry, removeOpts{
-					advance: true, logMsg: "removed merged PR from queue",
-				}); err != nil {
-					result.Errors = append(result.Errors, fmt.Errorf("dequeue merged PR #%d: %w", entry.PrNumber, err))
-				}
+		checks := []struct {
+			when  bool
+			label string
+			opts  removeOpts
+		}{
+			{
+				when:  !isOpen && pr.Merged,
+				label: "merged",
+				opts:  removeOpts{advance: true, logMsg: "removed merged PR from queue"},
+			},
+			{
+				when:  !isOpen,
+				label: "closed",
+				opts:  removeOpts{logMsg: "removed closed PR from queue"},
+			},
+			{
+				when:  pr.BaseBranch != "" && pr.BaseBranch != entry.TargetBranch,
+				label: "retargeted",
+				opts: removeOpts{
+					cancelAutomerge: true,
+					comment:         fmt.Sprintf("⚠️ Removed from merge queue: target branch changed from `%s` to `%s`. Please re-schedule automerge.", entry.TargetBranch, pr.BaseBranch),
+					logMsg:          "removed retargeted PR from queue",
+					logAttrs:        []any{"old_branch", entry.TargetBranch, "new_branch", pr.BaseBranch},
+				},
+			},
+			{
+				when:  pr.HeadSHA != "" && pr.HeadSHA != entry.PrHeadSha,
+				label: "pushed",
+				opts: removeOpts{
+					cancelAutomerge: true,
+					comment:         "⚠️ Removed from merge queue: new commits were pushed. Please re-schedule automerge.",
+					advance:         true,
+					logMsg:          "removed PR due to new push",
+				},
+			},
+			{
+				when:  !pr.AutoMergeEnabled,
+				label: "cancelled",
+				opts:  removeOpts{logMsg: "removed PR due to automerge cancellation"},
+			},
+		}
+
+		matched := false
+		for _, c := range checks {
+			if !c.when {
 				continue
 			}
-
-			if err := removePR(ctx, deps, result, &entry, removeOpts{
-				logMsg: "removed closed PR from queue",
-			}); err != nil {
-				result.Errors = append(result.Errors, fmt.Errorf("dequeue closed PR #%d: %w", entry.PrNumber, err))
+			if err := removePR(ctx, deps, result, &entry, c.opts); err != nil {
+				result.Errors = append(result.Errors, fmt.Errorf("dequeue %s PR #%d: %w", c.label, entry.PrNumber, err))
 			}
-			continue
+			matched = true
+			break
 		}
-
-		if pr.BaseBranch != "" && pr.BaseBranch != entry.TargetBranch {
-			if err := removePR(ctx, deps, result, &entry, removeOpts{
-				cancelAutomerge: true,
-				comment:         fmt.Sprintf("⚠️ Removed from merge queue: target branch changed from `%s` to `%s`. Please re-schedule automerge.", entry.TargetBranch, pr.BaseBranch),
-				logMsg:          "removed retargeted PR from queue",
-				logAttrs:        []any{"old_branch", entry.TargetBranch, "new_branch", pr.BaseBranch},
-			}); err != nil {
-				result.Errors = append(result.Errors, fmt.Errorf("dequeue retargeted PR #%d: %w", entry.PrNumber, err))
-			}
-			continue
+		if !matched {
+			handleSuccessTimeout(ctx, deps, result, &entry)
 		}
+	}
+}
 
-		if pr.HeadSHA != "" && pr.HeadSHA != entry.PrHeadSha {
-			if err := removePR(ctx, deps, result, &entry, removeOpts{
-				cancelAutomerge: true,
-				comment:         "⚠️ Removed from merge queue: new commits were pushed. Please re-schedule automerge.",
-				advance:         true,
-				logMsg:          "removed PR due to new push",
-			}); err != nil {
-				result.Errors = append(result.Errors, fmt.Errorf("dequeue pushed PR #%d: %w", entry.PrNumber, err))
-			}
-			continue
-		}
+// handleSuccessTimeout removes entries that reported success but were never
+// merged by the forge within SuccessTimeout, which usually points at a branch
+// protection misconfiguration.
+func handleSuccessTimeout(ctx context.Context, deps *Deps, result *PollResult, entry *pg.QueueEntry) {
+	if entry.State != pg.EntryStateSuccess || deps.SuccessTimeout <= 0 ||
+		!entry.CompletedAt.Valid || time.Since(entry.CompletedAt.Time) <= deps.SuccessTimeout {
+		return
+	}
 
-		if !pr.AutoMergeEnabled {
-			if err := removePR(ctx, deps, result, &entry, removeOpts{
-				logMsg: "removed PR due to automerge cancellation",
-			}); err != nil {
-				result.Errors = append(result.Errors, fmt.Errorf("dequeue cancelled PR #%d: %w", entry.PrNumber, err))
-			}
-			continue
-		}
+	targetURL := forge.DashboardPRURL(deps.ExternalURL, deps.Forge.Kind(), deps.Owner, deps.Repo, entry.PrNumber)
+	_ = deps.Forge.SetMQStatus(ctx, deps.Owner, deps.Repo, entry.PrHeadSha, forge.MQStatus{
+		State: pg.CheckStateError, Description: "Automerge did not complete in time", TargetURL: targetURL,
+	})
+	_ = deps.Queue.SetError(ctx, deps.RepoID, entry.PrNumber, "automerge did not complete in time")
 
-		if entry.State == pg.EntryStateSuccess && deps.SuccessTimeout > 0 &&
-			entry.CompletedAt.Valid && time.Since(entry.CompletedAt.Time) > deps.SuccessTimeout {
-			targetURL := forge.DashboardPRURL(deps.ExternalURL, deps.Forge.Kind(), deps.Owner, deps.Repo, entry.PrNumber)
-			_ = deps.Forge.SetMQStatus(ctx, deps.Owner, deps.Repo, entry.PrHeadSha, forge.MQStatus{
-				State: pg.CheckStateError, Description: "Automerge did not complete in time", TargetURL: targetURL,
-			})
-			_ = deps.Queue.SetError(ctx, deps.RepoID, entry.PrNumber, "automerge did not complete in time")
-
-			if err := removePR(ctx, deps, result, &entry, removeOpts{
-				cancelAutomerge: true,
-				comment:         "⚠️ Removed from merge queue: PR was marked as ready to merge but Gitea did not merge it in time. This may indicate a branch protection issue.",
-				advance:         true,
-				logMsg:          "removed PR due to success-but-not-merged timeout",
-			}); err != nil {
-				result.Errors = append(result.Errors, fmt.Errorf("dequeue timed-out PR #%d: %w", entry.PrNumber, err))
-			}
-		}
+	if err := removePR(ctx, deps, result, entry, removeOpts{
+		cancelAutomerge: true,
+		comment:         "⚠️ Removed from merge queue: PR was marked as ready to merge but Gitea did not merge it in time. This may indicate a branch protection issue.",
+		advance:         true,
+		logMsg:          "removed PR due to success-but-not-merged timeout",
+	}); err != nil {
+		result.Errors = append(result.Errors, fmt.Errorf("dequeue timed-out PR #%d: %w", entry.PrNumber, err))
 	}
 }
 
