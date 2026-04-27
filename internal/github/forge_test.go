@@ -3,6 +3,7 @@ package github_test
 import (
 	"context"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Mic92/gitea-mq/internal/forge"
@@ -155,6 +156,19 @@ func TestForge_CreateMergeBranch_ResetsStaleRef(t *testing.T) {
 	}
 	if sha != "merge(fresh-base,sha-head)" {
 		t.Errorf("sha=%q, want merge from fresh-base (stale ref not reset)", sha)
+	}
+}
+
+// CreateRef 422s for more than just "already exists" (ruleset rejection, D/F
+// ref conflict). The UpdateRef fallback must not run for those or it masks the
+// real cause behind a secondary "does not exist" error.
+func TestForge_CreateMergeBranch_SurfacesNonExistsCreateError(t *testing.T) {
+	srv, f := newTestForge(t)
+	srv.Repo("org", "app").Refs["gitea-mq"] = "x" // D/F conflict with gitea-mq/1
+
+	_, _, err := f.CreateMergeBranch(context.Background(), "org", "app", "main", "sha", "gitea-mq/1")
+	if err == nil || !strings.Contains(err.Error(), "Reference update failed") {
+		t.Fatalf("err=%v, want original CreateRef 422 surfaced", err)
 	}
 }
 

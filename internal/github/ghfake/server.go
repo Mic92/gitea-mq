@@ -534,6 +534,16 @@ func (s *Server) hCreateRef(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 422, map[string]any{"message": "Reference already exists"})
 		return
 	}
+	// Mirror git's directory/file ref conflict: refs/heads/foo blocks
+	// refs/heads/foo/bar (and vice versa). GitHub reports this as the
+	// generic 422 "Reference update failed", same as a ruleset rejection.
+	for existing := range rp.Refs {
+		if strings.HasPrefix(branch, existing+"/") || strings.HasPrefix(existing, branch+"/") {
+			s.mu.Unlock()
+			writeJSON(w, 422, map[string]any{"message": "Reference update failed"})
+			return
+		}
+	}
 	rp.Refs[branch] = body.SHA
 	s.mu.Unlock()
 	writeJSON(w, 201, map[string]any{"ref": body.Ref, "object": map[string]any{"sha": body.SHA}})
@@ -552,6 +562,11 @@ func (s *Server) hUpdateRef(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	s.mu.Lock()
+	if _, exists := rp.Refs[branch]; !exists {
+		s.mu.Unlock()
+		writeJSON(w, 422, map[string]any{"message": "Reference does not exist"})
+		return
+	}
 	rp.Refs[branch] = body.SHA
 	s.mu.Unlock()
 	writeJSON(w, 200, map[string]any{"ref": "refs/heads/" + branch, "object": map[string]any{"sha": body.SHA}})

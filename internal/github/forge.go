@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -171,16 +172,20 @@ func (f *githubForge) CreateMergeBranch(ctx context.Context, owner, name, base, 
 	}
 	baseSHA := baseRef.GetObject().GetSHA()
 
-	_, resp, err := c.Git.CreateRef(ctx, owner, name, gh.CreateRef{
+	_, _, err = c.Git.CreateRef(ctx, owner, name, gh.CreateRef{
 		Ref: "refs/heads/" + branch,
 		SHA: baseSHA,
 	})
 	if err != nil {
-		if resp == nil || resp.StatusCode != http.StatusUnprocessableEntity {
+		// 422 is overloaded (already exists, ruleset rejection, D/F ref
+		// conflict). Only the first is recoverable; falling back to UpdateRef
+		// for the rest would mask the real cause behind "does not exist".
+		var ghErr *gh.ErrorResponse
+		if !errors.As(err, &ghErr) || !strings.Contains(ghErr.Message, "already exists") {
 			return "", false, fmt.Errorf("create ref %s: %w", branch, err)
 		}
-		// 422: ref already exists from a crashed previous attempt. Force it
-		// to the current base tip so the merge result reflects fresh base.
+		// Ref already exists from a crashed previous attempt. Force it to the
+		// current base tip so the merge result reflects a fresh base.
 		if _, _, err := c.Git.UpdateRef(ctx, owner, name, "heads/"+branch,
 			gh.UpdateRef{SHA: baseSHA, Force: gh.Ptr(true)}); err != nil {
 			return "", false, fmt.Errorf("reset stale ref %s: %w", branch, err)
