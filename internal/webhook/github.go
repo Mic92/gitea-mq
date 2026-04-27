@@ -3,7 +3,6 @@ package webhook
 import (
 	"log/slog"
 	"net/http"
-	"strings"
 
 	gh "github.com/google/go-github/v84/github"
 
@@ -56,7 +55,7 @@ func GithubHandler(secret []byte, repos RepoLookup, queueSvc *queue.Service, tri
 			if e.GetAction() != "completed" || cr.GetStatus() != "completed" {
 				break
 			}
-			if isOwnContext(cr.GetName()) {
+			if forge.IsOwnContext(cr.GetName()) {
 				break
 			}
 			rm, ok := lookupGithubRepo(repos, e.GetRepo())
@@ -68,7 +67,7 @@ func GithubHandler(secret []byte, repos RepoLookup, queueSvc *queue.Service, tri
 				state, string(state), cr.GetOutput().GetSummary(), cr.GetDetailsURL())
 
 		case *gh.StatusEvent:
-			if isOwnContext(e.GetContext()) {
+			if forge.IsOwnContext(e.GetContext()) {
 				break
 			}
 			rm, ok := lookupGithubRepo(repos, e.GetRepo())
@@ -94,10 +93,4 @@ func lookupGithubRepo(repos RepoLookup, r *gh.Repository) (*RepoMonitor, bool) {
 		return nil, false
 	}
 	return repos.LookupMonitor(string(forge.KindGithub) + ":" + owner + "/" + name)
-}
-
-// isOwnContext filters out gitea-mq's own check and the gitea-mq/* mirrors so
-// they do not feed back into the monitor.
-func isOwnContext(ctx string) bool {
-	return ctx == "gitea-mq" || strings.HasPrefix(ctx, "gitea-mq/")
 }

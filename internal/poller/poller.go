@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/Mic92/gitea-mq/internal/forge"
@@ -92,7 +91,7 @@ func prChecksGreen(ctx context.Context, deps *Deps, pr *forge.PR) (bool, error) 
 	// gitea-mq/* mirrors are our own output, not external CI.
 	var externalStatuses []pg.CheckStatus
 	for ctxName, c := range checks {
-		if strings.HasPrefix(ctxName, merge.BranchPrefix) {
+		if forge.IsOwnContext(ctxName) {
 			continue
 		}
 		externalStatuses = append(externalStatuses, pg.CheckStatus{Context: ctxName, State: c.State})

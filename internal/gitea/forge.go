@@ -116,7 +116,7 @@ func (f *giteaForge) GetRequiredChecks(ctx context.Context, owner, name, branch 
 	// Never report ourselves as a required external check.
 	var out []string
 	for _, c := range bp.StatusCheckContexts {
-		if c == "gitea-mq" {
+		if forge.IsOwnContext(c) {
 			continue
 		}
 		out = append(out, c)
@@ -129,10 +129,10 @@ func (f *giteaForge) GetCheckStates(ctx context.Context, owner, name, sha string
 	if err != nil {
 		return nil, err
 	}
-	// Exclude our own status so the monitor never gates on it.
+	// gitea-mq/* mirrors are kept on purpose: stale-mirror cleanup needs them.
 	out := make(map[string]forge.Check, len(cs.Statuses))
 	for _, s := range cs.Statuses {
-		if s.Context == "gitea-mq" {
+		if s.Context == forge.MQContext {
 			continue
 		}
 		out[s.Context] = forge.Check{

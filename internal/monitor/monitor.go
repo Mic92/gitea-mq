@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/Mic92/gitea-mq/internal/forge"
@@ -135,7 +134,7 @@ func skipPendingMirroredStatuses(ctx context.Context, f forge.Forge, owner, repo
 		return
 	}
 	for ctxName, c := range checks {
-		if !strings.HasPrefix(ctxName, merge.BranchPrefix) {
+		if !forge.IsOwnContext(ctxName) {
 			continue
 		}
 		if c.State != pg.CheckStatePending || c.Description != merge.StaleMirrorDescription {

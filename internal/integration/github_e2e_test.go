@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Mic92/gitea-mq/internal/forge"
 	githubpkg "github.com/Mic92/gitea-mq/internal/github"
 	"github.com/Mic92/gitea-mq/internal/github/ghfake"
 	"github.com/Mic92/gitea-mq/internal/monitor"
@@ -109,7 +110,7 @@ func TestGithub_FullMergeQueueFlow(t *testing.T) {
 	// Monitor must have flipped gitea-mq to success on the PR head.
 	var mqRun *ghfake.CheckRun
 	for _, cr := range repo.CheckRuns["sha-head"] {
-		if cr.Name == githubpkg.MQCheckName {
+		if cr.Name == forge.MQContext {
 			mqRun = cr
 		}
 	}

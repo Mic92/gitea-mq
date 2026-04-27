@@ -75,7 +75,7 @@ func Handler(secret string, repos RepoLookup, queueSvc *queue.Service) http.Hand
 		}
 
 		// Ignore our own status updates to prevent feedback loops.
-		if event.Context == "gitea-mq" {
+		if forge.IsOwnContext(event.Context) {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -105,7 +105,7 @@ func routeCheck(ctx context.Context, rm *RepoMonitor, svc *queue.Service, sha, c
 		return
 	}
 
-	mirrorCtx := "gitea-mq/" + checkCtx
+	mirrorCtx := forge.MirrorContextPrefix + checkCtx
 	if err := rm.Deps.Forge.MirrorCheck(ctx, rm.Deps.Owner, rm.Deps.Repo, entry.PrHeadSha,
 		mirrorCtx, rawState, desc, targetURL); err != nil {
 		slog.Warn("failed to mirror status to PR head", "pr", entry.PrNumber, "context", mirrorCtx, "err", err)

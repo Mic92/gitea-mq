@@ -87,7 +87,7 @@ func (f *githubForge) GetPR(ctx context.Context, owner, name string, number int6
 
 func (f *githubForge) SetMQStatus(ctx context.Context, owner, name, sha string, st forge.MQStatus) error {
 	status, concl := mqStateToCheckRun(st.State)
-	return f.upsertCheckRun(ctx, owner, name, sha, MQCheckName, status, concl, st.Description, st.TargetURL)
+	return f.upsertCheckRun(ctx, owner, name, sha, forge.MQContext, status, concl, st.Description, st.TargetURL)
 }
 
 func (f *githubForge) MirrorCheck(ctx context.Context, owner, name, sha, checkContext, state, description, targetURL string) error {
@@ -107,9 +107,10 @@ func (f *githubForge) GetRequiredChecks(ctx context.Context, owner, name, branch
 	var out []string
 	for _, r := range rules.RequiredStatusChecks {
 		for _, sc := range r.Parameters.RequiredStatusChecks {
-			if sc.Context != MQCheckName {
-				out = append(out, sc.Context)
+			if forge.IsOwnContext(sc.Context) {
+				continue
 			}
+			out = append(out, sc.Context)
 		}
 	}
 	return out, nil
@@ -127,7 +128,8 @@ func (f *githubForge) GetCheckStates(ctx context.Context, owner, name, sha strin
 		if err != nil {
 			return nil, err
 		}
-		if cr.GetName() == MQCheckName {
+		// gitea-mq/* mirrors are kept on purpose: stale-mirror cleanup needs them.
+		if cr.GetName() == forge.MQContext {
 			continue
 		}
 		out[cr.GetName()] = forge.Check{
@@ -143,7 +145,7 @@ func (f *githubForge) GetCheckStates(ctx context.Context, owner, name, sha strin
 		if err != nil {
 			return nil, err
 		}
-		if st.GetContext() == MQCheckName {
+		if st.GetContext() == forge.MQContext {
 			continue
 		}
 		if _, ok := out[st.GetContext()]; ok {

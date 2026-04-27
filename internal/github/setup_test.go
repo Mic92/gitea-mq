@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/Mic92/gitea-mq/internal/forge"
-	githubpkg "github.com/Mic92/gitea-mq/internal/github"
 )
 
 func TestForge_EnsureRepoSetup(t *testing.T) {
@@ -22,7 +21,7 @@ func TestForge_EnsureRepoSetup(t *testing.T) {
 		t.Errorf("allow_auto_merge = %v, want true", repo.Settings["allow_auto_merge"])
 	}
 
-	if len(repo.Rulesets) != 1 || repo.Rulesets[0].Name != githubpkg.RulesetName {
+	if len(repo.Rulesets) != 1 || repo.Rulesets[0].Name != forge.MQContext {
 		t.Fatalf("rulesets = %+v", repo.Rulesets)
 	}
 	rs := repo.Rulesets[0]

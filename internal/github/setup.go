@@ -10,8 +10,6 @@ import (
 	"github.com/Mic92/gitea-mq/internal/forge"
 )
 
-const RulesetName = "gitea-mq"
-
 func (f *githubForge) EnsureRepoSetup(ctx context.Context, owner, name string, _ forge.SetupConfig) error {
 	c, err := f.app.ClientForRepo(owner, name)
 	if err != nil {
@@ -40,13 +38,13 @@ func (f *githubForge) EnsureRepoSetup(ctx context.Context, owner, name string, _
 		return nil
 	}
 	for _, rs := range rss {
-		if rs.Name == RulesetName {
+		if rs.Name == forge.MQContext {
 			return nil
 		}
 	}
 
 	_, resp, err = c.Repositories.CreateRuleset(ctx, owner, name, gh.RepositoryRuleset{
-		Name:        RulesetName,
+		Name:        forge.MQContext,
 		Target:      gh.Ptr(gh.RulesetTargetBranch),
 		Enforcement: gh.RulesetEnforcementActive,
 		// The App must bypass its own gate to create/populate merge branches
@@ -67,7 +65,7 @@ func (f *githubForge) EnsureRepoSetup(ctx context.Context, owner, name string, _
 		Rules: &gh.RepositoryRulesetRules{
 			RequiredStatusChecks: &gh.RequiredStatusChecksRuleParameters{
 				RequiredStatusChecks: []*gh.RuleStatusCheck{{
-					Context:       MQCheckName,
+					Context:       forge.MQContext,
 					IntegrationID: gh.Ptr(f.app.AppID()),
 				}},
 				StrictRequiredStatusChecksPolicy: false,

@@ -19,6 +19,17 @@ const (
 	KindGithub Kind = "github"
 )
 
+const (
+	MQContext           = "gitea-mq"
+	MirrorContextPrefix = MQContext + "/"
+)
+
+// IsOwnContext recognises statuses gitea-mq itself produced so callers can
+// drop them before they feed back into the monitor.
+func IsOwnContext(ctx string) bool {
+	return ctx == MQContext || strings.HasPrefix(ctx, MirrorContextPrefix)
+}
+
 // DashboardPRURL builds the gitea-mq dashboard link for a PR. It is the
 // target_url of every MQStatus so users land on the queue page from the
 // forge's check UI.

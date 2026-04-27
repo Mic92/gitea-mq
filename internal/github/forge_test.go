@@ -79,7 +79,7 @@ func TestForge_SetMQStatus_UpsertsSingleRun(t *testing.T) {
 	if len(runs) != 1 {
 		t.Fatalf("want 1 check run, got %d: %+v", len(runs), runs)
 	}
-	if runs[0].Name != githubpkg.MQCheckName || runs[0].Status != "completed" || runs[0].Conclusion != "success" {
+	if runs[0].Name != forge.MQContext || runs[0].Status != "completed" || runs[0].Conclusion != "success" {
 		t.Errorf("run = %+v", runs[0])
 	}
 }
@@ -108,7 +108,7 @@ func TestForge_SetMQStatus_ColdCacheFindsExisting(t *testing.T) {
 
 func TestForge_GetRequiredChecks_ExcludesSelf(t *testing.T) {
 	srv, f := newTestForge(t)
-	srv.Repo("org", "app").RequiredChecks["main"] = []string{"ci/build", githubpkg.MQCheckName, "ci/test"}
+	srv.Repo("org", "app").RequiredChecks["main"] = []string{"ci/build", forge.MQContext, "ci/test"}
 
 	got, err := f.GetRequiredChecks(context.Background(), "org", "app", "main")
 	if err != nil {
@@ -125,7 +125,7 @@ func TestForge_GetCheckStates_MapsRunsAndExcludesSelf(t *testing.T) {
 	repo.CheckRuns["abc"] = []*ghfake.CheckRun{
 		{ID: 1, Name: "ci/build", Status: "completed", Conclusion: "success", DetailsURL: "https://ci/1"},
 		{ID: 2, Name: "ci/test", Status: "in_progress"},
-		{ID: 3, Name: githubpkg.MQCheckName, Status: "completed", Conclusion: "success"},
+		{ID: 3, Name: forge.MQContext, Status: "completed", Conclusion: "success"},
 	}
 
 	got, err := f.GetCheckStates(context.Background(), "org", "app", "abc")

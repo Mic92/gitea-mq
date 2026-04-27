@@ -129,14 +129,28 @@ func TestHandler_SignatureValidation(t *testing.T) {
 	}
 }
 
-// Prevents the feedback loop: gitea-mq posts status → webhook fires → must not re-process.
-func TestHandler_IgnoresOwnStatus(t *testing.T) {
+// A primed queue entry ensures a missed filter would reach MirrorCheck rather
+// than fall out at SHA lookup; previously the Gitea handler only dropped the
+// bare "gitea-mq" context, so gitea-mq/* mirrors fed back into the monitor.
+func TestHandler_IgnoresOwnContexts(t *testing.T) {
 	env := setup(t)
-	body := makePayload("abc", "gitea-mq", "success", "org/app")
-	doRequest(env.handler, body, sign(body))
 
-	if len(env.mock.CallsTo("CreateCommitStatus")) != 0 {
-		t.Fatal("should not process own status — feedback loop risk")
+	if _, err := env.svc.Enqueue(env.ctx, env.repoID, 5, "pr-head", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.svc.SetMergeBranch(env.ctx, env.repoID, 5, "gitea-mq/5", "merge-sha"); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, checkCtx := range []string{"gitea-mq", "gitea-mq/ci/build"} {
+		body := makePayload("merge-sha", checkCtx, "success", "org/app")
+		rec := doRequest(env.handler, body, sign(body))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: expected 200, got %d", checkCtx, rec.Code)
+		}
+	}
+	if n := len(env.mock.CallsTo("CreateCommitStatus")); n != 0 {
+		t.Fatalf("own-context status was re-processed: %d CreateCommitStatus calls", n)
 	}
 }
 

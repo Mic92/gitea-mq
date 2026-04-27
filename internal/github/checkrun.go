@@ -10,8 +10,6 @@ import (
 	"github.com/Mic92/gitea-mq/internal/store/pg"
 )
 
-const MQCheckName = "gitea-mq"
-
 // checkRunCache remembers (repo, sha, name) → check-run ID so SetMQStatus and
 // MirrorCheck PATCH the existing run instead of creating duplicates. The cache
 // is best-effort: on miss it lists check runs by name and falls back to create.
