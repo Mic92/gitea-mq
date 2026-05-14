@@ -132,6 +132,7 @@ func (r *RepoRegistry) Add(ctx context.Context, ref forge.RepoRef) error {
 		ExternalURL:    r.deps.ExternalURL,
 		FallbackChecks: r.deps.FallbackChecks,
 		SuccessTimeout: r.deps.SuccessTimeout,
+		CheckTimeout:   r.deps.CheckTimeout,
 	}
 	go poller.Run(pollerCtx, pollerDeps, r.deps.PollInterval)
 
