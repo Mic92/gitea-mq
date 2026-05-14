@@ -32,6 +32,11 @@ type Deps struct {
 	// SuccessTimeout is how long a PR may sit in "success" without merging
 	// before we assume the forge's auto-merge failed.
 	SuccessTimeout time.Duration
+	// CheckTimeout is how long a PR may sit in "testing" without a check
+	// status before we abandon it. Without this, a CI server that loses a
+	// build (e.g. a restart) leaves the head-of-queue stuck forever since
+	// the timeout in monitor.ProcessCheckStatus only runs on webhooks.
+	CheckTimeout time.Duration
 }
 
 type PollResult struct {
@@ -250,6 +255,7 @@ func reconcileEntries(ctx context.Context, deps *Deps, result *PollResult, openP
 		}
 		if !matched {
 			handleSuccessTimeout(ctx, deps, result, &entry)
+			handleTestingTimeout(ctx, deps, result, &entry)
 		}
 	}
 }
@@ -276,6 +282,33 @@ func handleSuccessTimeout(ctx context.Context, deps *Deps, result *PollResult, e
 		logMsg:          "removed PR due to success-but-not-merged timeout",
 	}); err != nil {
 		result.Errors = append(result.Errors, fmt.Errorf("dequeue timed-out PR #%d: %w", entry.PrNumber, err))
+	}
+}
+
+// handleTestingTimeout removes entries that have been in "testing" longer
+// than CheckTimeout without reaching a terminal state. The webhook-driven
+// timeout in monitor only fires when a check status arrives; if the CI never
+// reports (e.g. it lost the build after a restart), the queue stalls.
+func handleTestingTimeout(ctx context.Context, deps *Deps, result *PollResult, entry *pg.QueueEntry) {
+	if entry.State != pg.EntryStateTesting || deps.CheckTimeout <= 0 ||
+		!entry.TestingStartedAt.Valid || time.Since(entry.TestingStartedAt.Time) <= deps.CheckTimeout {
+		return
+	}
+
+	targetURL := forge.DashboardPRURL(deps.ExternalURL, deps.Forge.Kind(), deps.Owner, deps.Repo, entry.PrNumber)
+	_ = deps.Forge.SetMQStatus(ctx, deps.Owner, deps.Repo, entry.PrHeadSha, forge.MQStatus{
+		State: pg.CheckStateError, Description: "CI did not report within timeout", TargetURL: targetURL,
+	})
+	_ = deps.Queue.SetError(ctx, deps.RepoID, entry.PrNumber, "CI did not report within timeout")
+	merge.CleanupMergeBranch(ctx, deps.Forge, deps.Owner, deps.Repo, entry)
+
+	if err := removePR(ctx, deps, result, entry, removeOpts{
+		cancelAutomerge: true,
+		comment:         "⚠️ Removed from merge queue: CI did not report a status within the timeout. The CI server may have lost the build.",
+		advance:         true,
+		logMsg:          "removed PR due to testing timeout",
+	}); err != nil {
+		result.Errors = append(result.Errors, fmt.Errorf("dequeue timed-out testing PR #%d: %w", entry.PrNumber, err))
 	}
 }
 

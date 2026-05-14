@@ -214,6 +214,39 @@ func TestPollOnce_RemoveHead_CleansUpMergeBranch(t *testing.T) {
 	}
 }
 
+func TestPollOnce_TestingNeverReports_TimesOut(t *testing.T) {
+	deps, mock, svc, ctx, repoID := setupPollerTest(t)
+	deps.CheckTimeout = 1 * time.Millisecond
+
+	if _, err := svc.Enqueue(ctx, repoID, 42, "sha42", "main"); err != nil {
+		t.Fatal(err)
+	}
+	_ = svc.UpdateState(ctx, repoID, 42, pg.EntryStateTesting)
+	time.Sleep(5 * time.Millisecond)
+
+	mock.ListOpenPRsFn = func(_ context.Context, _, _ string) ([]gitea.PR, error) {
+		return []gitea.PR{makePR(42, "sha42", "main")}, nil
+	}
+	mock.GetPRTimelineFn = func(_ context.Context, _, _ string, _ int64) ([]gitea.TimelineComment, error) {
+		return automergeTimeline(), nil
+	}
+
+	result, err := poller.PollOnce(ctx, deps)
+	if err != nil {
+		t.Fatalf("PollOnce: %v", err)
+	}
+	if len(result.Dequeued) != 1 || result.Dequeued[0] != 42 {
+		t.Fatalf("expected PR #42 dequeued, got %v", result.Dequeued)
+	}
+	if len(mock.CallsTo("CancelAutoMerge")) != 1 {
+		t.Fatal("expected CancelAutoMerge call")
+	}
+	statusCalls := mock.CallsTo("CreateCommitStatus")
+	if len(statusCalls) != 1 || statusCalls[0].Args[3].(gitea.CommitStatus).State != "error" {
+		t.Fatalf("expected single error status, got %v", statusCalls)
+	}
+}
+
 func TestPollOnce_SuccessButNotMerged_TimesOut(t *testing.T) {
 	deps, mock, svc, ctx, repoID := setupPollerTest(t)
 	deps.SuccessTimeout = 1 * time.Millisecond
