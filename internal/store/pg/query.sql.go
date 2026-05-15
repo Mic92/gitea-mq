@@ -70,7 +70,8 @@ type EnqueuePRParams struct {
 }
 
 func (q *Queries) EnqueuePR(ctx context.Context, arg EnqueuePRParams) (QueueEntry, error) {
-	row := q.db.QueryRow(ctx, enqueuePR,
+	row := q.db.QueryRow(
+		ctx, enqueuePR,
 		arg.RepoID,
 		arg.PrNumber,
 		arg.PrHeadSha,
@@ -374,7 +375,8 @@ type SaveCheckStatusParams struct {
 }
 
 func (q *Queries) SaveCheckStatus(ctx context.Context, arg SaveCheckStatusParams) error {
-	_, err := q.db.Exec(ctx, saveCheckStatus,
+	_, err := q.db.Exec(
+		ctx, saveCheckStatus,
 		arg.QueueEntryID,
 		arg.Context,
 		arg.State,
@@ -414,7 +416,8 @@ type UpdateEntryMergeBranchParams struct {
 }
 
 func (q *Queries) UpdateEntryMergeBranch(ctx context.Context, arg UpdateEntryMergeBranchParams) error {
-	_, err := q.db.Exec(ctx, updateEntryMergeBranch,
+	_, err := q.db.Exec(
+		ctx, updateEntryMergeBranch,
 		arg.RepoID,
 		arg.PrNumber,
 		arg.MergeBranchName,

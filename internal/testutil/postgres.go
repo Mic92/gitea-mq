@@ -85,7 +85,8 @@ func StartPostgresServer(ctx context.Context) (*PostgresServer, error) {
 		return nil, fmt.Errorf("initdb: %w", err)
 	}
 
-	postgresProc := exec.CommandContext(ctx, "postgres",
+	postgresProc := exec.CommandContext(
+		ctx, "postgres",
 		"-D", dbPath,
 		"-k", tempDir,
 		"-c", "listen_addresses=",
@@ -140,7 +141,8 @@ func NewTestDB(t *testing.T, server *PostgresServer) *pgxpool.Pool {
 
 	dbName := fmt.Sprintf("testdb%d", server.dbCount.Add(1))
 
-	cmd := exec.CommandContext(t.Context(), "createdb",
+	cmd := exec.CommandContext(
+		t.Context(), "createdb",
 		"-h", server.TempDir,
 		"-U", "postgres",
 		dbName,

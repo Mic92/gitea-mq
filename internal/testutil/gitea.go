@@ -162,7 +162,8 @@ ALLOWED_HOST_LIST = loopback
 
 	// Start Gitea.
 	giteaProc := exec.CommandContext(ctx, "gitea", "web")
-	giteaProc.Env = append(os.Environ(),
+	giteaProc.Env = append(
+		os.Environ(),
 		"GITEA_WORK_DIR="+tempDir,
 		"GITEA_CUSTOM="+filepath.Join(tempDir, "custom"),
 		"HOME="+gitConfigDir,
@@ -213,13 +214,15 @@ ALLOWED_HOST_LIST = loopback
 	}
 
 	// Create admin user.
-	createAdmin := exec.CommandContext(ctx, "gitea", "admin", "user", "create",
+	createAdmin := exec.CommandContext(
+		ctx, "gitea", "admin", "user", "create",
 		"--admin",
 		"--username", "testuser",
 		"--password", "testpass123",
 		"--email", "test@test.com",
 	)
-	createAdmin.Env = append(os.Environ(),
+	createAdmin.Env = append(
+		os.Environ(),
 		"GITEA_WORK_DIR="+tempDir,
 		"GITEA_CUSTOM="+filepath.Join(tempDir, "custom"),
 	)
