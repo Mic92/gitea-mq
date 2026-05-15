@@ -53,7 +53,8 @@ func run() error {
 		Level: slogLevel(cfg.LogLevel),
 	})))
 
-	slog.Info("starting gitea-mq",
+	slog.Info(
+		"starting gitea-mq",
 		"listen", cfg.ListenAddr,
 		"repos", cfg.Repos(),
 		"gitea", cfg.Gitea != nil,
@@ -156,7 +157,8 @@ func run() error {
 				case discTrigger <- struct{}{}:
 				default:
 				}
-			}))
+			},
+		))
 	}
 
 	// Health check.

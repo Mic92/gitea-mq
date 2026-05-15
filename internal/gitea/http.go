@@ -402,7 +402,8 @@ func (c *HTTPClient) MergeBranches(ctx context.Context, owner, repo, base, head,
 	cloneURL := fmt.Sprintf("%s/%s/%s.git", c.baseURL, owner, repo)
 
 	// Use token auth via URL for git push.
-	authedURL := fmt.Sprintf("%s://gitea-mq:%s@%s",
+	authedURL := fmt.Sprintf(
+		"%s://gitea-mq:%s@%s",
 		cloneURL[:strings.Index(cloneURL, "://")],
 		c.token,
 		cloneURL[strings.Index(cloneURL, "://")+3:],
@@ -411,7 +412,8 @@ func (c *HTTPClient) MergeBranches(ctx context.Context, owner, repo, base, head,
 	run := func(args ...string) ([]byte, error) {
 		cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 		cmd.Dir = tmpDir
-		cmd.Env = append(os.Environ(),
+		cmd.Env = append(
+			os.Environ(),
 			"GIT_TERMINAL_PROMPT=0",
 			"GIT_AUTHOR_NAME=gitea-mq",
 			"GIT_AUTHOR_EMAIL=gitea-mq@localhost",
