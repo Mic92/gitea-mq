@@ -135,11 +135,32 @@ func IsNotFound(err error) bool {
 	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound
 }
 
-// paginate fetches all pages of a paginated Gitea API endpoint.
-// pathFmt must contain a single %d verb for the page number (e.g. "/user/repos?page=%d&limit=50").
-// Stops when a page returns fewer items than the limit (50).
+// paginate fetches all pages of a Gitea API endpoint that returns a bare
+// JSON array. pathFmt must contain a single %d verb for the page number
+// (e.g. "/user/repos?page=%d&limit=50"). A short page (< 50 items) is
+// treated as the last page, saving a final empty-page request when the
+// data divides evenly. Use this for endpoints whose page size exactly
+// matches the SQL LIMIT — i.e. most of Gitea's list endpoints.
 func paginate[T any](ctx context.Context, c *HTTPClient, pathFmt, errLabel string) ([]T, error) {
-	var all []T
+	return paginateWrapped(ctx, c, pathFmt, errLabel, func(s *[]T) []T { return *s })
+}
+
+// paginateUntilEmpty is like paginate but keeps fetching until a page
+// comes back empty. Use this for endpoints where Gitea applies a
+// post-decode filter after the SQL LIMIT (the timeline endpoint hides
+// CommentTypeCode entries this way), so a non-final page can legitimately
+// be shorter than the limit and "short page = last page" would skip data.
+// Costs one extra HTTP request per call.
+func paginateUntilEmpty[T any](ctx context.Context, c *HTTPClient, pathFmt, errLabel string) ([]T, error) {
+	return paginateWrappedUntilEmpty(ctx, c, pathFmt, errLabel, func(s *[]T) []T { return *s })
+}
+
+// paginateWrapped is paginate for endpoints whose JSON response is a
+// wrapping object instead of a bare array (e.g. /repos/search returns
+// {ok, data: [...]}). extract pulls the page items out of the decoded
+// wrapper. Same EOF contract as paginate.
+func paginateWrapped[Wrapper, Item any](ctx context.Context, c *HTTPClient, pathFmt, errLabel string, extract func(*Wrapper) []Item) ([]Item, error) {
+	var all []Item
 
 	for page := 1; ; page++ {
 		path := fmt.Sprintf(pathFmt, page)
@@ -149,11 +170,12 @@ func paginate[T any](ctx context.Context, c *HTTPClient, pathFmt, errLabel strin
 			return nil, err
 		}
 
-		var items []T
-		if err := c.decodeJSON(resp, &items); err != nil {
+		var w Wrapper
+		if err := c.decodeJSON(resp, &w); err != nil {
 			return nil, fmt.Errorf("%s: %w", errLabel, err)
 		}
 
+		items := extract(&w)
 		all = append(all, items...)
 
 		if len(items) < 50 {
@@ -162,12 +184,10 @@ func paginate[T any](ctx context.Context, c *HTTPClient, pathFmt, errLabel strin
 	}
 }
 
-// paginateAll is like paginate but keeps fetching until an empty page is
-// returned. Use this for endpoints where Gitea filters items after applying
-// the SQL LIMIT (e.g. the timeline endpoint filters CommentTypeCode entries),
-// which can return fewer items than the limit on non-final pages.
-func paginateAll[T any](ctx context.Context, c *HTTPClient, pathFmt, errLabel string) ([]T, error) {
-	var all []T
+// paginateWrappedUntilEmpty is paginateUntilEmpty for wrapped responses.
+// Same EOF contract as paginateUntilEmpty.
+func paginateWrappedUntilEmpty[Wrapper, Item any](ctx context.Context, c *HTTPClient, pathFmt, errLabel string, extract func(*Wrapper) []Item) ([]Item, error) {
+	var all []Item
 
 	for page := 1; ; page++ {
 		path := fmt.Sprintf(pathFmt, page)
@@ -177,11 +197,12 @@ func paginateAll[T any](ctx context.Context, c *HTTPClient, pathFmt, errLabel st
 			return nil, err
 		}
 
-		var items []T
-		if err := c.decodeJSON(resp, &items); err != nil {
+		var w Wrapper
+		if err := c.decodeJSON(resp, &w); err != nil {
 			return nil, fmt.Errorf("%s: %w", errLabel, err)
 		}
 
+		items := extract(&w)
 		if len(items) == 0 {
 			return all, nil
 		}
@@ -190,35 +211,19 @@ func paginateAll[T any](ctx context.Context, c *HTTPClient, pathFmt, errLabel st
 	}
 }
 
+// repoSearchResponse is the wrapping object returned by /repos/search.
+type repoSearchResponse struct {
+	Data []Repo `json:"data"`
+}
+
 // SearchReposByTopic returns all repositories with the given topic.
 // Uses the search endpoint which, for site admins, returns repos across the
 // entire instance — not just repos the user owns or collaborates on.
-// The /repos/search endpoint wraps results in {"ok": true, "data": [...]},
-// so we can't use the generic paginate helper.
 func (c *HTTPClient) SearchReposByTopic(ctx context.Context, topic string) ([]Repo, error) {
-	var all []Repo
-
-	for page := 1; ; page++ {
-		path := fmt.Sprintf("/repos/search?q=%s&topic=true&page=%d&limit=50", topic, page)
-
-		resp, err := c.do(ctx, http.MethodGet, path, nil)
-		if err != nil {
-			return nil, err
-		}
-
-		var result struct {
-			Data []Repo `json:"data"`
-		}
-		if err := c.decodeJSON(resp, &result); err != nil {
-			return nil, fmt.Errorf("search repos by topic %s: %w", topic, err)
-		}
-
-		if len(result.Data) == 0 {
-			return all, nil
-		}
-
-		all = append(all, result.Data...)
-	}
+	return paginateWrappedUntilEmpty(ctx, c,
+		fmt.Sprintf("/repos/search?q=%s&topic=true&page=%%d&limit=50", topic),
+		fmt.Sprintf("search repos by topic %s", topic),
+		func(r *repoSearchResponse) []Repo { return r.Data })
 }
 
 // ListOpenPRs returns all open pull requests for a repository.
@@ -249,27 +254,22 @@ func (c *HTTPClient) GetPR(ctx context.Context, owner, repo string, index int64)
 // GetPRTimeline returns timeline comments for a pull request.
 // Handles pagination. The endpoint is GET /repos/{owner}/{repo}/issues/{index}/timeline.
 func (c *HTTPClient) GetPRTimeline(ctx context.Context, owner, repo string, index int64) ([]TimelineComment, error) {
-	return paginateAll[TimelineComment](ctx, c,
+	return paginateUntilEmpty[TimelineComment](ctx, c,
 		fmt.Sprintf("/repos/%s/%s/issues/%d/timeline?page=%%d&limit=50", owner, repo, index),
 		fmt.Sprintf("get PR #%d timeline in %s/%s", index, owner, repo))
 }
 
-// GetCombinedCommitStatus returns the combined status for a commit ref.
-// GET /repos/{owner}/{repo}/commits/{ref}/status
+// GetCombinedCommitStatus returns the latest status per context for a commit
+// ref by paginating GET /repos/{owner}/{repo}/commits/{ref}/status.
 func (c *HTTPClient) GetCombinedCommitStatus(ctx context.Context, owner, repo, ref string) (*CombinedStatus, error) {
-	path := fmt.Sprintf("/repos/%s/%s/commits/%s/status", owner, repo, ref)
-
-	resp, err := c.do(ctx, http.MethodGet, path, nil)
+	statuses, err := paginateWrapped(ctx, c,
+		fmt.Sprintf("/repos/%s/%s/commits/%s/status?page=%%d&limit=50", owner, repo, ref),
+		fmt.Sprintf("get combined status for %s in %s/%s", shortSHA(ref), owner, repo),
+		func(cs *CombinedStatus) []CommitStatusResult { return cs.Statuses })
 	if err != nil {
 		return nil, err
 	}
-
-	var cs CombinedStatus
-	if err := c.decodeJSON(resp, &cs); err != nil {
-		return nil, fmt.Errorf("get combined status for %s in %s/%s: %w", shortSHA(ref), owner, repo, err)
-	}
-
-	return &cs, nil
+	return &CombinedStatus{SHA: ref, Statuses: statuses}, nil
 }
 
 // CreateCommitStatus posts a commit status on a specific SHA.
