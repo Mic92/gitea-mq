@@ -206,3 +206,20 @@ func TestProcessCheckStatus_RetrySuccess(t *testing.T) {
 		t.Fatal("expected success after retry overwrites failure")
 	}
 }
+
+// A failed required check dequeues even while others are still pending.
+func TestEvaluateChecks_FailureWinsOverPending(t *testing.T) {
+	result, failed, url := monitor.EvaluateChecks(
+		[]pg.CheckStatus{
+			{Context: "buildbot/nix-eval", State: pg.CheckStatePending},
+			{Context: "buildbot/nix-build", State: pg.CheckStateFailure, TargetUrl: "https://ci/42"},
+		},
+		[]string{"buildbot/nix-eval", "buildbot/nix-build"},
+	)
+	if result != monitor.CheckFailure {
+		t.Fatalf("expected CheckFailure, got %v", result)
+	}
+	if failed != "buildbot/nix-build" || url != "https://ci/42" {
+		t.Fatalf("unexpected failed check %q url %q", failed, url)
+	}
+}
