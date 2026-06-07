@@ -71,19 +71,17 @@ func EvaluateChecks(statuses []pg.CheckStatus, requiredChecks []string) (CheckRe
 		statusMap[s.Context] = s
 	}
 
+	// Failures first: a failed required check decides the outcome even
+	// while other required checks are still pending.
 	for _, req := range requiredChecks {
 		cs, ok := statusMap[req]
-		if !ok {
-			return CheckWaiting, "", ""
-		}
-		switch cs.State {
-		case pg.CheckStateFailure, pg.CheckStateError:
+		if ok && (cs.State == pg.CheckStateFailure || cs.State == pg.CheckStateError) {
 			return CheckFailure, req, cs.TargetUrl
-		case pg.CheckStatePending:
-			return CheckWaiting, "", ""
-		case pg.CheckStateSuccess:
-			continue
-		default:
+		}
+	}
+	for _, req := range requiredChecks {
+		cs, ok := statusMap[req]
+		if !ok || cs.State != pg.CheckStateSuccess {
 			return CheckWaiting, "", ""
 		}
 	}
