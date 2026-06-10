@@ -29,5 +29,8 @@ buildGoModule {
     gitea
     git
   ];
-  meta.mainProgram = "gitea-mq";
+  meta = {
+    mainProgram = "gitea-mq";
+    license = lib.licenses.mit;
+  };
 }
