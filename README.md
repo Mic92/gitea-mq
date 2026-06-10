@@ -256,3 +256,7 @@ nix build .#checks.x86_64-linux.nixos-test
 # Format
 nix fmt
 ```
+
+## License
+
+[MIT](LICENSE)
