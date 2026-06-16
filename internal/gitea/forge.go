@@ -155,6 +155,16 @@ func (f *giteaForge) CreateMergeBranch(ctx context.Context, owner, name, base, h
 	return res.SHA, false, nil
 }
 
+func (f *giteaForge) IsUpToDate(ctx context.Context, owner, name, base, headSHA string) (bool, error) {
+	// Gitea's compare only reports commits on the right side; swap so it
+	// counts commits on base that head is missing.
+	cmp, err := f.client.CompareCommits(ctx, owner, name, headSHA, base)
+	if err != nil {
+		return false, err
+	}
+	return cmp.TotalCommits == 0, nil
+}
+
 func (f *giteaForge) DeleteBranch(ctx context.Context, owner, name, branch string) error {
 	return f.client.DeleteBranch(ctx, owner, name, branch)
 }

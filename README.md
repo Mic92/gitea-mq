@@ -19,7 +19,11 @@ times out, gitea-mq cancels automerge and posts a comment saying what went
 wrong.
 
 Only one PR is tested at a time per target branch. PRs targeting different
-branches get independent queues.
+branches get independent queues. If the head-of-queue PR already contains the
+current target tip, the merge-branch run is skipped and the PR's own green CI
+is accepted, since the merged tree would be identical (disable with
+`GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE=false` if your `gitea-mq/*` CI runs a
+larger suite than PR CI).
 
 ## Requirements
 
@@ -51,6 +55,7 @@ variables.
 | `GITEA_MQ_EXTERNAL_URL` | yes | - | URL where Gitea can reach this service (used for webhook auto-setup and commit status target URLs) |
 | `GITEA_MQ_POLL_INTERVAL` | no | `30s` | Automerge discovery poll interval |
 | `GITEA_MQ_CHECK_TIMEOUT` | no | `1h` | Timeout for required checks |
+| `GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE` | no | `true` | Skip the merge-branch CI run when a PR is already rebased onto the target branch tip (its own green CI already covers the merged tree) |
 | `GITEA_MQ_REQUIRED_CHECKS` | no | - | Fallback required CI contexts when branch protection has none (comma-separated) |
 | `GITEA_MQ_REFRESH_INTERVAL` | no | `10s` | Dashboard auto-refresh interval |
 | `GITEA_MQ_DISCOVERY_INTERVAL` | no | `5m` | How often to re-scan Gitea topics and GitHub installations |
@@ -233,6 +238,7 @@ Real-world deployments:
 | `externalUrl` | string | - | URL where Gitea can reach this service (for webhook auto-setup and commit status links) |
 | `pollInterval` | string | `30s` | Poll interval |
 | `checkTimeout` | string | `1h` | Check timeout |
+| `skipQueueIfUpToDate` | bool | `true` | Skip merge-branch CI for PRs already rebased onto the target tip |
 | `requiredChecks` | list of strings | `[]` | Fallback required CI contexts when branch protection has none |
 | `refreshInterval` | string | `10s` | Dashboard refresh interval |
 | `discoveryInterval` | string | `5m` | How often to re-discover repos by topic |
