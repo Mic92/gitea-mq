@@ -158,6 +158,9 @@ type Forge interface {
 	CreateMergeBranch(ctx context.Context, owner, name, base, headSHA, branch string) (sha string, conflict bool, err error)
 	DeleteBranch(ctx context.Context, owner, name, branch string) error
 	ListBranches(ctx context.Context, owner, name string) ([]string, error)
+	// IsUpToDate reports whether headSHA already contains the tip of base
+	// (i.e. merging base into head would be a no-op).
+	IsUpToDate(ctx context.Context, owner, name, base, headSHA string) (bool, error)
 
 	CancelAutoMerge(ctx context.Context, owner, name string, number int64) error
 	Comment(ctx context.Context, owner, name string, number int64, body string) error

@@ -82,6 +82,12 @@ type BranchProtection struct {
 	StatusCheckContexts []string `json:"status_check_contexts"`
 }
 
+// Compare is the response from GET /repos/{owner}/{repo}/compare/{base}...{head}.
+// TotalCommits counts commits reachable from head but not from base.
+type Compare struct {
+	TotalCommits int `json:"total_commits"`
+}
+
 // MergeResult holds the outcome of merging two branches.
 type MergeResult struct {
 	SHA string // SHA of the merge commit on the new branch
@@ -202,6 +208,10 @@ type Client interface {
 	// DeleteBranch deletes a branch.
 	// DELETE /repos/{owner}/{repo}/branches/{branch}
 	DeleteBranch(ctx context.Context, owner, repo, name string) error
+
+	// CompareCommits returns the diff summary between base and head.
+	// GET /repos/{owner}/{repo}/compare/{base}...{head}
+	CompareCommits(ctx context.Context, owner, repo, base, head string) (*Compare, error)
 
 	// MergeBranches merges head into base and pushes the result as branchName.
 	// Returns the merge commit SHA, or a MergeConflictError if there are conflicts.

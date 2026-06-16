@@ -77,6 +77,9 @@ pkgs.testers.runNixOSTest {
         pollInterval = "5s";
         discoveryInterval = "5s";
         checkTimeout = "5m";
+        # The test asserts the full merge-branch flow; the only PR it opens is
+        # already up-to-date with main, so the default skip would bypass it.
+        skipQueueIfUpToDate = false;
         logLevel = "debug";
       };
 

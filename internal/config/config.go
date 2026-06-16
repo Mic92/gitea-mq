@@ -15,16 +15,17 @@ type Config struct {
 	Gitea  *GiteaConfig  // nil if unconfigured
 	Github *GithubConfig // nil if unconfigured
 
-	DatabaseURL       string
-	ListenAddr        string
-	WebhookPath       string
-	ExternalURL       string
-	PollInterval      time.Duration
-	CheckTimeout      time.Duration
-	RequiredChecks    []string
-	RefreshInterval   time.Duration
-	DiscoveryInterval time.Duration
-	LogLevel          string
+	DatabaseURL         string
+	ListenAddr          string
+	WebhookPath         string
+	ExternalURL         string
+	PollInterval        time.Duration
+	CheckTimeout        time.Duration
+	RequiredChecks      []string
+	SkipQueueIfUpToDate bool
+	RefreshInterval     time.Duration
+	DiscoveryInterval   time.Duration
+	LogLevel            string
 }
 
 type GiteaConfig struct {
@@ -125,6 +126,11 @@ func Load() (*Config, error) {
 				cfg.RequiredChecks = append(cfg.RequiredChecks, c)
 			}
 		}
+	}
+
+	cfg.SkipQueueIfUpToDate, err = parseBool("GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE", true)
+	if err != nil {
+		return nil, err
 	}
 
 	cfg.LogLevel = envOrDefault("GITEA_MQ_LOG_LEVEL", "info")
@@ -249,6 +255,18 @@ func parseRepos(s string, kind forge.Kind) ([]forge.RepoRef, error) {
 		return nil, fmt.Errorf("no repos specified")
 	}
 	return repos, nil
+}
+
+func parseBool(envKey string, defaultVal bool) (bool, error) {
+	s := os.Getenv(envKey)
+	if s == "" {
+		return defaultVal, nil
+	}
+	b, err := strconv.ParseBool(s)
+	if err != nil {
+		return false, fmt.Errorf("%s: invalid boolean %q", envKey, s)
+	}
+	return b, nil
 }
 
 func parseDurationOrDefault(envKey string, defaultVal time.Duration) (time.Duration, error) {

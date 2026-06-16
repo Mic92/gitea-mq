@@ -33,6 +33,7 @@ type MockClient struct {
 	ListBranchesFn            func(ctx context.Context, owner, repo string) ([]Branch, error)
 	CreateBranchFn            func(ctx context.Context, owner, repo, name, target string) error
 	DeleteBranchFn            func(ctx context.Context, owner, repo, name string) error
+	CompareCommitsFn          func(ctx context.Context, owner, repo, base, head string) (*Compare, error)
 	MergeBranchesFn           func(ctx context.Context, owner, repo, base, head, branchName string) (*MergeResult, error)
 	ListBranchProtectionsFn   func(ctx context.Context, owner, repo string) ([]BranchProtection, error)
 	EditBranchProtectionFn    func(ctx context.Context, owner, repo, name string, opts EditBranchProtectionOpts) error
@@ -191,6 +192,16 @@ func (m *MockClient) DeleteBranch(ctx context.Context, owner, repo, name string)
 	}
 
 	return nil
+}
+
+func (m *MockClient) CompareCommits(ctx context.Context, owner, repo, base, head string) (*Compare, error) {
+	m.record("CompareCommits", owner, repo, base, head)
+
+	if m.CompareCommitsFn != nil {
+		return m.CompareCommitsFn(ctx, owner, repo, base, head)
+	}
+
+	return &Compare{}, nil
 }
 
 func (m *MockClient) MergeBranches(ctx context.Context, owner, repo, base, head, branchName string) (*MergeResult, error) {

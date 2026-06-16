@@ -30,6 +30,7 @@ type MockForge struct {
 	CreateMergeBranchFn func(ctx context.Context, owner, name, base, headSHA, branch string) (string, bool, error)
 	DeleteBranchFn      func(ctx context.Context, owner, name, branch string) error
 	ListBranchesFn      func(ctx context.Context, owner, name string) ([]string, error)
+	IsUpToDateFn        func(ctx context.Context, owner, name, base, headSHA string) (bool, error)
 	CancelAutoMergeFn   func(ctx context.Context, owner, name string, number int64) error
 	CommentFn           func(ctx context.Context, owner, name string, number int64, body string) error
 	EnsureRepoSetupFn   func(ctx context.Context, owner, name string, cfg SetupConfig) error
@@ -149,6 +150,14 @@ func (m *MockForge) ListBranches(ctx context.Context, owner, name string) ([]str
 		return m.ListBranchesFn(ctx, owner, name)
 	}
 	return nil, nil
+}
+
+func (m *MockForge) IsUpToDate(ctx context.Context, owner, name, base, headSHA string) (bool, error) {
+	m.record("IsUpToDate", owner, name, base, headSHA)
+	if m.IsUpToDateFn != nil {
+		return m.IsUpToDateFn(ctx, owner, name, base, headSHA)
+	}
+	return false, nil
 }
 
 func (m *MockForge) CancelAutoMerge(ctx context.Context, owner, name string, number int64) error {
