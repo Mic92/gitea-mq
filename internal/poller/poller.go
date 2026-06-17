@@ -130,8 +130,58 @@ func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 	enqueueAutoMergePRs(ctx, deps, result, openPRs)
 	reconcileEntries(ctx, deps, result, openPRMap)
 	startQueuedHeads(ctx, deps, result)
+	pollMergeBranchChecks(ctx, deps, result)
 
 	return result, nil
+}
+
+// monitorDeps adapts the poller's Deps into the monitor's Deps.
+func monitorDeps(deps *Deps) *monitor.Deps {
+	return &monitor.Deps{
+		Forge:          deps.Forge,
+		Queue:          deps.Queue,
+		Owner:          deps.Owner,
+		Repo:           deps.Repo,
+		RepoID:         deps.RepoID,
+		ExternalURL:    deps.ExternalURL,
+		CheckTimeout:   deps.CheckTimeout,
+		FallbackChecks: deps.FallbackChecks,
+	}
+}
+
+// pollMergeBranchChecks feeds each testing entry's merge-branch commit
+// statuses to the monitor, covering forges without a status webhook and
+// missed webhook deliveries.
+func pollMergeBranchChecks(ctx context.Context, deps *Deps, result *PollResult) {
+	activeEntries, err := deps.Queue.ListActiveEntries(ctx, deps.RepoID)
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Errorf("list active entries for check poll: %w", err))
+		return
+	}
+
+	mDeps := monitorDeps(deps)
+	for i := range activeEntries {
+		entry := &activeEntries[i]
+		if entry.State != pg.EntryStateTesting || !entry.MergeBranchSha.Valid {
+			continue
+		}
+
+		checks, err := deps.Forge.GetCheckStates(ctx, deps.Owner, deps.Repo, entry.MergeBranchSha.String)
+		if err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("get merge branch checks for PR #%d: %w", entry.PrNumber, err))
+			continue
+		}
+
+		for ctxName, c := range checks {
+			// gitea-mq/* mirrors are our own output, not external CI.
+			if forge.IsOwnContext(ctxName) {
+				continue
+			}
+			if err := monitor.ApplyCheck(ctx, mDeps, entry, ctxName, c); err != nil {
+				result.Errors = append(result.Errors, fmt.Errorf("process merge branch check for PR #%d: %w", entry.PrNumber, err))
+			}
+		}
+	}
 }
 
 // enqueueAutoMergePRs adds open PRs that have auto-merge enabled and green CI

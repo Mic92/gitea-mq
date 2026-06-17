@@ -108,12 +108,7 @@ func routeCheck(ctx context.Context, rm *RepoMonitor, svc *queue.Service, sha, c
 		return
 	}
 
-	mirrorCtx := forge.MirrorContextPrefix + checkCtx
-	if err := rm.Deps.Forge.MirrorCheck(ctx, rm.Deps.Owner, rm.Deps.Repo, entry.PrHeadSha, mirrorCtx, c); err != nil {
-		slog.Warn("failed to mirror status to PR head", "pr", entry.PrNumber, "context", mirrorCtx, "err", err)
-	}
-
-	if err := monitor.ProcessCheckStatus(ctx, rm.Deps, entry, checkCtx, c.State, c.TargetURL); err != nil {
+	if err := monitor.ApplyCheck(ctx, rm.Deps, entry, checkCtx, c); err != nil {
 		slog.Error("failed to process check status", "pr", entry.PrNumber, "err", err)
 	}
 }
