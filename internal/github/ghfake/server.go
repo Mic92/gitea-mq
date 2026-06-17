@@ -68,6 +68,9 @@ type Repo struct {
 	Refs      map[string]string // branch -> sha
 	CheckRuns map[string][]*CheckRun
 	Rulesets  []*Ruleset
+	// BehindBy["base...head"] feeds GET /compare/{base}...{head}.behind_by.
+	// Missing entries default to 0 (head up to date with base).
+	BehindBy map[string]int
 	// ConflictOn[head] makes POST /merges with that head return 409.
 	ConflictOn map[string]bool
 	// Settings tracks PATCH /repos/{o}/{r} keys.
@@ -158,6 +161,7 @@ func (s *Server) AddRepo(owner, name string) *Repo {
 		PRs:            map[int64]*PR{},
 		Refs:           map[string]string{"main": "sha-main"},
 		CheckRuns:      map[string][]*CheckRun{},
+		BehindBy:       map[string]int{},
 		ConflictOn:     map[string]bool{},
 		Settings:       map[string]any{},
 		RequiredChecks: map[string][]string{},
@@ -235,6 +239,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE "+apiV3+"/repos/{o}/{r}/git/refs/{ref...}", s.hDeleteRef)
 	mux.HandleFunc("GET "+apiV3+"/repos/{o}/{r}/branches", s.hListBranches)
 	mux.HandleFunc("POST "+apiV3+"/repos/{o}/{r}/merges", s.hMerge)
+	mux.HandleFunc("GET "+apiV3+"/repos/{o}/{r}/compare/{basehead...}", s.hCompare)
 
 	// Rules / rulesets.
 	mux.HandleFunc("GET "+apiV3+"/repos/{o}/{r}/rules/branches/{b}", s.hRulesForBranch)
@@ -667,6 +672,18 @@ func (s *Server) hMerge(w http.ResponseWriter, r *http.Request) {
 	mergeSHA := fmt.Sprintf("merge(%s,%s)", rp.Refs[body.Base], body.Head)
 	rp.Refs[body.Base] = mergeSHA
 	writeJSON(w, 201, map[string]any{"sha": mergeSHA})
+}
+
+func (s *Server) hCompare(w http.ResponseWriter, r *http.Request) {
+	rp, ok := s.repo(r)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	s.mu.Lock()
+	behind := rp.BehindBy[r.PathValue("basehead")]
+	s.mu.Unlock()
+	writeJSON(w, 200, map[string]any{"behind_by": behind, "ahead_by": 0, "commits": []any{}})
 }
 
 // --- handlers: rules ---

@@ -129,6 +129,20 @@ func TestForge_GetCheckStates_MapsRunsAndExcludesSelf(t *testing.T) {
 	}
 }
 
+func TestForge_IsUpToDate(t *testing.T) {
+	srv, f := newTestForge(t)
+	repo := srv.Repo("org", "app")
+	repo.BehindBy["main...sha-behind"] = 2
+
+	ctx := context.Background()
+	if ok, err := f.IsUpToDate(ctx, "org", "app", "main", "sha-rebased"); err != nil || !ok {
+		t.Fatalf("rebased: ok=%v err=%v, want true,nil", ok, err)
+	}
+	if ok, err := f.IsUpToDate(ctx, "org", "app", "main", "sha-behind"); err != nil || ok {
+		t.Fatalf("behind: ok=%v err=%v, want false,nil", ok, err)
+	}
+}
+
 // 409 from the merge endpoint must surface as (conflict=true, err=nil).
 func TestForge_CreateMergeBranch_Conflict(t *testing.T) {
 	srv, f := newTestForge(t)

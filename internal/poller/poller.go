@@ -32,6 +32,9 @@ type Deps struct {
 	// SuccessTimeout is how long a PR may sit in "success" without merging
 	// before we assume the forge's auto-merge failed.
 	SuccessTimeout time.Duration
+	// SkipQueueIfUpToDate skips the merge-branch CI run when the head PR
+	// already contains the target tip: its own green CI covered the same tree.
+	SkipQueueIfUpToDate bool
 	// CheckTimeout is how long a PR may sit in "testing" without a check
 	// status before we abandon it. Without this, a CI server that loses a
 	// build (e.g. a restart) leaves the head-of-queue stuck forever since
@@ -337,6 +340,10 @@ func startQueuedHeads(ctx context.Context, deps *Deps, result *PollResult) {
 			continue
 		}
 
+		if deps.SkipQueueIfUpToDate && tryFastForwardSuccess(ctx, deps, result, head) {
+			continue
+		}
+
 		startResult, err := merge.StartTesting(ctx, deps.Forge, deps.Queue, deps.Owner, deps.Repo, deps.RepoID, head, deps.ExternalURL)
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("start testing for PR #%d: %w", head.PrNumber, err))
@@ -350,6 +357,32 @@ func startQueuedHeads(ctx context.Context, deps *Deps, result *PollResult) {
 			slog.Info("started testing for head-of-queue", "pr", head.PrNumber, "branch", startResult.MergeBranchName)
 		}
 	}
+}
+
+// tryFastForwardSuccess promotes head straight to success when it already
+// contains the target branch tip. Returns true when the entry was handled.
+// Compare errors fall through to StartTesting so a flaky API never stalls
+// the queue.
+func tryFastForwardSuccess(ctx context.Context, deps *Deps, result *PollResult, head *pg.QueueEntry) bool {
+	upToDate, err := deps.Forge.IsUpToDate(ctx, deps.Owner, deps.Repo, head.TargetBranch, head.PrHeadSha)
+	if err != nil {
+		slog.Warn("up-to-date check failed, falling back to merge branch", "pr", head.PrNumber, "error", err)
+		return false
+	}
+	if !upToDate {
+		return false
+	}
+
+	targetURL := forge.DashboardPRURL(deps.ExternalURL, deps.Forge.Kind(), deps.Owner, deps.Repo, head.PrNumber)
+	_ = deps.Forge.SetMQStatus(ctx, deps.Owner, deps.Repo, head.PrHeadSha, forge.MQStatus{
+		State: pg.CheckStateSuccess, Description: "Already up to date with target branch", TargetURL: targetURL,
+	})
+	if err := deps.Queue.UpdateState(ctx, deps.RepoID, head.PrNumber, pg.EntryStateSuccess); err != nil {
+		result.Errors = append(result.Errors, fmt.Errorf("update state to success for PR #%d: %w", head.PrNumber, err))
+		return true
+	}
+	slog.Info("skipped merge-branch testing: PR already up to date with target", "pr", head.PrNumber)
+	return true
 }
 
 // Run starts the polling loop. The first poll happens immediately.
