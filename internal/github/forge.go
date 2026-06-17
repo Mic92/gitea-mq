@@ -209,6 +209,19 @@ func (f *githubForge) CreateMergeBranch(ctx context.Context, owner, name, base, 
 	return commit.GetSHA(), false, nil
 }
 
+func (f *githubForge) IsUpToDate(ctx context.Context, owner, name, base, headSHA string) (bool, error) {
+	c, err := f.app.ClientForRepo(owner, name)
+	if err != nil {
+		return false, err
+	}
+	// per_page=1: we only need behind_by, not the commit list.
+	cmp, _, err := c.Repositories.CompareCommits(ctx, owner, name, base, headSHA, &gh.ListOptions{PerPage: 1})
+	if err != nil {
+		return false, fmt.Errorf("compare %s...%s: %w", base, headSHA, err)
+	}
+	return cmp.GetBehindBy() == 0, nil
+}
+
 func (f *githubForge) DeleteBranch(ctx context.Context, owner, name, branch string) error {
 	c, err := f.app.ClientForRepo(owner, name)
 	if err != nil {

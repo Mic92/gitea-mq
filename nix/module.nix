@@ -120,6 +120,12 @@ in
       description = "Timeout for required checks.";
     };
 
+    skipQueueIfUpToDate = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Skip the merge-branch CI run for PRs already rebased onto the target branch tip.";
+    };
+
     requiredChecks = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [ ];
@@ -241,6 +247,7 @@ in
         GITEA_MQ_EXTERNAL_URL = cfg.externalUrl;
         GITEA_MQ_POLL_INTERVAL = cfg.pollInterval;
         GITEA_MQ_CHECK_TIMEOUT = cfg.checkTimeout;
+        GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE = lib.boolToString cfg.skipQueueIfUpToDate;
         GITEA_MQ_REFRESH_INTERVAL = cfg.refreshInterval;
         GITEA_MQ_DISCOVERY_INTERVAL = cfg.discoveryInterval;
         GITEA_MQ_LOG_LEVEL = cfg.logLevel;

@@ -113,14 +113,15 @@ func run() error {
 
 	// Create the repo registry — central coordination for managed repos.
 	reg := registry.New(ctx, &registry.Deps{
-		Forges:         forges,
-		Queue:          queueSvc,
-		WebhookSecret:  giteaWebhookSecret,
-		ExternalURL:    cfg.ExternalURL,
-		PollInterval:   cfg.PollInterval,
-		CheckTimeout:   cfg.CheckTimeout,
-		FallbackChecks: cfg.RequiredChecks,
-		SuccessTimeout: 5 * time.Minute,
+		Forges:              forges,
+		Queue:               queueSvc,
+		WebhookSecret:       giteaWebhookSecret,
+		ExternalURL:         cfg.ExternalURL,
+		PollInterval:        cfg.PollInterval,
+		CheckTimeout:        cfg.CheckTimeout,
+		FallbackChecks:      cfg.RequiredChecks,
+		SuccessTimeout:      5 * time.Minute,
+		SkipQueueIfUpToDate: cfg.SkipQueueIfUpToDate,
 	})
 
 	discTrigger := make(chan struct{}, 1)

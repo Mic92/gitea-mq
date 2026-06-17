@@ -357,6 +357,23 @@ func (c *HTTPClient) CreateBranch(ctx context.Context, owner, repo, name, target
 		fmt.Sprintf("create branch %s from %s in %s/%s", name, target, owner, repo))
 }
 
+// CompareCommits returns the commit count reachable from head but not base.
+// GET /repos/{owner}/{repo}/compare/{base}...{head}
+func (c *HTTPClient) CompareCommits(ctx context.Context, owner, repo, base, head string) (*Compare, error) {
+	resp, err := c.do(ctx, http.MethodGet,
+		fmt.Sprintf("/repos/%s/%s/compare/%s...%s", owner, repo, base, head), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var cmp Compare
+	if err := c.decodeJSON(resp, &cmp); err != nil {
+		return nil, fmt.Errorf("compare %s...%s: %w", base, head, err)
+	}
+
+	return &cmp, nil
+}
+
 // DeleteBranch deletes a branch.
 // DELETE /repos/{owner}/{repo}/branches/{branch}
 func (c *HTTPClient) DeleteBranch(ctx context.Context, owner, repo, name string) error {

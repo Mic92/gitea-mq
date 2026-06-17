@@ -26,14 +26,15 @@ type ManagedRepo struct {
 }
 
 type Deps struct {
-	Forges         *forge.Set
-	Queue          *queue.Service
-	WebhookSecret  string
-	ExternalURL    string
-	PollInterval   time.Duration
-	CheckTimeout   time.Duration
-	FallbackChecks []string
-	SuccessTimeout time.Duration
+	Forges              *forge.Set
+	Queue               *queue.Service
+	WebhookSecret       string
+	ExternalURL         string
+	PollInterval        time.Duration
+	CheckTimeout        time.Duration
+	FallbackChecks      []string
+	SuccessTimeout      time.Duration
+	SkipQueueIfUpToDate bool
 }
 
 // RepoRegistry manages the set of active repos. Thread-safe for concurrent
@@ -123,16 +124,17 @@ func (r *RepoRegistry) Add(ctx context.Context, ref forge.RepoRef) error {
 	}
 
 	pollerDeps := &poller.Deps{
-		Forge:          f,
-		Queue:          r.deps.Queue,
-		RepoID:         repo.ID,
-		Owner:          ref.Owner,
-		Repo:           ref.Name,
-		Trigger:        trigger,
-		ExternalURL:    r.deps.ExternalURL,
-		FallbackChecks: r.deps.FallbackChecks,
-		SuccessTimeout: r.deps.SuccessTimeout,
-		CheckTimeout:   r.deps.CheckTimeout,
+		Forge:               f,
+		Queue:               r.deps.Queue,
+		RepoID:              repo.ID,
+		Owner:               ref.Owner,
+		Repo:                ref.Name,
+		Trigger:             trigger,
+		ExternalURL:         r.deps.ExternalURL,
+		FallbackChecks:      r.deps.FallbackChecks,
+		SuccessTimeout:      r.deps.SuccessTimeout,
+		CheckTimeout:        r.deps.CheckTimeout,
+		SkipQueueIfUpToDate: r.deps.SkipQueueIfUpToDate,
 	}
 	go poller.Run(pollerCtx, pollerDeps, r.deps.PollInterval)
 

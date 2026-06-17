@@ -52,6 +52,82 @@ func cancelledTimeline() []gitea.TimelineComment {
 	}
 }
 
+// With SkipQueueIfUpToDate, a PR already rebased onto base goes straight to
+// success: its own CI is green and the merged tree would be identical.
+func TestPollOnce_SkipQueueIfUpToDate(t *testing.T) {
+	deps, mock, svc, ctx, repoID := setupPollerTest(t)
+	deps.SkipQueueIfUpToDate = true
+
+	mock.ListOpenPRsFn = func(_ context.Context, _, _ string) ([]gitea.PR, error) {
+		return []gitea.PR{makePR(42, "sha42", "main")}, nil
+	}
+	mock.GetPRTimelineFn = func(_ context.Context, _, _ string, _ int64) ([]gitea.TimelineComment, error) {
+		return automergeTimeline(), nil
+	}
+	mock.CompareCommitsFn = func(_ context.Context, _, _, base, head string) (*gitea.Compare, error) {
+		if base != "sha42" || head != "main" {
+			t.Errorf("compare called with base=%q head=%q, want sha42...main", base, head)
+		}
+		return &gitea.Compare{TotalCommits: 0}, nil
+	}
+	mock.MergeBranchesFn = func(_ context.Context, _, _, _, _, _ string) (*gitea.MergeResult, error) {
+		t.Fatal("MergeBranches must not be called when PR is up-to-date")
+		return nil, nil
+	}
+
+	result, err := poller.PollOnce(ctx, deps)
+	if err != nil {
+		t.Fatalf("PollOnce: %v", err)
+	}
+	if len(result.Errors) > 0 {
+		t.Fatalf("errors: %v", result.Errors)
+	}
+
+	entry, _ := svc.GetEntry(ctx, repoID, 42)
+	if entry == nil || entry.State != pg.EntryStateSuccess {
+		t.Fatalf("expected entry in success state, got %+v", entry)
+	}
+
+	var sawSuccess bool
+	for _, c := range mock.CallsTo("CreateCommitStatus") {
+		if s := c.Args[3].(gitea.CommitStatus); s.Context == "gitea-mq" && s.State == "success" {
+			sawSuccess = true
+		}
+	}
+	if !sawSuccess {
+		t.Error("expected gitea-mq success status on PR head")
+	}
+}
+
+// SkipQueueIfUpToDate must not short-circuit when the PR is behind base:
+// the merge branch is still required so CI sees the combined tree.
+func TestPollOnce_SkipQueueIfUpToDate_BehindBase(t *testing.T) {
+	deps, mock, svc, ctx, repoID := setupPollerTest(t)
+	deps.SkipQueueIfUpToDate = true
+
+	mock.ListOpenPRsFn = func(_ context.Context, _, _ string) ([]gitea.PR, error) {
+		return []gitea.PR{makePR(42, "sha42", "main")}, nil
+	}
+	mock.GetPRTimelineFn = func(_ context.Context, _, _ string, _ int64) ([]gitea.TimelineComment, error) {
+		return automergeTimeline(), nil
+	}
+	mock.CompareCommitsFn = func(_ context.Context, _, _, _, _ string) (*gitea.Compare, error) {
+		return &gitea.Compare{TotalCommits: 3}, nil
+	}
+
+	if _, err := poller.PollOnce(ctx, deps); err != nil {
+		t.Fatalf("PollOnce: %v", err)
+	}
+
+	entry, _ := svc.GetEntry(ctx, repoID, 42)
+	if entry == nil || entry.State != pg.EntryStateTesting {
+		t.Fatalf("expected entry in testing state, got %+v", entry)
+	}
+	if len(mock.CallsTo("MergeBranches")) != 1 {
+		t.Error("expected MergeBranches call for behind-base PR")
+	}
+}
+
 // Happy path: a fresh auto-merge PR is discovered, queued, and immediately
 // promoted to testing with the right commit statuses.
 func TestPollOnce_NewAutomergePR_Enqueues(t *testing.T) {
