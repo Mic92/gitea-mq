@@ -290,6 +290,55 @@ func TestPollOnce_RemoveHead_CleansUpMergeBranch(t *testing.T) {
 	}
 }
 
+// Forges without a commit-status webhook (Forgejo) rely on the poller to
+// observe merge-branch CI results. A testing head whose merge branch passes
+// must be driven to success without any webhook delivery.
+func TestPollOnce_MergeBranchChecksPolled_Success(t *testing.T) {
+	deps, mock, svc, ctx, repoID := setupPollerTest(t)
+	deps.FallbackChecks = []string{"ci/build"}
+
+	if _, err := svc.Enqueue(ctx, repoID, 42, "sha42", "main"); err != nil {
+		t.Fatal(err)
+	}
+	_ = svc.UpdateState(ctx, repoID, 42, pg.EntryStateTesting)
+	_ = svc.SetMergeBranch(ctx, repoID, 42, merge.BranchName(42), "mergesha42")
+
+	mock.ListOpenPRsFn = func(_ context.Context, _, _ string) ([]gitea.PR, error) {
+		return []gitea.PR{makePR(42, "sha42", "main")}, nil
+	}
+	mock.GetPRTimelineFn = func(_ context.Context, _, _ string, _ int64) ([]gitea.TimelineComment, error) {
+		return automergeTimeline(), nil
+	}
+	mock.GetCombinedCommitStatusFn = func(_ context.Context, _, _, sha string) (*gitea.CombinedStatus, error) {
+		if sha == "mergesha42" {
+			return &gitea.CombinedStatus{
+				State:    "success",
+				Statuses: []gitea.CommitStatusResult{{Context: "ci/build", Status: "success"}},
+			}, nil
+		}
+		return &gitea.CombinedStatus{State: "pending"}, nil
+	}
+
+	if _, err := poller.PollOnce(ctx, deps); err != nil {
+		t.Fatalf("PollOnce: %v", err)
+	}
+
+	entry, _ := svc.GetEntry(ctx, repoID, 42)
+	if entry == nil || entry.State != pg.EntryStateSuccess {
+		t.Fatalf("expected PR #42 in success state, got %+v", entry)
+	}
+
+	var sawSuccess bool
+	for _, c := range mock.CallsTo("CreateCommitStatus") {
+		if s := c.Args[3].(gitea.CommitStatus); s.Context == "gitea-mq" && s.State == "success" {
+			sawSuccess = true
+		}
+	}
+	if !sawSuccess {
+		t.Fatal("expected gitea-mq=success status on PR head")
+	}
+}
+
 func TestPollOnce_TestingNeverReports_TimesOut(t *testing.T) {
 	deps, mock, svc, ctx, repoID := setupPollerTest(t)
 	deps.CheckTimeout = 1 * time.Millisecond

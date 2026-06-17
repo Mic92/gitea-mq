@@ -75,7 +75,14 @@
           };
         }
         // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-          nixos-test = pkgs.callPackage ./nix/test.nix { inherit self; };
+          nixos-test = pkgs.callPackage ./nix/test.nix {
+            inherit self;
+            forge = "gitea";
+          };
+          nixos-test-forgejo = pkgs.callPackage ./nix/test.nix {
+            inherit self;
+            forge = "forgejo";
+          };
         }
         // packages
         // devShells
