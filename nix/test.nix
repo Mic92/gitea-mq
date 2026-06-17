@@ -1,12 +1,39 @@
-# NixOS VM integration test: spins up Gitea + PostgreSQL + gitea-mq,
-# verifies auto-setup configures branch protection and webhook,
-# creates a PR with automerge, and checks the queue processes it.
+# NixOS VM integration test: spins up a forge (Gitea or Forgejo) +
+# PostgreSQL + gitea-mq, verifies auto-setup configures branch protection
+# and webhook, creates a PR with automerge, and checks the queue processes it.
+#
+# The same test script runs against both forges. Forgejo shares Gitea's
+# REST API and architecture, so only the NixOS module wiring (service name,
+# state dir, CLI binary, system user) differs.
 {
   pkgs,
   self,
+  # Which forge to test: "gitea" or "forgejo".
+  forge ? "gitea",
 }:
+let
+  forgeParams = {
+    gitea = {
+      module = "services.gitea";
+      service = "gitea.service";
+      user = "gitea";
+      stateDir = "/var/lib/gitea";
+      cli = "gitea";
+      workDirEnv = "GITEA_WORK_DIR";
+    };
+    forgejo = {
+      module = "services.forgejo";
+      service = "forgejo.service";
+      user = "forgejo";
+      stateDir = "/var/lib/forgejo";
+      cli = "forgejo";
+      workDirEnv = "FORGEJO_WORK_DIR";
+    };
+  };
+  p = forgeParams.${forge};
+in
 pkgs.testers.runNixOSTest {
-  name = "gitea-mq-integration";
+  name = "gitea-mq-integration-${forge}";
 
   nodes.machine =
     {
@@ -18,16 +45,16 @@ pkgs.testers.runNixOSTest {
     {
       imports = [ self.nixosModules.default ];
 
-      # PostgreSQL for both Gitea and gitea-mq.
+      # PostgreSQL for both the forge and gitea-mq.
       services.postgresql = {
         enable = true;
         ensureDatabases = [
-          "gitea"
+          p.user
           "gitea-mq"
         ];
         ensureUsers = [
           {
-            name = "gitea";
+            name = p.user;
             ensureDBOwnership = true;
           }
           {
@@ -37,14 +64,14 @@ pkgs.testers.runNixOSTest {
         ];
       };
 
-      # Gitea instance.
-      services.gitea = {
+      # Forge instance (Gitea or Forgejo). Both modules share option names.
+      services.${forge} = {
         enable = true;
         database = {
           type = "postgres";
           socket = "/run/postgresql";
-          name = "gitea";
-          user = "gitea";
+          name = p.user;
+          user = p.user;
         };
         settings = {
           server = {
@@ -84,7 +111,7 @@ pkgs.testers.runNixOSTest {
       systemd.services.gitea-mq.wantedBy = lib.mkForce [ ];
 
       environment.systemPackages = [
-        config.services.gitea.package
+        config.services.${forge}.package
         pkgs.jq
       ];
     };
@@ -93,13 +120,13 @@ pkgs.testers.runNixOSTest {
     import json
 
     machine.wait_for_unit("postgresql.service")
-    machine.wait_for_unit("gitea.service")
+    machine.wait_for_unit("${p.service}")
     machine.wait_for_open_port(3000)
 
-    # Create Gitea admin user via the gitea CLI.
+    # Create the forge admin user via its CLI.
     machine.succeed(
-        "su -l gitea -c '"
-        "GITEA_WORK_DIR=/var/lib/gitea gitea admin user create --admin --username testuser --password testpass123 --email test@test.com"
+        "su -l ${p.user} -c '"
+        "${p.workDirEnv}=${p.stateDir} ${p.cli} admin user create --admin --username testuser --password testpass123 --email test@test.com"
         "'"
     )
 
@@ -148,11 +175,10 @@ pkgs.testers.runNixOSTest {
 
     machine.wait_for_open_port(8080)
 
-    # Health check.
     result = machine.succeed("curl -sf http://localhost:8080/healthz")
     assert result.strip() == "ok", f"health check failed: {result}"
 
-    # Wait for auto-setup to add gitea-mq to branch protection.
+    # auto-setup adds gitea-mq to the branch protection required checks.
     machine.wait_until_succeeds(
         f"curl -sf http://localhost:3000/api/v1/repos/testuser/testrepo/branch_protections/main "
         f"-H 'Authorization: token {token}' "
@@ -160,7 +186,6 @@ pkgs.testers.runNixOSTest {
         timeout=30,
     )
 
-    # Verify webhook was created.
     machine.wait_until_succeeds(
         f"curl -sf http://localhost:3000/api/v1/repos/testuser/testrepo/hooks "
         f"-H 'Authorization: token {token}' "
@@ -168,13 +193,11 @@ pkgs.testers.runNixOSTest {
         timeout=30,
     )
 
-    # Verify dashboard is serving.
     dash = machine.succeed("curl -sf http://localhost:8080/")
     assert "testuser/testrepo" in dash, f"dashboard missing repo: {dash}"
 
-    # --- Test the actual merge queue flow ---
+    # --- Merge queue happy path ---
 
-    # Create a feature branch with a file change.
     machine.succeed(
         f"curl -sf -X POST 'http://localhost:3000/api/v1/repos/testuser/testrepo/contents/test.txt' "
         f"-H 'Authorization: token {token}' "
@@ -182,7 +205,6 @@ pkgs.testers.runNixOSTest {
         f"-d '{{\"content\": \"dGVzdA==\", \"message\": \"add test file\", \"new_branch\": \"feature-1\"}}'"
     )
 
-    # Create a PR from feature-1 → main.
     pr_json = machine.succeed(
         f"curl -sf -X POST 'http://localhost:3000/api/v1/repos/testuser/testrepo/pulls' "
         f"-H 'Authorization: token {token}' "
@@ -209,16 +231,13 @@ pkgs.testers.runNixOSTest {
         f"-d '{{\"context\": \"ci/build\", \"state\": \"success\", \"description\": \"build passed\"}}'"
     )
 
-    # Wait for the poller to detect automerge and enqueue the PR.
-    # The dashboard repo page should show the PR.
+    # Poller detects automerge and enqueues the PR.
     machine.wait_until_succeeds(
         f"curl -sf http://localhost:8080/repo/testuser/testrepo | grep -q 'PR #{pr_number}'",
         timeout=30,
     )
 
-    # Wait for the poller to create the merge branch (state=testing).
-    # The merge branch gitea-mq/<pr> appears in Gitea when the poller calls
-    # StartTesting via git push.
+    # Poller pushes the merge branch gitea-mq/<pr> (state=testing).
     merge_branch_sha = ""
     machine.wait_until_succeeds(
         f"curl -sf 'http://localhost:3000/api/v1/repos/testuser/testrepo/branches/gitea-mq/{pr_number}' "
@@ -232,8 +251,7 @@ pkgs.testers.runNixOSTest {
     )
     merge_branch_sha = json.loads(merge_branch_json)["commit"]["id"]
 
-    # The poller should have set gitea-mq to pending ("Testing merge result")
-    # on the PR head.
+    # gitea-mq status goes pending ("Testing merge result") on the PR head.
     machine.wait_until_succeeds(
         f"curl -sf 'http://localhost:3000/api/v1/repos/testuser/testrepo/statuses/{pr_sha}' "
         f"-H 'Authorization: token {token}' "
@@ -241,10 +259,9 @@ pkgs.testers.runNixOSTest {
         timeout=30,
     )
 
-    # --- Simulate external CI passing on the merge branch ---
-    # Set ci/build=success on the merge branch SHA. Gitea will fire a
-    # webhook to gitea-mq, whose monitor will then set gitea-mq=success
-    # on the PR head.
+    # External CI passes on the merge branch. gitea-mq picks this up via the
+    # commit-status webhook (Gitea) or the poller's status poll (Forgejo, which
+    # has no status webhook) and sets gitea-mq=success on the PR head.
     machine.succeed(
         f"curl -sf -X POST 'http://localhost:3000/api/v1/repos/testuser/testrepo/statuses/{merge_branch_sha}' "
         f"-H 'Authorization: token {token}' "
@@ -252,8 +269,6 @@ pkgs.testers.runNixOSTest {
         f"-d '{{\"context\": \"ci/build\", \"state\": \"success\", \"description\": \"build passed\"}}'"
     )
 
-    # Wait for gitea-mq to set gitea-mq=success on the PR head via the
-    # webhook → monitor flow.
     machine.wait_until_succeeds(
         f"curl -sf 'http://localhost:3000/api/v1/repos/testuser/testrepo/statuses/{pr_sha}' "
         f"-H 'Authorization: token {token}' "
@@ -261,8 +276,7 @@ pkgs.testers.runNixOSTest {
         timeout=30,
     )
 
-    # Verify the merge branch CI status was mirrored to the PR head
-    # with a prefixed context.
+    # Merge branch CI status is mirrored to the PR head under a prefixed context.
     machine.wait_until_succeeds(
         f"curl -sf 'http://localhost:3000/api/v1/repos/testuser/testrepo/statuses/{pr_sha}' "
         f"-H 'Authorization: token {token}' "
@@ -270,8 +284,8 @@ pkgs.testers.runNixOSTest {
         timeout=30,
     )
 
-    # Also set ci/build=success on the PR head so Gitea's automerge sees
-    # all required checks passing on the PR itself.
+    # ci/build=success on the PR head too, so the forge's automerge sees all
+    # required checks passing on the PR itself.
     machine.succeed(
         f"curl -sf -X POST 'http://localhost:3000/api/v1/repos/testuser/testrepo/statuses/{pr_sha}' "
         f"-H 'Authorization: token {token}' "
@@ -279,7 +293,7 @@ pkgs.testers.runNixOSTest {
         f"-d '{{\"context\": \"ci/build\", \"state\": \"success\", \"description\": \"build passed\"}}'"
     )
 
-    # Wait for Gitea's automerge to merge the PR.
+    # Forge automerge merges the PR.
     machine.wait_until_succeeds(
         f"curl -sf 'http://localhost:3000/api/v1/repos/testuser/testrepo/pulls/{pr_number}' "
         f"-H 'Authorization: token {token}' "
@@ -287,7 +301,7 @@ pkgs.testers.runNixOSTest {
         timeout=60,
     )
 
-    # After the merge, the poller should remove the PR from the queue.
+    # Poller removes the merged PR from the queue.
     machine.wait_until_succeeds(
         f"! curl -sf http://localhost:8080/repo/testuser/testrepo "
         f"| grep -q 'PR #{pr_number}'",
@@ -296,24 +310,19 @@ pkgs.testers.runNixOSTest {
 
     # --- Verify uploadpack.hideRefs is configured ---
     machine.succeed(
-        "su -l gitea -s /bin/sh -c '"
-        "export HOME=/var/lib/gitea GIT_CONFIG_NOSYSTEM=1; "
+        "su -l ${p.user} -s /bin/sh -c '"
+        "export HOME=${p.stateDir} GIT_CONFIG_NOSYSTEM=1; "
         "${pkgs.git}/bin/git config --global --get uploadpack.hideRefs | grep -q refs/heads/gitea-mq/"
         "'"
     )
 
-    # --- Regression test: long timeline with filtered events ---
-    # Gitea's timeline API filters CommentTypeCode entries (inline code review
-    # comments) AFTER applying the SQL LIMIT. This means a page can return
-    # fewer items than the limit even when more pages exist. If the paginator
-    # uses len(items) < limit as its stop condition, it will miss later pages
-    # containing the automerge event.
-    #
-    # This test creates a PR with many inline code review comments so that the
-    # automerge event lands on a later page, then verifies the poller still
-    # picks it up.
-
-    # Create a branch that modifies big.txt (created during setup above).
+    # --- Regression: long timeline with filtered events ---
+    # The timeline API filters CommentTypeCode entries (inline code review
+    # comments) AFTER applying the SQL LIMIT, so a page can return fewer items
+    # than the limit even when more pages exist. A paginator that stops on
+    # len(items) < limit would miss later pages holding the automerge event.
+    # Bury the automerge event behind many inline comments and confirm the
+    # poller still finds it.
     modified_content = base64.b64encode(
         "\n".join(f"modified line {i}" for i in range(1, 101)).encode()
     ).decode()
@@ -381,8 +390,8 @@ pkgs.testers.runNixOSTest {
         f"filtering, got {len(page1)} (total unpaginated: {len(unpaginated)})"
     )
 
-    # NOW schedule automerge — the automerge event will be at the end of the
-    # timeline, past the filtered code review entries.
+    # Schedule automerge now: the event lands at the end of the timeline,
+    # past the filtered code review entries.
     machine.succeed(
         f"curl -sf -X POST 'http://localhost:3000/api/v1/repos/testuser/testrepo/pulls/{pr2_number}/merge' "
         f"-H 'Authorization: token {token}' "
@@ -398,15 +407,13 @@ pkgs.testers.runNixOSTest {
         f"-d '{{\"context\": \"ci/build\", \"state\": \"success\", \"description\": \"build passed\"}}'"
     )
 
-    # The poller must find the automerge event despite it being on a later
-    # page of the timeline. Wait for the PR to appear on the dashboard.
+    # Poller finds the automerge event despite it being on a later page.
     machine.wait_until_succeeds(
         f"curl -sf http://localhost:8080/repo/testuser/testrepo | grep -q 'PR #{pr2_number}'",
         timeout=30,
     )
 
-    # --- Topic-based discovery test ---
-    # Create a second repo with the merge-queue topic and verify it gets discovered.
+    # --- Topic-based discovery ---
     machine.succeed(
         f"curl -sf -X POST http://localhost:3000/api/v1/user/repos "
         f"-H 'Authorization: token {token}' "
@@ -424,16 +431,11 @@ pkgs.testers.runNixOSTest {
         timeout=30,
     )
 
-    # When gitea-mq is a Gitea site admin, it should discover all repos
-    # with the configured topic — even ones it isn't a collaborator on.
-    #
-    # This test creates a repo owned by a different user with the
-    # merge-queue topic and verifies discovery picks it up.
-
-    # Create a second (non-admin) user via the Gitea CLI.
+    # As a site admin, gitea-mq discovers topic-tagged repos even when it is
+    # not a collaborator, including repos owned by other users.
     machine.succeed(
-        "su -l gitea -c '"
-        "GITEA_WORK_DIR=/var/lib/gitea gitea admin user create --username otheruser --password otherpass123 --email other@test.com"
+        "su -l ${p.user} -c '"
+        "${p.workDirEnv}=${p.stateDir} ${p.cli} admin user create --username otheruser --password otherpass123 --email other@test.com"
         "'"
     )
 

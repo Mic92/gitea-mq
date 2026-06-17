@@ -8,6 +8,24 @@ let
   cfg = config.services.gitea-mq;
   giteaEnabled = cfg.giteaUrl != null;
   githubEnabled = cfg.github.appId != null;
+
+  # Configure uploadpack.hideRefs in the forge's global git config so its
+  # git upload-pack won't advertise gitea-mq/* merge branches to clients.
+  mkHideRefsPre =
+    stateDir:
+    let
+      hideRef = "refs/heads/gitea-mq/";
+    in
+    lib.mkAfter [
+      (pkgs.writeShellScript "gitea-mq-hide-refs" ''
+        export HOME=${lib.escapeShellArg stateDir}
+        export GIT_CONFIG_NOSYSTEM=1
+        # Add hideRefs if not already present (idempotent).
+        if ! ${pkgs.git}/bin/git config --global --get uploadpack.hideRefs '^${hideRef}$' >/dev/null 2>&1; then
+          ${pkgs.git}/bin/git config --global --add uploadpack.hideRefs ${hideRef}
+        fi
+      '')
+    ];
 in
 {
   options.services.gitea-mq = {
@@ -151,15 +169,16 @@ in
 
     hideRefFromClients = lib.mkOption {
       type = lib.types.bool;
-      default = config.services.gitea.enable;
-      defaultText = lib.literalExpression "config.services.gitea.enable";
+      default = config.services.gitea.enable || config.services.forgejo.enable;
+      defaultText = lib.literalExpression "config.services.gitea.enable || config.services.forgejo.enable";
       description = ''
         Hide gitea-mq/* merge branches from git client fetches by setting
-        `uploadpack.hideRefs` in Gitea's global git config.
+        `uploadpack.hideRefs` in the forge's global git config.
 
         This prevents git clients from downloading temporary merge queue
-        branches during `git fetch`. Only effective when Gitea runs on
-        the same host. Enabled automatically when `services.gitea` is enabled.
+        branches during `git fetch`. Only effective when Gitea/Forgejo runs
+        on the same host. Enabled automatically when `services.gitea` or
+        `services.forgejo` is enabled.
 
         For non-NixOS deployments, run manually:
           git config --global uploadpack.hideRefs refs/heads/gitea-mq/
@@ -186,25 +205,13 @@ in
     ];
 
     # Hide gitea-mq/* branches from git fetch by configuring uploadpack.hideRefs
-    # in Gitea's global git config. This runs as the gitea user before Gitea
-    # starts, so that Gitea's git upload-pack won't advertise these refs.
-    systemd.services.gitea = lib.mkIf cfg.hideRefFromClients {
-      serviceConfig.ExecStartPre = lib.mkAfter [
-        (
-          let
-            giteaCfg = config.services.gitea;
-            hideRef = "refs/heads/gitea-mq/";
-          in
-          pkgs.writeShellScript "gitea-mq-hide-refs" ''
-            export HOME=${lib.escapeShellArg giteaCfg.stateDir}
-            export GIT_CONFIG_NOSYSTEM=1
-            # Add hideRefs if not already present (idempotent).
-            if ! ${pkgs.git}/bin/git config --global --get uploadpack.hideRefs '^${hideRef}$' >/dev/null 2>&1; then
-              ${pkgs.git}/bin/git config --global --add uploadpack.hideRefs ${hideRef}
-            fi
-          ''
-        )
-      ];
+    # in the forge's global git config. This runs as the forge user before the
+    # forge starts, so that its git upload-pack won't advertise these refs.
+    systemd.services.gitea = lib.mkIf (cfg.hideRefFromClients && config.services.gitea.enable) {
+      serviceConfig.ExecStartPre = mkHideRefsPre config.services.gitea.stateDir;
+    };
+    systemd.services.forgejo = lib.mkIf (cfg.hideRefFromClients && config.services.forgejo.enable) {
+      serviceConfig.ExecStartPre = mkHideRefsPre config.services.forgejo.stateDir;
     };
 
     systemd.services.gitea-mq = {

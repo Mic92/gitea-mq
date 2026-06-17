@@ -194,6 +194,17 @@ func removeFromQueue(ctx context.Context, deps *Deps, entry *pg.QueueEntry, stat
 	return nil
 }
 
+// ApplyCheck mirrors an external merge-branch check onto the PR head and feeds
+// it to the monitor. Shared by the webhook handler (Gitea status events) and
+// the poller's status poll (Forgejo, which has no status webhook).
+func ApplyCheck(ctx context.Context, deps *Deps, entry *pg.QueueEntry, checkCtx string, c forge.Check) error {
+	mirrorCtx := forge.MirrorContextPrefix + checkCtx
+	if err := deps.Forge.MirrorCheck(ctx, deps.Owner, deps.Repo, entry.PrHeadSha, mirrorCtx, c); err != nil {
+		slog.Warn("failed to mirror status to PR head", "pr", entry.PrNumber, "context", mirrorCtx, "err", err)
+	}
+	return ProcessCheckStatus(ctx, deps, entry, checkCtx, c.State, c.TargetURL)
+}
+
 // ProcessCheckStatus is the main entry point called when a webhook delivers
 // a commit status event for a merge branch. It records the status, evaluates
 // checks, and triggers success/failure handling as appropriate.
