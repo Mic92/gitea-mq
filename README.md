@@ -57,9 +57,36 @@ variables.
 | `GITEA_MQ_CHECK_TIMEOUT` | no | `1h` | Timeout for required checks |
 | `GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE` | no | `true` | Skip the merge-branch CI run when a PR is already rebased onto the target branch tip (its own green CI already covers the merged tree) |
 | `GITEA_MQ_REQUIRED_CHECKS` | no | - | Fallback required CI contexts when branch protection has none (comma-separated) |
+| `GITEA_MQ_BATCH_MAX` | no | `1` | Max PRs tested together as one batch. `1` = batching off (legacy behaviour). `0` = everything currently queued |
+| `GITEA_MQ_BISECT_MAX_STEPS` | no | `0` | Cap on CI builds spent bisecting one batch. `0` = unlimited |
 | `GITEA_MQ_REFRESH_INTERVAL` | no | `10s` | Dashboard auto-refresh interval |
 | `GITEA_MQ_DISCOVERY_INTERVAL` | no | `5m` | How often to re-scan Gitea topics and GitHub installations |
 | `GITEA_MQ_LOG_LEVEL` | no | `info` | Log level: debug, info, warn, error |
+
+## Batching (bors-style)
+
+With `GITEA_MQ_BATCH_MAX` ≠ 1, gitea-mq tests up to N queued PRs at once on a
+single `gitea-mq/batch/<id>` branch. On green it **fast-forwards the target
+branch itself** to the tested SHA (the merged tree is exactly what CI saw). On
+red it bisects: split, retest the first half from the current target tip, land
+passing halves immediately, eject the failing singleton, then continue with the
+pending halves.
+
+Trade-offs and prerequisites:
+
+- gitea-mq must be allowed to push to the protected target branch.
+  - **GitHub**: the App is already a bypass actor on the `gitea-mq` ruleset it
+    creates; no extra setup.
+  - **Gitea**: add the API token's user to the branch protection's *push
+    whitelist*. If you forget, every PR in the batch is removed with a comment
+    naming the branch and the user to add.
+- Batched PRs land as **merge commits** regardless of the repo's configured
+  merge style. Repos that mandate squash/rebase should leave `BATCH_MAX=1`.
+- A semantic conflict between two PRs that bisection puts in different halves
+  can land both (each half passes alone). This matches bors-ng; keep
+  `BATCH_MAX` modest if it bothers you.
+- If the forge does not detect a PR as merged within ~10s of the fast-forward,
+  gitea-mq closes it with a "Merged as `<sha>`" comment.
 
 ## Repo selection
 
