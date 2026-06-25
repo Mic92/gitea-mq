@@ -17,6 +17,12 @@ a:hover { text-decoration: underline; }
 .state-success { background: #dafbe1; color: #116329; }
 .state-failed { background: #ffebe9; color: #cf222e; }
 .state-cancelled { background: #eaeef2; color: #57606a; }
+.bucket { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 0.85em; margin-left: 4px; }
+.bucket-current { background: #fff8c5; color: #9a6700; }
+.bucket-pending { background: #eaeef2; color: #57606a; }
+.bucket-landed  { background: #dafbe1; color: #116329; }
+.bucket-ejected { background: #ffebe9; color: #cf222e; }
+.batch-header { padding: 8px 12px; background: #f6f8fa; border-left: 3px solid #9a6700; }
 .check-icon { font-size: 16px; }
 .empty { color: #57606a; font-style: italic; }
 .section { max-width: 900px; }

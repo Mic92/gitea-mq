@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Mic92/gitea-mq/internal/batch"
 	"github.com/Mic92/gitea-mq/internal/forge"
 	"github.com/Mic92/gitea-mq/internal/monitor"
 	"github.com/Mic92/gitea-mq/internal/queue"
@@ -112,6 +113,18 @@ type RepoDetailEntry struct {
 	PrNumber     int64
 	TargetBranch string
 	State        string
+	BatchBucket  string // current/pending/landed when in a live batch
+}
+
+// RepoDetailBatch surfaces a live batch on the repo detail page.
+type RepoDetailBatch struct {
+	ID           int64
+	TargetBranch string
+	BranchName   string
+	BranchURL    string
+	Builds       int32
+	Current      int
+	Members      int
 }
 
 // RepoDetailData is the template data for the repo detail page.
@@ -121,6 +134,7 @@ type RepoDetailData struct {
 	Name            string
 	RepoURL         string // link to the repo on the forge
 	Entries         []RepoDetailEntry
+	Batches         []RepoDetailBatch
 	RefreshInterval int // seconds
 }
 
@@ -139,6 +153,9 @@ type PRDetailData struct {
 	InQueue         bool
 	PRURL           string
 	MergeBranchURL  string
+	BatchID         int64
+	BatchBucket     string
+	BatchPRs        []int64
 	RefreshInterval int // seconds
 }
 
@@ -297,12 +314,42 @@ func serveRepoDetail(w http.ResponseWriter, r *http.Request, deps *Deps, ref for
 		}
 	}
 
+	batches, err := deps.Queue.ListLiveBatches(ctx, repo.ID)
+	if err != nil {
+		slog.Warn("list live batches", "error", err)
+	}
+	byID := make(map[int64]*pg.Batch, len(batches))
+	for i := range batches {
+		b := &batches[i]
+		byID[b.ID] = b
+		rb := RepoDetailBatch{
+			ID:           b.ID,
+			TargetBranch: b.TargetBranch,
+			BranchName:   b.BranchName.String,
+			Builds:       b.Builds,
+			Current:      len(b.CurrentIds),
+			Members:      len(b.MemberIds),
+		}
+		if deps.Forges != nil {
+			if f, _ := deps.Forges.For(ref); f != nil && rb.BranchName != "" {
+				rb.BranchURL = f.BranchHTMLURL(owner, name, rb.BranchName)
+			}
+		}
+		data.Batches = append(data.Batches, rb)
+	}
+
 	for _, e := range entries {
-		data.Entries = append(data.Entries, RepoDetailEntry{
+		de := RepoDetailEntry{
 			PrNumber:     e.PrNumber,
 			TargetBranch: e.TargetBranch,
 			State:        string(e.State),
-		})
+		}
+		if e.ActiveBatchID.Valid {
+			if b := byID[e.ActiveBatchID.Int64]; b != nil {
+				de.BatchBucket = string(batch.Bucket(b, e.ID))
+			}
+		}
+		data.Entries = append(data.Entries, de)
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -393,6 +440,22 @@ func servePRDetail(w http.ResponseWriter, r *http.Request, deps *Deps, ref forge
 			}
 			if entry.MergeBranchName.Valid && entry.MergeBranchName.String != "" {
 				data.MergeBranchURL = f.BranchHTMLURL(owner, name, entry.MergeBranchName.String)
+			}
+		}
+	}
+
+	if entry.ActiveBatchID.Valid {
+		if b, _ := deps.Queue.GetBatch(ctx, entry.ActiveBatchID.Int64); b != nil {
+			data.BatchID = b.ID
+			data.BatchBucket = string(batch.Bucket(b, entry.ID))
+			members, _ := deps.Queue.GetEntriesByIDs(ctx, b.MemberIds)
+			for _, m := range members {
+				if m.PrNumber != prNumber {
+					data.BatchPRs = append(data.BatchPRs, m.PrNumber)
+				}
+			}
+			if f != nil && b.BranchName.Valid {
+				data.MergeBranchURL = f.BranchHTMLURL(owner, name, b.BranchName.String)
 			}
 		}
 	}
