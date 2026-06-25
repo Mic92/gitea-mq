@@ -5,11 +5,44 @@ package forge
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/Mic92/gitea-mq/internal/store/pg"
 )
+
+// ErrNotFastForward is returned by FastForward when sha is not a descendant
+// of the branch's current tip. Callers treat it as "target moved, rebuild".
+var ErrNotFastForward = errors.New("forge: not a fast-forward")
+
+// PushDeniedError is returned by FastForward when the push is rejected by
+// branch protection / ruleset. Carries the forge's message so the user gets
+// an actionable hint (e.g. which whitelist to add the token user to).
+type PushDeniedError struct {
+	Branch  string
+	Message string
+}
+
+// MergeStep is the per-head outcome of a StackMerges call.
+type MergeStep struct {
+	Conflict bool
+	Err      error // non-conflict failure for this head; the stacker continues
+}
+
+// MergeStacker is optionally implemented by a Forge that can build a stack of
+// merge commits in one repository checkout. The batch engine type-asserts for
+// it and falls back to CreateMergeBranch + MergeInto otherwise. A returned
+// error is a whole-operation failure (clone/push); per-head outcomes are in
+// steps. tip is the branch SHA after the last successful merge, or "" when
+// every head conflicted/failed.
+type MergeStacker interface {
+	StackMerges(ctx context.Context, owner, repo, base string, heads []string, branch string) (tip string, steps []MergeStep, err error)
+}
+
+func (e *PushDeniedError) Error() string {
+	return fmt.Sprintf("forge: push to %s denied: %s", e.Branch, e.Message)
+}
 
 // Kind identifies the hosting forge of a repository.
 type Kind string
@@ -166,6 +199,20 @@ type Forge interface {
 	Comment(ctx context.Context, owner, name string, number int64, body string) error
 
 	EnsureRepoSetup(ctx context.Context, owner, name string, cfg SetupConfig) error
+
+	// MergeInto merges headSHA into an existing branch and returns the new
+	// tip. conflict=true (err=nil) on merge conflict. Used to stack batch
+	// members onto the batch branch after CreateMergeBranch seeded it.
+	MergeInto(ctx context.Context, owner, name, branch, headSHA string) (sha string, conflict bool, err error)
+
+	// FastForward updates branch to sha without force. Returns
+	// ErrNotFastForward when sha is not a descendant of the current tip,
+	// *PushDeniedError when branch protection rejects the push.
+	FastForward(ctx context.Context, owner, name, branch, sha string) error
+
+	// ClosePR closes an open PR without merging. Idempotent on
+	// already-closed/merged.
+	ClosePR(ctx context.Context, owner, name string, number int64) error
 }
 
 // UnknownForgeError is returned by Set.For when no adapter is registered for

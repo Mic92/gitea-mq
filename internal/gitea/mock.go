@@ -35,6 +35,9 @@ type MockClient struct {
 	DeleteBranchFn            func(ctx context.Context, owner, repo, name string) error
 	CompareCommitsFn          func(ctx context.Context, owner, repo, base, head string) (*Compare, error)
 	MergeBranchesFn           func(ctx context.Context, owner, repo, base, head, branchName string) (*MergeResult, error)
+	StackMergesFn             func(ctx context.Context, owner, repo, base string, heads []string, branch string) (string, []StackStep, error)
+	FastForwardRefFn          func(ctx context.Context, owner, repo, branch, sha string) error
+	EditIssueStateFn          func(ctx context.Context, owner, repo string, index int64, state string) error
 	ListBranchProtectionsFn   func(ctx context.Context, owner, repo string) ([]BranchProtection, error)
 	EditBranchProtectionFn    func(ctx context.Context, owner, repo, name string, opts EditBranchProtectionOpts) error
 	ListWebhooksFn            func(ctx context.Context, owner, repo string) ([]Webhook, error)
@@ -212,6 +215,34 @@ func (m *MockClient) MergeBranches(ctx context.Context, owner, repo, base, head,
 	}
 
 	return &MergeResult{SHA: "mock-merge-sha"}, nil
+}
+
+func (m *MockClient) StackMerges(ctx context.Context, owner, repo, base string, heads []string, branch string) (string, []StackStep, error) {
+	m.record("StackMerges", owner, repo, base, heads, branch)
+	if m.StackMergesFn != nil {
+		return m.StackMergesFn(ctx, owner, repo, base, heads, branch)
+	}
+	return "", make([]StackStep, len(heads)), nil
+}
+
+func (m *MockClient) FastForwardRef(ctx context.Context, owner, repo, branch, sha string) error {
+	m.record("FastForwardRef", owner, repo, branch, sha)
+
+	if m.FastForwardRefFn != nil {
+		return m.FastForwardRefFn(ctx, owner, repo, branch, sha)
+	}
+
+	return nil
+}
+
+func (m *MockClient) EditIssueState(ctx context.Context, owner, repo string, index int64, state string) error {
+	m.record("EditIssueState", owner, repo, index, state)
+
+	if m.EditIssueStateFn != nil {
+		return m.EditIssueStateFn(ctx, owner, repo, index, state)
+	}
+
+	return nil
 }
 
 func (m *MockClient) ListBranchProtections(ctx context.Context, owner, repo string) ([]BranchProtection, error) {

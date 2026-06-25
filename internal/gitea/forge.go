@@ -2,6 +2,7 @@ package gitea
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -25,7 +26,23 @@ func NewForge(client Client, baseURL string) forge.Forge {
 	}
 }
 
-var _ forge.Forge = (*giteaForge)(nil)
+var (
+	_ forge.Forge        = (*giteaForge)(nil)
+	_ forge.MergeStacker = (*giteaForge)(nil)
+)
+
+// StackMerges builds the batch branch in one clone instead of one per member.
+func (f *giteaForge) StackMerges(ctx context.Context, owner, repo, base string, heads []string, branch string) (string, []forge.MergeStep, error) {
+	tip, steps, err := f.client.StackMerges(ctx, owner, repo, base, heads, branch)
+	if err != nil {
+		return "", nil, err
+	}
+	out := make([]forge.MergeStep, len(steps))
+	for i, s := range steps {
+		out[i] = forge.MergeStep{Conflict: s.Conflict, Err: s.Err}
+	}
+	return tip, out, nil
+}
 
 func (f *giteaForge) Kind() forge.Kind { return forge.KindGitea }
 
@@ -153,6 +170,47 @@ func (f *giteaForge) CreateMergeBranch(ctx context.Context, owner, name, base, h
 		return "", false, err
 	}
 	return res.SHA, false, nil
+}
+
+func (f *giteaForge) MergeInto(ctx context.Context, owner, name, branch, headSHA string) (string, bool, error) {
+	// MergeBranches with base==branchName clones the existing branch,
+	// merges headSHA, and pushes back to the same ref.
+	res, err := f.client.MergeBranches(ctx, owner, name, branch, headSHA, branch)
+	if err != nil {
+		if IsMergeConflict(err) {
+			return "", true, nil
+		}
+		return "", false, err
+	}
+	return res.SHA, false, nil
+}
+
+func (f *giteaForge) FastForward(ctx context.Context, owner, name, branch, sha string) error {
+	err := f.client.FastForwardRef(ctx, owner, name, branch, sha)
+	if err == nil {
+		return nil
+	}
+	var nff *NotFastForwardError
+	if errors.As(err, &nff) {
+		return forge.ErrNotFastForward
+	}
+	var pbe *ProtectedBranchError
+	if errors.As(err, &pbe) {
+		return &forge.PushDeniedError{Branch: branch, Message: pbe.Message}
+	}
+	return err
+}
+
+func (f *giteaForge) ClosePR(ctx context.Context, owner, name string, number int64) error {
+	if err := f.client.EditIssueState(ctx, owner, name, number, "closed"); err != nil {
+		// Gitea returns 404 for PRs already merged via the pulls endpoint;
+		// either way the PR is no longer open.
+		if IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func (f *giteaForge) IsUpToDate(ctx context.Context, owner, name, base, headSHA string) (bool, error) {
