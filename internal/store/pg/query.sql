@@ -77,4 +77,63 @@ WHERE qe.repo_id = $1 AND qe.target_branch = $2
 DELETE FROM queue_entries
 WHERE repo_id = $1;
 
+-- name: TakeQueuedHead :many
+SELECT * FROM queue_entries
+WHERE repo_id = $1 AND target_branch = $2 AND state = 'queued'
+ORDER BY enqueued_at ASC
+LIMIT $3;
 
+-- name: GetEntriesByIDs :many
+SELECT * FROM queue_entries
+WHERE id = ANY(@ids::bigint[]);
+
+-- name: SetEntryActiveBatch :exec
+UPDATE queue_entries
+SET active_batch_id = @active_batch_id, state = 'testing',
+    testing_started_at = COALESCE(testing_started_at, NOW())
+WHERE id = ANY(@ids::bigint[]);
+
+-- name: ClearEntryMergeBranch :exec
+UPDATE queue_entries
+SET merge_branch_name = NULL, merge_branch_sha = NULL
+WHERE id = ANY(@ids::bigint[]);
+
+-- name: ClearCheckStatuses :exec
+DELETE FROM check_statuses
+WHERE queue_entry_id = ANY(@ids::bigint[]);
+
+-- name: CreateBatch :one
+INSERT INTO batches (repo_id, target_branch, member_ids, current_ids)
+VALUES ($1, $2, $3, $3)
+RETURNING *;
+
+-- name: GetBatch :one
+SELECT * FROM batches WHERE id = $1;
+
+-- name: GetLiveBatch :one
+SELECT * FROM batches
+WHERE repo_id = $1 AND target_branch = $2 AND state IN ('forming', 'testing');
+
+-- name: ListLiveBatchesByRepo :many
+SELECT * FROM batches
+WHERE repo_id = $1 AND state IN ('forming', 'testing');
+
+-- name: SaveBatch :one
+UPDATE batches SET
+    state = $2,
+    current_ids = $3,
+    pending = $4,
+    landed_ids = $5,
+    ejected_ids = $6,
+    branch_name = $7,
+    branch_sha = $8,
+    builds = $9,
+    ff_retries = $10,
+    flaky = $11,
+    testing_started_at = $12
+WHERE id = $1
+RETURNING *;
+
+-- name: CancelBatchesByRepo :exec
+UPDATE batches SET state = 'cancelled'
+WHERE repo_id = $1 AND state IN ('forming', 'testing');
