@@ -270,7 +270,9 @@ func NewGiteaAPI(baseURL string) *GiteaAPI {
 func (a *GiteaAPI) CreateToken(t *testing.T) string {
 	t.Helper()
 
-	body := `{"name": "test-token", "scopes": ["all"]}`
+	// Unique per call so multiple tests in one package can each obtain a
+	// token against the shared Gitea instance.
+	body := fmt.Sprintf(`{"name": "test-token-%d", "scopes": ["all"]}`, time.Now().UnixNano())
 
 	req, err := http.NewRequest(http.MethodPost,
 		a.BaseURL+"/api/v1/users/testuser/tokens",
