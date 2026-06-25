@@ -23,6 +23,19 @@ type Deps struct {
 	ExternalURL    string
 	CheckTimeout   time.Duration
 	FallbackChecks []string // from GITEA_MQ_REQUIRED_CHECKS
+
+	// Batch, when non-nil, intercepts check results for entries that belong
+	// to a live batch. The single-PR success/failure handlers are skipped.
+	Batch BatchHandler
+}
+
+// BatchHandler dispatches a raw check event to the batch engine. Defined
+// here so monitor does not import internal/batch (the engine imports monitor
+// for ResolveRequiredChecks/EvaluateChecks). The engine persists the check
+// itself, after its stale-SHA guard, so a late event cannot pollute the
+// ledger of a newer build.
+type BatchHandler interface {
+	HandleCheck(ctx context.Context, entry *pg.QueueEntry, checkCtx string, state pg.CheckState, targetURL string) error
 }
 
 type CheckResult int
@@ -218,6 +231,10 @@ func ApplyCheck(ctx context.Context, deps *Deps, entry *pg.QueueEntry, checkCtx 
 // a commit status event for a merge branch. It records the status, evaluates
 // checks, and triggers success/failure handling as appropriate.
 func ProcessCheckStatus(ctx context.Context, deps *Deps, entry *pg.QueueEntry, checkContext string, checkState pg.CheckState, targetURL string) error {
+	if deps.Batch != nil && entry.ActiveBatchID.Valid {
+		return deps.Batch.HandleCheck(ctx, entry, checkContext, checkState, targetURL)
+	}
+
 	if err := deps.Queue.SaveCheckStatus(ctx, entry.ID, checkContext, checkState, targetURL); err != nil {
 		return fmt.Errorf("save check status for PR #%d: %w", entry.PrNumber, err)
 	}
