@@ -283,7 +283,7 @@ func TestCleanupStaleBranches_DeletesOrphans(t *testing.T) {
 		}, nil
 	}
 
-	if err := merge.CleanupStaleBranches(ctx, f, svc, "org", "app", repoID); err != nil {
+	if err := merge.CleanupStaleBranches(ctx, f, svc, "org", "app", repoID, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -320,7 +320,7 @@ func TestCleanupStaleBranches_DeleteErrorContinues(t *testing.T) {
 		return nil
 	}
 
-	if err := merge.CleanupStaleBranches(ctx, f, svc, "org", "app", repoID); err != nil {
+	if err := merge.CleanupStaleBranches(ctx, f, svc, "org", "app", repoID, nil); err != nil {
 		t.Fatal(err)
 	}
 

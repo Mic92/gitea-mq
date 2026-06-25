@@ -48,3 +48,4 @@ func (e *Engine) HandleCheck(ctx context.Context, entry *pg.QueueEntry, checkCtx
 	return nil
 }
 
+var _ monitor.BatchHandler = (*Engine)(nil)
