@@ -55,13 +55,22 @@ func ResolveRequiredChecks(ctx context.Context, f forge.Forge, owner, repo, targ
 // failed, CheckWaiting otherwise. The second string is the failed check name,
 // and the third is its target URL (both empty when result is not CheckFailure).
 //
-// If requiredChecks is empty, any single success status is sufficient.
+// If requiredChecks is empty, any single success status is sufficient; if none
+// has succeeded but at least one has failed, that failure is reported so the
+// queue does not sit until timeout when CI clearly went red.
 func EvaluateChecks(statuses []pg.CheckStatus, requiredChecks []string) (CheckResult, string, string) {
 	if len(requiredChecks) == 0 {
-		for _, s := range statuses {
+		var failed *pg.CheckStatus
+		for i, s := range statuses {
 			if s.State == pg.CheckStateSuccess {
 				return CheckSuccess, "", ""
 			}
+			if failed == nil && (s.State == pg.CheckStateFailure || s.State == pg.CheckStateError) {
+				failed = &statuses[i]
+			}
+		}
+		if failed != nil {
+			return CheckFailure, failed.Context, failed.TargetUrl
 		}
 		return CheckWaiting, "", ""
 	}
