@@ -76,6 +76,10 @@ type Repo struct {
 	// Settings tracks PATCH /repos/{o}/{r} keys.
 	Settings map[string]any
 
+	// ProtectedRefs[branch]=true makes a non-force PATCH on that ref return
+	// 403, simulating a ruleset/branch-protection rejection.
+	ProtectedRefs map[string]bool
+
 	// RequiredChecks[branch] feeds /rules/branches/{b} as a synthetic
 	// required_status_checks rule, decoupled from Rulesets so tests can
 	// stub rule evaluation directly.
@@ -163,6 +167,7 @@ func (s *Server) AddRepo(owner, name string) *Repo {
 		CheckRuns:      map[string][]*CheckRun{},
 		BehindBy:       map[string]int{},
 		ConflictOn:     map[string]bool{},
+		ProtectedRefs:  map[string]bool{},
 		Settings:       map[string]any{},
 		RequiredChecks: map[string][]string{},
 	}
@@ -222,6 +227,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+apiV3+"/repos/{o}/{r}/pulls", s.hListPRs)
 	mux.HandleFunc("POST "+apiV3+"/repos/{o}/{r}/pulls", s.hCreatePR)
 	mux.HandleFunc("GET "+apiV3+"/repos/{o}/{r}/pulls/{n}", s.hGetPR)
+	mux.HandleFunc("PATCH "+apiV3+"/repos/{o}/{r}/pulls/{n}", s.hEditPR)
 
 	// Issues (comments).
 	mux.HandleFunc("POST "+apiV3+"/repos/{o}/{r}/issues/{n}/comments", s.hCreateComment)
@@ -404,6 +410,31 @@ func (s *Server) hGetPR(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	writeJSON(w, 200, prJSON(rp.Owner, rp.Name, p))
+}
+
+func (s *Server) hEditPR(w http.ResponseWriter, r *http.Request) {
+	rp, ok := s.repo(r)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	n, _ := strconv.ParseInt(r.PathValue("n"), 10, 64)
+	var body struct {
+		State string `json:"state"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	s.mu.Lock()
+	p := rp.PRs[n]
+	if p == nil {
+		s.mu.Unlock()
+		http.NotFound(w, r)
+		return
+	}
+	if body.State != "" {
+		p.State = body.State
+	}
+	s.mu.Unlock()
 	writeJSON(w, 200, prJSON(rp.Owner, rp.Name, p))
 }
 
@@ -607,10 +638,25 @@ func (s *Server) hUpdateRef(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	s.mu.Lock()
-	if _, exists := rp.Refs[branch]; !exists {
+	old, exists := rp.Refs[branch]
+	if !exists {
 		s.mu.Unlock()
 		writeJSON(w, 422, map[string]any{"message": "Reference does not exist"})
 		return
+	}
+	if !body.Force {
+		if rp.ProtectedRefs[branch] {
+			s.mu.Unlock()
+			writeJSON(w, 403, map[string]any{"message": "Changes must be made through a pull request. (protected branch)"})
+			return
+		}
+		// hMerge encodes lineage as merge(old,head); a SHA that does not
+		// contain the current tip's text is treated as non-fast-forward.
+		if old != body.SHA && !strings.Contains(body.SHA, old) {
+			s.mu.Unlock()
+			writeJSON(w, 422, map[string]any{"message": "Update is not a fast forward"})
+			return
+		}
 	}
 	rp.Refs[branch] = body.SHA
 	s.mu.Unlock()

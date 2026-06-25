@@ -2,6 +2,7 @@ package gitea_test
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"testing"
 
@@ -114,6 +115,52 @@ func TestForge_CreateMergeBranch(t *testing.T) {
 			}
 			if sha != tc.wantSHA || conflict != tc.wantConflict {
 				t.Fatalf("got (%q, %v), want (%q, %v)", sha, conflict, tc.wantSHA, tc.wantConflict)
+			}
+		})
+	}
+}
+
+func TestForge_MergeInto_DelegatesToMergeBranches(t *testing.T) {
+	var gotBase, gotBranch string
+	f := newForge(&gitea.MockClient{
+		MergeBranchesFn: func(_ context.Context, _, _, base, _, branch string) (*gitea.MergeResult, error) {
+			gotBase, gotBranch = base, branch
+			return &gitea.MergeResult{SHA: "tip"}, nil
+		},
+	})
+	sha, conflict, err := f.MergeInto(context.Background(), "o", "r", "gitea-mq/batch/1", "sha")
+	if err != nil || conflict || sha != "tip" {
+		t.Fatalf("got (%q,%v,%v)", sha, conflict, err)
+	}
+	// MergeInto on Gitea is MergeBranches with base==branchName so the existing
+	// branch is cloned, merged into, and pushed back.
+	if gotBase != "gitea-mq/batch/1" || gotBranch != "gitea-mq/batch/1" {
+		t.Fatalf("base=%q branch=%q, want both gitea-mq/batch/1", gotBase, gotBranch)
+	}
+}
+
+func TestForge_FastForward_MapsErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   error
+		want func(error) bool
+	}{
+		{"ok", nil, func(e error) bool { return e == nil }},
+		{
+			"non-ff", &gitea.NotFastForwardError{Branch: "main", SHA: "x"},
+			func(e error) bool { return errors.Is(e, forge.ErrNotFastForward) },
+		},
+		{
+			"protected", &gitea.ProtectedBranchError{Branch: "main", Message: "denied"},
+			func(e error) bool { var d *forge.PushDeniedError; return errors.As(e, &d) },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newForge(&gitea.MockClient{
+				FastForwardRefFn: func(_ context.Context, _, _, _, _ string) error { return tc.in },
+			})
+			if err := f.FastForward(context.Background(), "o", "r", "main", "sha"); !tc.want(err) {
+				t.Fatalf("err = %v", err)
 			}
 		})
 	}
