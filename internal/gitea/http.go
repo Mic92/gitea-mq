@@ -394,6 +394,15 @@ func (c *HTTPClient) DeleteBranch(ctx context.Context, owner, repo, name string)
 	return nil
 }
 
+// redact strips the API token from git output before it reaches logs or PR
+// comments.
+func (c *HTTPClient) redact(s string) string {
+	if c.token == "" {
+		return s
+	}
+	return strings.ReplaceAll(s, c.token, "***")
+}
+
 // MergeBranches creates a merge of head into base and pushes it as branch
 // gitea-mq/<head-short>. It shells out to git because Gitea has no API to merge
 // two arbitrary refs into a new branch.
@@ -439,7 +448,7 @@ func (c *HTTPClient) MergeBranches(ctx context.Context, owner, repo, base, head,
 		)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			return out, fmt.Errorf("%s: %w\n%s", strings.Join(args, " "), err, out)
+			return out, fmt.Errorf("%s: %w\n%s", c.redact(strings.Join(args, " ")), err, c.redact(string(out)))
 		}
 		return out, nil
 	}
