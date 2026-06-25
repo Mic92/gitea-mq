@@ -23,6 +23,8 @@ type Config struct {
 	CheckTimeout        time.Duration
 	RequiredChecks      []string
 	SkipQueueIfUpToDate bool
+	BatchMax            int
+	BisectMaxSteps      int
 	RefreshInterval     time.Duration
 	DiscoveryInterval   time.Duration
 	LogLevel            string
@@ -129,6 +131,15 @@ func Load() (*Config, error) {
 	}
 
 	cfg.SkipQueueIfUpToDate, err = parseBool("GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE", true)
+	if err != nil {
+		return nil, err
+	}
+
+	cfg.BatchMax, err = parseInt("GITEA_MQ_BATCH_MAX", 1, 0)
+	if err != nil {
+		return nil, err
+	}
+	cfg.BisectMaxSteps, err = parseInt("GITEA_MQ_BISECT_MAX_STEPS", 0, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -255,6 +266,21 @@ func parseRepos(s string, kind forge.Kind) ([]forge.RepoRef, error) {
 		return nil, fmt.Errorf("no repos specified")
 	}
 	return repos, nil
+}
+
+func parseInt(envKey string, defaultVal, minVal int) (int, error) {
+	s := os.Getenv(envKey)
+	if s == "" {
+		return defaultVal, nil
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, fmt.Errorf("%s: invalid integer %q", envKey, s)
+	}
+	if n < minVal {
+		return 0, fmt.Errorf("%s: must be >= %d, got %d", envKey, minVal, n)
+	}
+	return n, nil
 }
 
 func parseBool(envKey string, defaultVal bool) (bool, error) {

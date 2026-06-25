@@ -2,6 +2,7 @@ package github_test
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -140,6 +141,63 @@ func TestForge_IsUpToDate(t *testing.T) {
 	}
 	if ok, err := f.IsUpToDate(ctx, "org", "app", "main", "sha-behind"); err != nil || ok {
 		t.Fatalf("behind: ok=%v err=%v, want false,nil", ok, err)
+	}
+}
+
+func TestForge_MergeInto(t *testing.T) {
+	srv, f := newTestForge(t)
+	repo := srv.Repo("org", "app")
+	repo.Refs["gitea-mq/batch/1"] = "base"
+	repo.ConflictOn["sha-conflict"] = true
+	ctx := context.Background()
+
+	sha, conflict, err := f.MergeInto(ctx, "org", "app", "gitea-mq/batch/1", "sha-a")
+	if err != nil || conflict || sha != "merge(base,sha-a)" {
+		t.Fatalf("clean: sha=%q conflict=%v err=%v", sha, conflict, err)
+	}
+	if repo.Refs["gitea-mq/batch/1"] != sha {
+		t.Fatalf("branch not advanced to %q", sha)
+	}
+
+	_, conflict, err = f.MergeInto(ctx, "org", "app", "gitea-mq/batch/1", "sha-conflict")
+	if err != nil || !conflict {
+		t.Fatalf("conflict: conflict=%v err=%v", conflict, err)
+	}
+}
+
+func TestForge_FastForward(t *testing.T) {
+	srv, f := newTestForge(t)
+	repo := srv.Repo("org", "app")
+	repo.Refs["main"] = "base"
+	ctx := context.Background()
+
+	if err := f.FastForward(ctx, "org", "app", "main", "merge(base,sha)"); err != nil {
+		t.Fatalf("descendant: %v", err)
+	}
+	if repo.Refs["main"] != "merge(base,sha)" {
+		t.Fatalf("main not updated, got %q", repo.Refs["main"])
+	}
+
+	if err := f.FastForward(ctx, "org", "app", "main", "unrelated"); !errors.Is(err, forge.ErrNotFastForward) {
+		t.Fatalf("non-ff: err=%v, want ErrNotFastForward", err)
+	}
+
+	repo.ProtectedRefs["main"] = true
+	err := f.FastForward(ctx, "org", "app", "main", "merge(merge(base,sha),sha2)")
+	var denied *forge.PushDeniedError
+	if !errors.As(err, &denied) {
+		t.Fatalf("protected: err=%v, want PushDeniedError", err)
+	}
+}
+
+func TestForge_ClosePR(t *testing.T) {
+	srv, f := newTestForge(t)
+	srv.AddPR("org", "app", ghfake.PR{Number: 5, BaseRef: "main"})
+	if err := f.ClosePR(context.Background(), "org", "app", 5); err != nil {
+		t.Fatal(err)
+	}
+	if srv.Repo("org", "app").PRs[5].State != "closed" {
+		t.Fatalf("state = %q, want closed", srv.Repo("org", "app").PRs[5].State)
 	}
 }
 

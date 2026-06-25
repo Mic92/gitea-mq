@@ -65,6 +65,39 @@ func with(extra map[string]string) map[string]string {
 	return out
 }
 
+var giteaEnv = with(map[string]string{
+	"GITEA_MQ_GITEA_URL":      "https://gitea",
+	"GITEA_MQ_GITEA_TOKEN":    "t",
+	"GITEA_MQ_WEBHOOK_SECRET": "s",
+	"GITEA_MQ_REPOS":          "o/r",
+})
+
+func TestLoad_BatchMax(t *testing.T) {
+	setEnv(t, giteaEnv)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BatchMax != 1 || cfg.BisectMaxSteps != 0 {
+		t.Fatalf("defaults: BatchMax=%d BisectMaxSteps=%d", cfg.BatchMax, cfg.BisectMaxSteps)
+	}
+
+	t.Setenv("GITEA_MQ_BATCH_MAX", "0")
+	t.Setenv("GITEA_MQ_BISECT_MAX_STEPS", "5")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BatchMax != 0 || cfg.BisectMaxSteps != 5 {
+		t.Fatalf("override: BatchMax=%d BisectMaxSteps=%d", cfg.BatchMax, cfg.BisectMaxSteps)
+	}
+
+	t.Setenv("GITEA_MQ_BATCH_MAX", "-1")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error for negative BATCH_MAX")
+	}
+}
+
 func TestLoad_NoForgeFails(t *testing.T) {
 	setEnv(t, baseEnv)
 	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "no forge configured") {

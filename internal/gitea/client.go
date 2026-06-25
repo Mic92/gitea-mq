@@ -215,7 +215,22 @@ type Client interface {
 
 	// MergeBranches merges head into base and pushes the result as branchName.
 	// Returns the merge commit SHA, or a MergeConflictError if there are conflicts.
+	// When base == branchName the existing branch is advanced in place.
 	MergeBranches(ctx context.Context, owner, repo, base, head, branchName string) (*MergeResult, error)
+
+	// StackMerges builds branch from base with each head merged on top in one
+	// clone. See HTTPClient.StackMerges.
+	StackMerges(ctx context.Context, owner, repo, base string, heads []string, branch string) (string, []StackStep, error)
+
+	// FastForwardRef pushes sha to branch with a non-force refspec via git
+	// smart-HTTP (Gitea has no REST ref-update). Returns NotFastForwardError
+	// when the server rejects the update as non-ff, ProtectedBranchError
+	// when branch protection denies the push.
+	FastForwardRef(ctx context.Context, owner, repo, branch, sha string) error
+
+	// EditIssueState sets the state ("open"/"closed") of an issue or PR.
+	// PATCH /repos/{owner}/{repo}/issues/{index}
+	EditIssueState(ctx context.Context, owner, repo string, index int64, state string) error
 
 	// ListBranchProtections lists all branch protection rules for a repository.
 	// GET /repos/{owner}/{repo}/branch_protections

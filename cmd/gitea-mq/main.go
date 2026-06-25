@@ -61,6 +61,7 @@ func run() error {
 		"github", cfg.Github != nil,
 		"poll_interval", cfg.PollInterval,
 		"check_timeout", cfg.CheckTimeout,
+		"batch_max", cfg.BatchMax,
 	)
 
 	// Graceful shutdown context.
@@ -122,6 +123,8 @@ func run() error {
 		FallbackChecks:      cfg.RequiredChecks,
 		SuccessTimeout:      5 * time.Minute,
 		SkipQueueIfUpToDate: cfg.SkipQueueIfUpToDate,
+		BatchMax:            cfg.BatchMax,
+		BisectMaxSteps:      cfg.BisectMaxSteps,
 	})
 
 	discTrigger := make(chan struct{}, 1)
