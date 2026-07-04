@@ -40,7 +40,12 @@ func NewApp(appID int64, privateKey []byte, baseURL string) (*App, error) {
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
 	}
-	atr, err := ghinstallation.NewAppsTransport(http.DefaultTransport, appID, privateKey)
+	// Wrap the base transport in an ETag cache so unchanged GETs revalidate
+	// with a 304, which GitHub does not charge against the rate limit. Both
+	// the app client and every installation client derive from this transport
+	// (installation clients reuse atr.tr), so all reads are covered.
+	caching := newETagCache(http.DefaultTransport, 4096)
+	atr, err := ghinstallation.NewAppsTransport(caching, appID, privateKey)
 	if err != nil {
 		return nil, fmt.Errorf("github app transport: %w", err)
 	}

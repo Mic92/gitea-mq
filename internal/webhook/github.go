@@ -9,6 +9,7 @@ import (
 	"github.com/Mic92/gitea-mq/internal/forge"
 	"github.com/Mic92/gitea-mq/internal/github"
 	"github.com/Mic92/gitea-mq/internal/queue"
+	"github.com/Mic92/gitea-mq/internal/store/pg"
 )
 
 // prTriggerActions are the pull_request actions that change the desired queue
@@ -62,15 +63,13 @@ func GithubHandler(secret []byte, repos RepoLookup, queueSvc *queue.Service, tri
 			if !ok {
 				break
 			}
-			routeCheck(r.Context(), rm, queueSvc, cr.GetHeadSHA(), cr.GetName(), forge.Check{
+			check := forge.Check{
 				State:       github.CheckRunToState(cr.GetStatus(), cr.GetConclusion()),
 				Description: cr.GetOutput().GetSummary(),
 				TargetURL:   cr.GetDetailsURL(),
-			})
-			// Green CI may make an auto-merge PR enqueuable; the poller decides.
-			if rm.TriggerPoll != nil {
-				rm.TriggerPoll()
 			}
+			routeCheck(r.Context(), rm, queueSvc, cr.GetHeadSHA(), cr.GetName(), check)
+			maybeTriggerPoll(rm, check.State)
 
 		case *gh.StatusEvent:
 			if forge.IsOwnContext(e.GetContext()) {
@@ -80,14 +79,13 @@ func GithubHandler(secret []byte, repos RepoLookup, queueSvc *queue.Service, tri
 			if !ok {
 				break
 			}
-			routeCheck(r.Context(), rm, queueSvc, e.GetSHA(), e.GetContext(), forge.Check{
+			check := forge.Check{
 				State:       forge.ParseCheckState(e.GetState()),
 				Description: e.GetDescription(),
 				TargetURL:   e.GetTargetURL(),
-			})
-			if rm.TriggerPoll != nil {
-				rm.TriggerPoll()
 			}
+			routeCheck(r.Context(), rm, queueSvc, e.GetSHA(), e.GetContext(), check)
+			maybeTriggerPoll(rm, check.State)
 
 		case *gh.InstallationEvent, *gh.InstallationRepositoriesEvent:
 			if triggerDiscovery != nil {
@@ -97,6 +95,14 @@ func GithubHandler(secret []byte, repos RepoLookup, queueSvc *queue.Service, tri
 
 		w.WriteHeader(http.StatusOK)
 	})
+}
+
+// maybeTriggerPoll reconciles only on a green check, the sole transition that
+// can newly enqueue an auto-merge PR. Pending/failure events skip the poll.
+func maybeTriggerPoll(rm *RepoMonitor, state pg.CheckState) {
+	if state == pg.CheckStateSuccess && rm.TriggerPoll != nil {
+		rm.TriggerPoll()
+	}
 }
 
 func lookupGithubRepo(repos RepoLookup, r *gh.Repository) (*RepoMonitor, bool) {
