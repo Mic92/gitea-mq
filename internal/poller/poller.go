@@ -527,12 +527,8 @@ func hasActiveWork(ctx context.Context, deps *Deps) bool {
 	return len(entries) > 0
 }
 
-// Run starts the polling loop. The first poll happens immediately.
-//
-// idleInterval throttles reconciles for repos with no live queue work, but only
-// when deps.IdleGating is set. It must stay off for forges without a
-// commit-status webhook (Gitea, Forgejo): there the poll is the only way to
-// learn a PR went green, so every tick must poll regardless of idle state.
+// Run starts the polling loop. The first poll happens immediately. idleInterval
+// throttles reconciles for idle repos only when deps.IdleGating is set.
 func Run(ctx context.Context, deps *Deps, interval, idleInterval time.Duration) {
 	slog.Info("poller started", "owner", deps.Owner, "repo", deps.Repo, "interval", interval, "idle_interval", idleInterval, "idle_gating", deps.IdleGating)
 
