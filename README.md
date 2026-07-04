@@ -53,7 +53,8 @@ variables.
 | `GITEA_MQ_LISTEN_ADDR` | no | `:8080` | HTTP listen address |
 | `GITEA_MQ_WEBHOOK_PATH` | no | `/webhook` | Legacy alias for the Gitea webhook endpoint (the canonical path is `/webhook/gitea`) |
 | `GITEA_MQ_EXTERNAL_URL` | yes | - | URL where Gitea can reach this service (used for webhook auto-setup and commit status target URLs) |
-| `GITEA_MQ_POLL_INTERVAL` | no | `30s` | Automerge discovery poll interval |
+| `GITEA_MQ_POLL_INTERVAL` | no | `30s` | Reconcile poll interval for repos with active queue work |
+| `GITEA_MQ_IDLE_POLL_INTERVAL` | no | `15m` | Reconcile poll interval for idle repos (no active queue entries). Idle repos are driven by webhooks; this periodic poll is only a safety net for deliveries missed while the service was down. Keeping it long bounds forge API usage to the number of repos with live queues rather than all managed repos |
 | `GITEA_MQ_CHECK_TIMEOUT` | no | `1h` | Timeout for required checks |
 | `GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE` | no | `true` | Skip the merge-branch CI run when a PR is already rebased onto the target branch tip (its own green CI already covers the merged tree) |
 | `GITEA_MQ_REQUIRED_CHECKS` | no | - | Fallback required CI contexts when branch protection has none (comma-separated) |

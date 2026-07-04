@@ -546,3 +546,69 @@ func TestPollOnce_GiteaUnavailable_Pauses(t *testing.T) {
 		t.Fatalf("expected 1 error, got %d", len(result.Errors))
 	}
 }
+
+// An idle repo must not hit the forge on every tick: only the startup
+// reconcile runs until the idle interval elapses.
+func TestRun_IdleRepoSkipsPeriodicPoll(t *testing.T) {
+	deps, mock, _, ctx, _ := setupPollerTest(t)
+
+	var listed int
+	mock.ListOpenPRsFn = func(_ context.Context, _, _ string) ([]gitea.PR, error) {
+		listed++
+		return nil, nil
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		// Fast tick, long idle interval: idle repo polls only at startup.
+		poller.Run(runCtx, deps, 5*time.Millisecond, time.Hour)
+		close(done)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	<-done
+
+	if listed != 1 {
+		t.Fatalf("idle repo polled forge %d times, want 1 (startup only)", listed)
+	}
+}
+
+// A trigger (webhook) must reconcile an idle repo even before the idle
+// interval elapses; this is how an auto-merge PR gone green gets enqueued.
+func TestRun_TriggerPollsIdleRepo(t *testing.T) {
+	deps, mock, _, ctx, _ := setupPollerTest(t)
+
+	trigger := make(chan struct{}, 1)
+	deps.Trigger = trigger
+
+	var listed int
+	mock.ListOpenPRsFn = func(_ context.Context, _, _ string) ([]gitea.PR, error) {
+		listed++
+		return nil, nil
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		poller.Run(runCtx, deps, time.Hour, time.Hour)
+		close(done)
+	}()
+
+	// Let the startup poll settle, then fire a webhook-style trigger.
+	time.Sleep(20 * time.Millisecond)
+	trigger <- struct{}{}
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	<-done
+
+	// Startup poll + triggered poll.
+	if listed != 2 {
+		t.Fatalf("triggered idle repo polled forge %d times, want 2", listed)
+	}
+}

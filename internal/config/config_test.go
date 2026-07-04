@@ -163,6 +163,37 @@ func TestLoad_GithubPrivateKeyFile(t *testing.T) {
 	}
 }
 
+func TestLoad_IdlePollIntervalDefaultAndOverride(t *testing.T) {
+	setEnv(t, with(map[string]string{
+		"GITEA_MQ_GITEA_URL":      "https://gitea.example.com/",
+		"GITEA_MQ_GITEA_TOKEN":    "tok",
+		"GITEA_MQ_WEBHOOK_SECRET": "sec",
+		"GITEA_MQ_REPOS":          "org/app",
+	}))
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.IdlePollInterval != 15*time.Minute {
+		t.Errorf("IdlePollInterval = %v, want 15m default", cfg.IdlePollInterval)
+	}
+
+	setEnv(t, with(map[string]string{
+		"GITEA_MQ_GITEA_URL":          "https://gitea.example.com/",
+		"GITEA_MQ_GITEA_TOKEN":        "tok",
+		"GITEA_MQ_WEBHOOK_SECRET":     "sec",
+		"GITEA_MQ_REPOS":              "org/app",
+		"GITEA_MQ_IDLE_POLL_INTERVAL": "3m",
+	}))
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.IdlePollInterval != 3*time.Minute {
+		t.Errorf("IdlePollInterval = %v, want 3m", cfg.IdlePollInterval)
+	}
+}
+
 func TestLoad_GithubPollIntervalOverride(t *testing.T) {
 	setEnv(t, with(map[string]string{
 		"GITEA_MQ_GITHUB_APP_ID":         "1",

@@ -67,6 +67,10 @@ func GithubHandler(secret []byte, repos RepoLookup, queueSvc *queue.Service, tri
 				Description: cr.GetOutput().GetSummary(),
 				TargetURL:   cr.GetDetailsURL(),
 			})
+			// Green CI may make an auto-merge PR enqueuable; the poller decides.
+			if rm.TriggerPoll != nil {
+				rm.TriggerPoll()
+			}
 
 		case *gh.StatusEvent:
 			if forge.IsOwnContext(e.GetContext()) {
@@ -81,6 +85,9 @@ func GithubHandler(secret []byte, repos RepoLookup, queueSvc *queue.Service, tri
 				Description: e.GetDescription(),
 				TargetURL:   e.GetTargetURL(),
 			})
+			if rm.TriggerPoll != nil {
+				rm.TriggerPoll()
+			}
 
 		case *gh.InstallationEvent, *gh.InstallationRepositoriesEvent:
 			if triggerDiscovery != nil {

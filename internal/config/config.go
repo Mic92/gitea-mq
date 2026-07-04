@@ -20,6 +20,7 @@ type Config struct {
 	WebhookPath         string
 	ExternalURL         string
 	PollInterval        time.Duration
+	IdlePollInterval    time.Duration
 	CheckTimeout        time.Duration
 	RequiredChecks      []string
 	SkipQueueIfUpToDate bool
@@ -99,6 +100,12 @@ func Load() (*Config, error) {
 	}
 
 	cfg.PollInterval, err = parseDurationOrDefault("GITEA_MQ_POLL_INTERVAL", 30*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	// Idle repos are driven by webhooks; this periodic reconcile is only a
+	// safety net for deliveries missed during downtime, so it can run rarely.
+	cfg.IdlePollInterval, err = parseDurationOrDefault("GITEA_MQ_IDLE_POLL_INTERVAL", 15*time.Minute)
 	if err != nil {
 		return nil, err
 	}

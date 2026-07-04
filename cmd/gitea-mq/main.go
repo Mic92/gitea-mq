@@ -60,6 +60,7 @@ func run() error {
 		"gitea", cfg.Gitea != nil,
 		"github", cfg.Github != nil,
 		"poll_interval", cfg.PollInterval,
+		"idle_poll_interval", cfg.IdlePollInterval,
 		"check_timeout", cfg.CheckTimeout,
 		"batch_max", cfg.BatchMax,
 	)
@@ -119,6 +120,7 @@ func run() error {
 		WebhookSecret:       giteaWebhookSecret,
 		ExternalURL:         cfg.ExternalURL,
 		PollInterval:        cfg.PollInterval,
+		IdlePollInterval:    cfg.IdlePollInterval,
 		CheckTimeout:        cfg.CheckTimeout,
 		FallbackChecks:      cfg.RequiredChecks,
 		SuccessTimeout:      5 * time.Minute,
