@@ -94,6 +94,10 @@ func Handler(secret string, repos RepoLookup, queueSvc *queue.Service) http.Hand
 			Description: event.Description,
 			TargetURL:   event.TargetURL,
 		})
+		// Green CI may make an auto-merge PR enqueuable; the poller decides.
+		if rm.TriggerPoll != nil {
+			rm.TriggerPoll()
+		}
 		w.WriteHeader(http.StatusOK)
 	})
 }

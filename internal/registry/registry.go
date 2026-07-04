@@ -32,6 +32,7 @@ type Deps struct {
 	WebhookSecret       string
 	ExternalURL         string
 	PollInterval        time.Duration
+	IdlePollInterval    time.Duration
 	CheckTimeout        time.Duration
 	FallbackChecks      []string
 	SuccessTimeout      time.Duration
@@ -170,7 +171,7 @@ func (r *RepoRegistry) Add(ctx context.Context, ref forge.RepoRef) error {
 		SkipQueueIfUpToDate: r.deps.SkipQueueIfUpToDate,
 		Batch:               batchEngine,
 	}
-	go poller.Run(pollerCtx, pollerDeps, r.deps.PollInterval)
+	go poller.Run(pollerCtx, pollerDeps, r.deps.PollInterval, r.deps.IdlePollInterval)
 
 	r.mu.Lock()
 	if _, exists := r.repos[key]; !exists {

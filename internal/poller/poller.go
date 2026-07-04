@@ -511,9 +511,21 @@ func tryFastForwardSuccess(ctx context.Context, deps *Deps, result *PollResult, 
 	return true
 }
 
+// hasActiveWork reports whether the repo has live queue state. It only reads
+// the local DB, so idle repos can be skipped without spending forge API quota.
+func hasActiveWork(ctx context.Context, deps *Deps) bool {
+	entries, err := deps.Queue.ListActiveEntries(ctx, deps.RepoID)
+	if err != nil {
+		// Fail open: keep reconciling rather than stall on a transient DB error.
+		slog.Warn("active-work check failed, polling anyway", "owner", deps.Owner, "repo", deps.Repo, "error", err)
+		return true
+	}
+	return len(entries) > 0
+}
+
 // Run starts the polling loop. The first poll happens immediately.
-func Run(ctx context.Context, deps *Deps, interval time.Duration) {
-	slog.Info("poller started", "owner", deps.Owner, "repo", deps.Repo, "interval", interval)
+func Run(ctx context.Context, deps *Deps, interval, idleInterval time.Duration) {
+	slog.Info("poller started", "owner", deps.Owner, "repo", deps.Repo, "interval", interval, "idle_interval", idleInterval)
 
 	// periodic ticks log paused/issue diagnostics; the initial and
 	// webhook-triggered polls stay quiet to avoid log noise on bursts.
@@ -536,8 +548,14 @@ func Run(ctx context.Context, deps *Deps, interval time.Duration) {
 
 	doPoll(false)
 
+	// Idle repos reconcile at idleInterval instead of every tick, keeping
+	// periodic forge traffic proportional to repos with live queue work.
+	if idleInterval < interval {
+		idleInterval = interval
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	lastFull := time.Now()
 
 	for {
 		select {
@@ -546,8 +564,13 @@ func Run(ctx context.Context, deps *Deps, interval time.Duration) {
 			return
 		case <-deps.Trigger:
 			doPoll(false)
+			lastFull = time.Now()
 		case <-ticker.C:
+			if !hasActiveWork(ctx, deps) && time.Since(lastFull) < idleInterval {
+				continue
+			}
 			doPoll(true)
+			lastFull = time.Now()
 		}
 	}
 }
