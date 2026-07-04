@@ -89,15 +89,13 @@ func Handler(secret string, repos RepoLookup, queueSvc *queue.Service) http.Hand
 			return
 		}
 
-		routeCheck(r.Context(), rm, queueSvc, event.SHA, event.Context, forge.Check{
+		check := forge.Check{
 			State:       forge.ParseCheckState(event.State),
 			Description: event.Description,
 			TargetURL:   event.TargetURL,
-		})
-		// Green CI may make an auto-merge PR enqueuable; the poller decides.
-		if rm.TriggerPoll != nil {
-			rm.TriggerPoll()
 		}
+		routeCheck(r.Context(), rm, queueSvc, event.SHA, event.Context, check)
+		maybeTriggerPoll(rm, check.State)
 		w.WriteHeader(http.StatusOK)
 	})
 }
