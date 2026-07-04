@@ -551,6 +551,7 @@ func TestPollOnce_GiteaUnavailable_Pauses(t *testing.T) {
 // reconcile runs until the idle interval elapses.
 func TestRun_IdleRepoSkipsPeriodicPoll(t *testing.T) {
 	deps, mock, _, ctx, _ := setupPollerTest(t)
+	deps.IdleGating = true
 
 	var listed int
 	mock.ListOpenPRsFn = func(_ context.Context, _, _ string) ([]gitea.PR, error) {
@@ -577,10 +578,43 @@ func TestRun_IdleRepoSkipsPeriodicPoll(t *testing.T) {
 	}
 }
 
+// Without idle-gating (Gitea/Forgejo, which have no status webhook) an idle
+// repo must keep polling every tick: the poll is the only way to notice a PR
+// went green. Regression guard for the forgejo integration test.
+func TestRun_NoIdleGatingPollsEveryTick(t *testing.T) {
+	deps, mock, _, ctx, _ := setupPollerTest(t)
+	// deps.IdleGating stays false (the gitea default).
+
+	var listed int
+	mock.ListOpenPRsFn = func(_ context.Context, _, _ string) ([]gitea.PR, error) {
+		listed++
+		return nil, nil
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		poller.Run(runCtx, deps, 5*time.Millisecond, time.Hour)
+		close(done)
+	}()
+
+	time.Sleep(60 * time.Millisecond)
+	cancel()
+	<-done
+
+	// Startup poll plus several periodic polls despite the repo being idle.
+	if listed < 3 {
+		t.Fatalf("idle repo without gating polled %d times, want many", listed)
+	}
+}
+
 // A trigger (webhook) must reconcile an idle repo even before the idle
 // interval elapses; this is how an auto-merge PR gone green gets enqueued.
 func TestRun_TriggerPollsIdleRepo(t *testing.T) {
 	deps, mock, _, ctx, _ := setupPollerTest(t)
+	deps.IdleGating = true
 
 	trigger := make(chan struct{}, 1)
 	deps.Trigger = trigger
