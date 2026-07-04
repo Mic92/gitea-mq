@@ -44,6 +44,10 @@ type Deps struct {
 	// Batch enables bors-style batching when non-nil. The legacy single-PR
 	// path is taken when nil so BATCH_MAX=1 stays byte-for-byte unchanged.
 	Batch *batch.Engine
+	// IdleGating lets the periodic reconcile skip repos with no live queue
+	// work. Safe only on forges that deliver CI status via webhooks (GitHub);
+	// must stay false for Gitea/Forgejo, which have no commit-status webhook.
+	IdleGating bool
 }
 
 type PollResult struct {
@@ -524,8 +528,13 @@ func hasActiveWork(ctx context.Context, deps *Deps) bool {
 }
 
 // Run starts the polling loop. The first poll happens immediately.
+//
+// idleInterval throttles reconciles for repos with no live queue work, but only
+// when deps.IdleGating is set. It must stay off for forges without a
+// commit-status webhook (Gitea, Forgejo): there the poll is the only way to
+// learn a PR went green, so every tick must poll regardless of idle state.
 func Run(ctx context.Context, deps *Deps, interval, idleInterval time.Duration) {
-	slog.Info("poller started", "owner", deps.Owner, "repo", deps.Repo, "interval", interval, "idle_interval", idleInterval)
+	slog.Info("poller started", "owner", deps.Owner, "repo", deps.Repo, "interval", interval, "idle_interval", idleInterval, "idle_gating", deps.IdleGating)
 
 	// periodic ticks log paused/issue diagnostics; the initial and
 	// webhook-triggered polls stay quiet to avoid log noise on bursts.
@@ -566,7 +575,7 @@ func Run(ctx context.Context, deps *Deps, interval, idleInterval time.Duration) 
 			doPoll(false)
 			lastFull = time.Now()
 		case <-ticker.C:
-			if !hasActiveWork(ctx, deps) && time.Since(lastFull) < idleInterval {
+			if deps.IdleGating && !hasActiveWork(ctx, deps) && time.Since(lastFull) < idleInterval {
 				continue
 			}
 			doPoll(true)
