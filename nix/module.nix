@@ -150,6 +150,23 @@ in
       description = "Fallback required check contexts (if branch protection doesn't specify them).";
     };
 
+    batchMax = lib.mkOption {
+      type = lib.types.int;
+      default = 1;
+      description = ''
+        Maximum number of queued PRs tested together as one bors-style batch.
+        1 disables batching (legacy single-PR path); 0 batches everything
+        currently queued. Batched PRs land as merge commits, so leave at 1 for
+        repos that mandate squash/rebase merges.
+      '';
+    };
+
+    bisectMaxSteps = lib.mkOption {
+      type = lib.types.int;
+      default = 0;
+      description = "Cap on CI builds spent bisecting one failing batch. 0 means unlimited.";
+    };
+
     refreshInterval = lib.mkOption {
       type = lib.types.str;
       default = "10s";
@@ -255,6 +272,8 @@ in
         GITEA_MQ_POLL_INTERVAL = cfg.pollInterval;
         GITEA_MQ_CHECK_TIMEOUT = cfg.checkTimeout;
         GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE = lib.boolToString cfg.skipQueueIfUpToDate;
+        GITEA_MQ_BATCH_MAX = toString cfg.batchMax;
+        GITEA_MQ_BISECT_MAX_STEPS = toString cfg.bisectMaxSteps;
         GITEA_MQ_REFRESH_INTERVAL = cfg.refreshInterval;
         GITEA_MQ_DISCOVERY_INTERVAL = cfg.discoveryInterval;
         GITEA_MQ_LOG_LEVEL = cfg.logLevel;
