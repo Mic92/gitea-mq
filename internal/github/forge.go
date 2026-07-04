@@ -209,6 +209,77 @@ func (f *githubForge) CreateMergeBranch(ctx context.Context, owner, name, base, 
 	return commit.GetSHA(), false, nil
 }
 
+func (f *githubForge) MergeInto(ctx context.Context, owner, name, branch, headSHA string) (string, bool, error) {
+	c, err := f.app.ClientForRepo(owner, name)
+	if err != nil {
+		return "", false, err
+	}
+	commit, resp, err := c.Repositories.Merge(ctx, owner, name, &gh.RepositoryMergeRequest{
+		Base: gh.Ptr(branch),
+		Head: gh.Ptr(headSHA),
+	})
+	if err != nil {
+		if resp != nil && resp.StatusCode == http.StatusConflict {
+			return "", true, nil
+		}
+		return "", false, fmt.Errorf("merge %s into %s: %w", headSHA, branch, err)
+	}
+	if commit.GetSHA() == "" {
+		// 204: head already in branch — ask the ref for the current tip.
+		ref, _, err := c.Git.GetRef(ctx, owner, name, "heads/"+branch)
+		if err != nil {
+			return "", false, fmt.Errorf("resolve %s after no-op merge: %w", branch, err)
+		}
+		return ref.GetObject().GetSHA(), false, nil
+	}
+	return commit.GetSHA(), false, nil
+}
+
+func (f *githubForge) FastForward(ctx context.Context, owner, name, branch, sha string) error {
+	c, err := f.app.ClientForRepo(owner, name)
+	if err != nil {
+		return err
+	}
+	_, resp, err := c.Git.UpdateRef(ctx, owner, name, "heads/"+branch,
+		gh.UpdateRef{SHA: sha, Force: gh.Ptr(false)})
+	if err == nil {
+		return nil
+	}
+	var ghErr *gh.ErrorResponse
+	if errors.As(err, &ghErr) {
+		msg := strings.ToLower(ghErr.Message)
+		if strings.Contains(msg, "fast forward") || strings.Contains(msg, "fast-forward") {
+			return forge.ErrNotFastForward
+		}
+		// Ruleset / branch-protection rejections come back as 422 or 403
+		// with assorted phrasings.
+		if resp != nil && (resp.StatusCode == http.StatusForbidden ||
+			(resp.StatusCode == http.StatusUnprocessableEntity &&
+				(strings.Contains(msg, "protected branch") || strings.Contains(msg, "ruleset")))) {
+			return &forge.PushDeniedError{Branch: branch, Message: ghErr.Message}
+		}
+	}
+	return fmt.Errorf("fast-forward %s to %s: %w", branch, sha, err)
+}
+
+func (f *githubForge) ClosePR(ctx context.Context, owner, name string, number int64) error {
+	c, err := f.app.ClientForRepo(owner, name)
+	if err != nil {
+		return err
+	}
+	_, _, err = c.PullRequests.Edit(ctx, owner, name, int(number), &gh.PullRequest{State: gh.Ptr("closed")})
+	if err != nil {
+		var ghErr *gh.ErrorResponse
+		if errors.As(err, &ghErr) && ghErr.Response != nil &&
+			ghErr.Response.StatusCode == http.StatusUnprocessableEntity {
+			// Already closed/merged.
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
 func (f *githubForge) IsUpToDate(ctx context.Context, owner, name, base, headSHA string) (bool, error) {
 	c, err := f.app.ClientForRepo(owner, name)
 	if err != nil {

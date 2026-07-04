@@ -119,18 +119,22 @@ func CleanupMergeBranch(ctx context.Context, f forge.Forge, owner, repo string, 
 }
 
 // CleanupStaleBranches deletes orphaned gitea-mq/* branches not referenced by
-// any active queue entry. Called on startup to clean up after crashes.
-func CleanupStaleBranches(ctx context.Context, f forge.Forge, svc *queue.Service, owner, repo string, repoID int64) error {
+// any active queue entry or live batch. Called on startup to clean up after
+// crashes. spare lists additional branch names to keep (live batch branches).
+func CleanupStaleBranches(ctx context.Context, f forge.Forge, svc *queue.Service, owner, repo string, repoID int64, spare []string) error {
 	activeEntries, err := svc.ListActiveEntries(ctx, repoID)
 	if err != nil {
 		return fmt.Errorf("list active entries: %w", err)
 	}
 
-	activeBranches := make(map[string]bool, len(activeEntries))
+	activeBranches := make(map[string]bool, len(activeEntries)+len(spare))
 	for _, e := range activeEntries {
 		if e.MergeBranchName.Valid && e.MergeBranchName.String != "" {
 			activeBranches[e.MergeBranchName.String] = true
 		}
+	}
+	for _, b := range spare {
+		activeBranches[b] = true
 	}
 
 	branches, err := f.ListBranches(ctx, owner, repo)

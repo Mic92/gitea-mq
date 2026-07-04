@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Mic92/gitea-mq/internal/batch"
 	"github.com/Mic92/gitea-mq/internal/forge"
 	"github.com/Mic92/gitea-mq/internal/merge"
 	"github.com/Mic92/gitea-mq/internal/monitor"
@@ -35,6 +36,8 @@ type Deps struct {
 	FallbackChecks      []string
 	SuccessTimeout      time.Duration
 	SkipQueueIfUpToDate bool
+	BatchMax            int
+	BisectMaxSteps      int
 }
 
 // RepoRegistry manages the set of active repos. Thread-safe for concurrent
@@ -88,8 +91,45 @@ func (r *RepoRegistry) Add(ctx context.Context, ref forge.RepoRef) error {
 		return err
 	}
 
-	if err := merge.CleanupStaleBranches(ctx, f, r.deps.Queue, ref.Owner, ref.Name, repo.ID); err != nil {
+	pollerCtx, cancel := context.WithCancel(r.parentCtx)
+	// Buffer one so a webhook never blocks; coalescing is fine because the
+	// poller reconciles full state anyway.
+	trigger := make(chan struct{}, 1)
+	triggerPoll := func() {
+		select {
+		case trigger <- struct{}{}:
+		default:
+		}
+	}
+
+	var batchEngine *batch.Engine
+	if r.deps.BatchMax != 1 {
+		batchEngine = &batch.Engine{
+			Forge:          f,
+			Queue:          r.deps.Queue,
+			Owner:          ref.Owner,
+			Repo:           ref.Name,
+			RepoID:         repo.ID,
+			ExternalURL:    r.deps.ExternalURL,
+			BatchMax:       r.deps.BatchMax,
+			BisectMaxSteps: r.deps.BisectMaxSteps,
+			CheckTimeout:   r.deps.CheckTimeout,
+			FallbackChecks: r.deps.FallbackChecks,
+			Advance:        triggerPoll,
+		}
+	}
+
+	var spare []string
+	if batchEngine != nil {
+		spare, _ = batchEngine.LiveBranchNames(ctx)
+	}
+	if err := merge.CleanupStaleBranches(ctx, f, r.deps.Queue, ref.Owner, ref.Name, repo.ID, spare); err != nil {
 		slog.Warn("stale branch cleanup failed", "repo", key, "error", err)
+	}
+	if batchEngine != nil {
+		if err := batchEngine.ReconcileLive(ctx); err != nil {
+			slog.Warn("batch reconcile failed", "repo", key, "error", err)
+		}
 	}
 
 	monDeps := &monitor.Deps{
@@ -102,23 +142,16 @@ func (r *RepoRegistry) Add(ctx context.Context, ref forge.RepoRef) error {
 		CheckTimeout:   r.deps.CheckTimeout,
 		FallbackChecks: r.deps.FallbackChecks,
 	}
-
-	pollerCtx, cancel := context.WithCancel(r.parentCtx)
-	// Buffer one so a webhook never blocks; coalescing is fine because the
-	// poller reconciles full state anyway.
-	trigger := make(chan struct{}, 1)
+	if batchEngine != nil {
+		monDeps.Batch = batchEngine
+	}
 
 	managed := &ManagedRepo{
 		Ref:    ref,
 		RepoID: repo.ID,
 		Monitor: &webhook.RepoMonitor{
-			Deps: monDeps,
-			TriggerPoll: func() {
-				select {
-				case trigger <- struct{}{}:
-				default:
-				}
-			},
+			Deps:        monDeps,
+			TriggerPoll: triggerPoll,
 		},
 		cancel: cancel,
 	}
@@ -135,6 +168,7 @@ func (r *RepoRegistry) Add(ctx context.Context, ref forge.RepoRef) error {
 		SuccessTimeout:      r.deps.SuccessTimeout,
 		CheckTimeout:        r.deps.CheckTimeout,
 		SkipQueueIfUpToDate: r.deps.SkipQueueIfUpToDate,
+		Batch:               batchEngine,
 	}
 	go poller.Run(pollerCtx, pollerDeps, r.deps.PollInterval)
 
@@ -186,6 +220,9 @@ func (r *RepoRegistry) Remove(ref forge.RepoRef) {
 		}
 	}
 
+	if err := r.deps.Queue.CancelLiveBatches(ctx, managed.RepoID); err != nil {
+		slog.Warn("failed to cancel batches on removal", "repo", key, "error", err)
+	}
 	if err := r.deps.Queue.DequeueAll(ctx, managed.RepoID); err != nil {
 		slog.Warn("failed to dequeue entries on removal", "repo", key, "error", err)
 	}

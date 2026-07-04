@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/Mic92/gitea-mq/internal/batch"
 	"github.com/Mic92/gitea-mq/internal/forge"
 	"github.com/Mic92/gitea-mq/internal/merge"
 	"github.com/Mic92/gitea-mq/internal/monitor"
@@ -40,6 +41,9 @@ type Deps struct {
 	// build (e.g. a restart) leaves the head-of-queue stuck forever since
 	// the timeout in monitor.ProcessCheckStatus only runs on webhooks.
 	CheckTimeout time.Duration
+	// Batch enables bors-style batching when non-nil. The legacy single-PR
+	// path is taken when nil so BATCH_MAX=1 stays byte-for-byte unchanged.
+	Batch *batch.Engine
 }
 
 type PollResult struct {
@@ -70,7 +74,9 @@ func removePR(ctx context.Context, deps *Deps, result *PollResult, entry *pg.Que
 	if opts.comment != "" {
 		_ = deps.Forge.Comment(ctx, deps.Owner, deps.Repo, entry.PrNumber, opts.comment)
 	}
-	if dqResult.WasHead {
+	// The batch engine owns gitea-mq/batch/<id>; deleting it here can race a
+	// concurrent Build and cause MergeInto to fail with wrong attribution.
+	if dqResult.WasHead && !entry.ActiveBatchID.Valid {
 		merge.CleanupMergeBranch(ctx, deps.Forge, deps.Owner, deps.Repo, entry)
 	}
 
@@ -137,7 +143,7 @@ func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 
 // monitorDeps adapts the poller's Deps into the monitor's Deps.
 func monitorDeps(deps *Deps) *monitor.Deps {
-	return &monitor.Deps{
+	m := &monitor.Deps{
 		Forge:          deps.Forge,
 		Queue:          deps.Queue,
 		Owner:          deps.Owner,
@@ -147,6 +153,10 @@ func monitorDeps(deps *Deps) *monitor.Deps {
 		CheckTimeout:   deps.CheckTimeout,
 		FallbackChecks: deps.FallbackChecks,
 	}
+	if deps.Batch.Enabled() {
+		m.Batch = deps.Batch
+	}
+	return m
 }
 
 // pollMergeBranchChecks feeds each testing entry's merge-branch commit
@@ -160,8 +170,56 @@ func pollMergeBranchChecks(ctx context.Context, deps *Deps, result *PollResult) 
 	}
 
 	mDeps := monitorDeps(deps)
+
+	// Batches are driven from the row's BranchSha so we never feed checks for
+	// a stale entry SHA back into the engine after a rebuild. This loop is
+	// also the timeout safety net when CI never reports.
+	if deps.Batch.Enabled() {
+		bs, err := deps.Queue.ListLiveBatches(ctx, deps.RepoID)
+		if err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("list live batches: %w", err))
+		}
+		for i := range bs {
+			b := &bs[i]
+			if b.State != pg.BatchStateTesting || len(b.CurrentIds) == 0 {
+				continue
+			}
+			if batch.TimedOut(b, deps.CheckTimeout) {
+				if err := deps.Batch.HandleTimeout(ctx, b.TargetBranch, b.ID); err != nil {
+					result.Errors = append(result.Errors, fmt.Errorf("batch #%d timeout: %w", b.ID, err))
+				}
+				continue
+			}
+			rep, err := deps.Queue.GetEntriesByIDs(ctx, b.CurrentIds[:1])
+			if err != nil || len(rep) == 0 {
+				continue
+			}
+			// rep may have been re-stamped by a concurrent rebuild; the SHA we
+			// fetch checks for is the one HandleCheck must guard on.
+			rep[0].MergeBranchSha = b.BranchSha
+			checks, err := deps.Forge.GetCheckStates(ctx, deps.Owner, deps.Repo, b.BranchSha.String)
+			if err != nil {
+				result.Errors = append(result.Errors, fmt.Errorf("get batch #%d checks: %w", b.ID, err))
+				continue
+			}
+			for ctxName, c := range checks {
+				if forge.IsOwnContext(ctxName) {
+					continue
+				}
+				if err := monitor.ApplyCheck(ctx, mDeps, &rep[0], ctxName, c); err != nil {
+					result.Errors = append(result.Errors, fmt.Errorf("process batch #%d check: %w", b.ID, err))
+				}
+			}
+		}
+	}
+
 	for i := range activeEntries {
 		entry := &activeEntries[i]
+		// Batch members are handled by the per-batch loop above; the
+		// snapshot's merge_branch_sha may be stale here.
+		if entry.ActiveBatchID.Valid {
+			continue
+		}
 		if entry.State != pg.EntryStateTesting || !entry.MergeBranchSha.Valid {
 			continue
 		}
@@ -306,10 +364,16 @@ func reconcileEntries(ctx context.Context, deps *Deps, result *PollResult, openP
 			matched = true
 			break
 		}
-		if !matched {
-			handleSuccessTimeout(ctx, deps, result, &entry)
-			handleTestingTimeout(ctx, deps, result, &entry)
+		if matched {
+			if entry.ActiveBatchID.Valid && deps.Batch != nil {
+				if err := deps.Batch.OnMemberRemoved(ctx, entry.TargetBranch, entry.ActiveBatchID.Int64, entry.ID); err != nil {
+					result.Errors = append(result.Errors, fmt.Errorf("batch member removed PR #%d: %w", entry.PrNumber, err))
+				}
+			}
+			continue
 		}
+		handleSuccessTimeout(ctx, deps, result, &entry)
+		handleTestingTimeout(ctx, deps, result, &entry)
 	}
 }
 
@@ -343,6 +407,11 @@ func handleSuccessTimeout(ctx context.Context, deps *Deps, result *PollResult, e
 // timeout in monitor only fires when a check status arrives; if the CI never
 // reports (e.g. it lost the build after a restart), the queue stalls.
 func handleTestingTimeout(ctx context.Context, deps *Deps, result *PollResult, entry *pg.QueueEntry) {
+	// Batch members time out via the batch's own clock (per-rebuild), not the
+	// per-entry clock which is never reset across bisection.
+	if entry.ActiveBatchID.Valid {
+		return
+	}
 	if entry.State != pg.EntryStateTesting || deps.CheckTimeout <= 0 ||
 		!entry.TestingStartedAt.Valid || time.Since(entry.TestingStartedAt.Time) <= deps.CheckTimeout {
 		return
@@ -391,6 +460,13 @@ func startQueuedHeads(ctx context.Context, deps *Deps, result *PollResult) {
 		}
 
 		if deps.SkipQueueIfUpToDate && tryFastForwardSuccess(ctx, deps, result, head) {
+			continue
+		}
+
+		if deps.Batch.Enabled() {
+			if _, err := deps.Batch.FormAndBuild(ctx, entry.TargetBranch); err != nil {
+				result.Errors = append(result.Errors, fmt.Errorf("form batch for %s: %w", entry.TargetBranch, err))
+			}
 			continue
 		}
 

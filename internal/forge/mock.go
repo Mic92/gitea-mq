@@ -34,6 +34,9 @@ type MockForge struct {
 	CancelAutoMergeFn   func(ctx context.Context, owner, name string, number int64) error
 	CommentFn           func(ctx context.Context, owner, name string, number int64, body string) error
 	EnsureRepoSetupFn   func(ctx context.Context, owner, name string, cfg SetupConfig) error
+	MergeIntoFn         func(ctx context.Context, owner, name, branch, headSHA string) (string, bool, error)
+	FastForwardFn       func(ctx context.Context, owner, name, branch, sha string) error
+	ClosePRFn           func(ctx context.Context, owner, name string, number int64) error
 }
 
 var _ Forge = (*MockForge)(nil)
@@ -180,6 +183,30 @@ func (m *MockForge) EnsureRepoSetup(ctx context.Context, owner, name string, cfg
 	m.record("EnsureRepoSetup", owner, name, cfg)
 	if m.EnsureRepoSetupFn != nil {
 		return m.EnsureRepoSetupFn(ctx, owner, name, cfg)
+	}
+	return nil
+}
+
+func (m *MockForge) MergeInto(ctx context.Context, owner, name, branch, headSHA string) (string, bool, error) {
+	m.record("MergeInto", owner, name, branch, headSHA)
+	if m.MergeIntoFn != nil {
+		return m.MergeIntoFn(ctx, owner, name, branch, headSHA)
+	}
+	return "", false, nil
+}
+
+func (m *MockForge) FastForward(ctx context.Context, owner, name, branch, sha string) error {
+	m.record("FastForward", owner, name, branch, sha)
+	if m.FastForwardFn != nil {
+		return m.FastForwardFn(ctx, owner, name, branch, sha)
+	}
+	return nil
+}
+
+func (m *MockForge) ClosePR(ctx context.Context, owner, name string, number int64) error {
+	m.record("ClosePR", owner, name, number)
+	if m.ClosePRFn != nil {
+		return m.ClosePRFn(ctx, owner, name, number)
 	}
 	return nil
 }

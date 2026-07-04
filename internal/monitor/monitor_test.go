@@ -207,6 +207,29 @@ func TestProcessCheckStatus_RetrySuccess(t *testing.T) {
 	}
 }
 
+// With no required checks configured, a lone failure must dequeue instead of
+// waiting until CheckTimeout. A success anywhere still wins so an optional
+// failing check does not block a green required-but-undeclared one.
+func TestEvaluateChecks_NoRequired_FailureBeatsWaiting(t *testing.T) {
+	r, failed, _ := monitor.EvaluateChecks(
+		[]pg.CheckStatus{{Context: "ci", State: pg.CheckStateFailure, TargetUrl: "u"}},
+		nil,
+	)
+	if r != monitor.CheckFailure || failed != "ci" {
+		t.Fatalf("got %v %q", r, failed)
+	}
+	r, _, _ = monitor.EvaluateChecks(
+		[]pg.CheckStatus{
+			{Context: "optional", State: pg.CheckStateFailure},
+			{Context: "ci", State: pg.CheckStateSuccess},
+		},
+		nil,
+	)
+	if r != monitor.CheckSuccess {
+		t.Fatalf("success should win over failure when nothing is required, got %v", r)
+	}
+}
+
 // A failed required check dequeues even while others are still pending.
 func TestEvaluateChecks_FailureWinsOverPending(t *testing.T) {
 	result, failed, url := monitor.EvaluateChecks(

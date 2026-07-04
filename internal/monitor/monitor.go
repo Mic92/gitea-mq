@@ -23,6 +23,19 @@ type Deps struct {
 	ExternalURL    string
 	CheckTimeout   time.Duration
 	FallbackChecks []string // from GITEA_MQ_REQUIRED_CHECKS
+
+	// Batch, when non-nil, intercepts check results for entries that belong
+	// to a live batch. The single-PR success/failure handlers are skipped.
+	Batch BatchHandler
+}
+
+// BatchHandler dispatches a raw check event to the batch engine. Defined
+// here so monitor does not import internal/batch (the engine imports monitor
+// for ResolveRequiredChecks/EvaluateChecks). The engine persists the check
+// itself, after its stale-SHA guard, so a late event cannot pollute the
+// ledger of a newer build.
+type BatchHandler interface {
+	HandleCheck(ctx context.Context, entry *pg.QueueEntry, checkCtx string, state pg.CheckState, targetURL string) error
 }
 
 type CheckResult int
@@ -55,13 +68,22 @@ func ResolveRequiredChecks(ctx context.Context, f forge.Forge, owner, repo, targ
 // failed, CheckWaiting otherwise. The second string is the failed check name,
 // and the third is its target URL (both empty when result is not CheckFailure).
 //
-// If requiredChecks is empty, any single success status is sufficient.
+// If requiredChecks is empty, any single success status is sufficient; if none
+// has succeeded but at least one has failed, that failure is reported so the
+// queue does not sit until timeout when CI clearly went red.
 func EvaluateChecks(statuses []pg.CheckStatus, requiredChecks []string) (CheckResult, string, string) {
 	if len(requiredChecks) == 0 {
-		for _, s := range statuses {
+		var failed *pg.CheckStatus
+		for i, s := range statuses {
 			if s.State == pg.CheckStateSuccess {
 				return CheckSuccess, "", ""
 			}
+			if failed == nil && (s.State == pg.CheckStateFailure || s.State == pg.CheckStateError) {
+				failed = &statuses[i]
+			}
+		}
+		if failed != nil {
+			return CheckFailure, failed.Context, failed.TargetUrl
 		}
 		return CheckWaiting, "", ""
 	}
@@ -209,6 +231,10 @@ func ApplyCheck(ctx context.Context, deps *Deps, entry *pg.QueueEntry, checkCtx 
 // a commit status event for a merge branch. It records the status, evaluates
 // checks, and triggers success/failure handling as appropriate.
 func ProcessCheckStatus(ctx context.Context, deps *Deps, entry *pg.QueueEntry, checkContext string, checkState pg.CheckState, targetURL string) error {
+	if deps.Batch != nil && entry.ActiveBatchID.Valid {
+		return deps.Batch.HandleCheck(ctx, entry, checkContext, checkState, targetURL)
+	}
+
 	if err := deps.Queue.SaveCheckStatus(ctx, entry.ID, checkContext, checkState, targetURL); err != nil {
 		return fmt.Errorf("save check status for PR #%d: %w", entry.PrNumber, err)
 	}
