@@ -231,11 +231,21 @@ func overviewHandler(deps *Deps) http.HandlerFunc {
 			data.Repos = append(data.Repos, overview)
 		}
 
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := templates.ExecuteTemplate(w, "overview.html", data); err != nil {
-			slog.Error("failed to render overview", "error", err)
-			http.Error(w, "internal server error", http.StatusInternalServerError)
-		}
+		renderHTML(w, "overview.html", data)
+	}
+}
+
+// serverError logs err with the given message/args and replies 500.
+func serverError(w http.ResponseWriter, msg string, err error, args ...any) {
+	slog.Error(msg, append(args, "error", err)...)
+	http.Error(w, "internal server error", http.StatusInternalServerError)
+}
+
+// renderHTML executes the named template with data, replying 500 on failure.
+func renderHTML(w http.ResponseWriter, name string, data any) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := templates.ExecuteTemplate(w, name, data); err != nil {
+		serverError(w, "failed to render "+name, err)
 	}
 }
 
@@ -290,15 +300,13 @@ func serveRepoDetail(w http.ResponseWriter, r *http.Request, deps *Deps, ref for
 	ctx := r.Context()
 	repo, err := deps.Queue.GetOrCreateRepo(ctx, string(ref.Forge), owner, name)
 	if err != nil {
-		slog.Error("failed to get repo", "owner", owner, "name", name, "error", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		serverError(w, "failed to get repo", err, "owner", owner, "name", name)
 		return
 	}
 
 	entries, err := deps.Queue.ListActiveEntries(ctx, repo.ID)
 	if err != nil {
-		slog.Error("failed to list active entries", "owner", owner, "name", name, "error", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		serverError(w, "failed to list active entries", err, "owner", owner, "name", name)
 		return
 	}
 
@@ -352,11 +360,7 @@ func serveRepoDetail(w http.ResponseWriter, r *http.Request, deps *Deps, ref for
 		data.Entries = append(data.Entries, de)
 	}
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := templates.ExecuteTemplate(w, "repo.html", data); err != nil {
-		slog.Error("failed to render repo detail", "error", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-	}
+	renderHTML(w, "repo.html", data)
 }
 
 // servePRDetail renders the PR detail page.
@@ -371,15 +375,13 @@ func servePRDetail(w http.ResponseWriter, r *http.Request, deps *Deps, ref forge
 	ctx := r.Context()
 	repo, err := deps.Queue.GetOrCreateRepo(ctx, string(ref.Forge), owner, name)
 	if err != nil {
-		slog.Error("failed to get repo", "owner", owner, "name", name, "error", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		serverError(w, "failed to get repo", err, "owner", owner, "name", name)
 		return
 	}
 
 	entry, err := deps.Queue.GetEntry(ctx, repo.ID, prNumber)
 	if err != nil {
-		slog.Error("failed to get entry", "pr", prNumber, "error", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		serverError(w, "failed to get entry", err, "pr", prNumber)
 		return
 	}
 
@@ -396,11 +398,7 @@ func servePRDetail(w http.ResponseWriter, r *http.Request, deps *Deps, ref forge
 	if entry == nil {
 		// PR not in queue — render friendly page.
 		data.InQueue = false
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := templates.ExecuteTemplate(w, "pr.html", data); err != nil {
-			slog.Error("failed to render PR detail", "error", err)
-			http.Error(w, "internal server error", http.StatusInternalServerError)
-		}
+		renderHTML(w, "pr.html", data)
 		return
 	}
 
@@ -479,11 +477,7 @@ func servePRDetail(w http.ResponseWriter, r *http.Request, deps *Deps, ref forge
 		data.CheckStatuses = mergeCheckStatuses(recorded, required)
 	}
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := templates.ExecuteTemplate(w, "pr.html", data); err != nil {
-		slog.Error("failed to render PR detail", "error", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-	}
+	renderHTML(w, "pr.html", data)
 }
 
 // mergeCheckStatuses combines recorded check statuses with the required checks
