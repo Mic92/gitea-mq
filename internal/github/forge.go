@@ -192,6 +192,21 @@ func (f *githubForge) CreateMergeBranch(ctx context.Context, owner, name, base, 
 		}
 	}
 
+	sha, conflict, err := mergeHead(ctx, c, owner, name, branch, headSHA)
+	if err != nil || conflict {
+		return "", conflict, err
+	}
+	// 204: head already contained in base; the branch tip is the result.
+	if sha == "" {
+		return baseSHA, false, nil
+	}
+	return sha, false, nil
+}
+
+// mergeHead merges headSHA into branch via the repo merge API. It returns the
+// merge commit SHA, or an empty SHA when GitHub answers 204 (head already
+// contained in branch), or conflict=true on a 409.
+func mergeHead(ctx context.Context, c *gh.Client, owner, name, branch, headSHA string) (string, bool, error) {
 	commit, resp, err := c.Repositories.Merge(ctx, owner, name, &gh.RepositoryMergeRequest{
 		Base: gh.Ptr(branch),
 		Head: gh.Ptr(headSHA),
@@ -201,10 +216,6 @@ func (f *githubForge) CreateMergeBranch(ctx context.Context, owner, name, base, 
 			return "", true, nil
 		}
 		return "", false, fmt.Errorf("merge %s into %s: %w", headSHA, branch, err)
-	}
-	// 204: head already contained in base; the branch tip is the result.
-	if commit.GetSHA() == "" {
-		return baseSHA, false, nil
 	}
 	return commit.GetSHA(), false, nil
 }
@@ -214,17 +225,11 @@ func (f *githubForge) MergeInto(ctx context.Context, owner, name, branch, headSH
 	if err != nil {
 		return "", false, err
 	}
-	commit, resp, err := c.Repositories.Merge(ctx, owner, name, &gh.RepositoryMergeRequest{
-		Base: gh.Ptr(branch),
-		Head: gh.Ptr(headSHA),
-	})
-	if err != nil {
-		if resp != nil && resp.StatusCode == http.StatusConflict {
-			return "", true, nil
-		}
-		return "", false, fmt.Errorf("merge %s into %s: %w", headSHA, branch, err)
+	sha, conflict, err := mergeHead(ctx, c, owner, name, branch, headSHA)
+	if err != nil || conflict {
+		return "", conflict, err
 	}
-	if commit.GetSHA() == "" {
+	if sha == "" {
 		// 204: head already in branch — ask the ref for the current tip.
 		ref, _, err := c.Git.GetRef(ctx, owner, name, "heads/"+branch)
 		if err != nil {
@@ -232,7 +237,7 @@ func (f *githubForge) MergeInto(ctx context.Context, owner, name, branch, headSH
 		}
 		return ref.GetObject().GetSHA(), false, nil
 	}
-	return commit.GetSHA(), false, nil
+	return sha, false, nil
 }
 
 func (f *githubForge) FastForward(ctx context.Context, owner, name, branch, sha string) error {
