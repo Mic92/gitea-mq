@@ -143,12 +143,13 @@ pkgs.testers.runNixOSTest {
     token = json.loads(token_json)["sha1"]
 
     # Create a repo and branch protection before starting gitea-mq,
-    # so auto-setup finds them on first run.
+    # so auto-setup finds them on first run. The repo is private so the merge
+    # queue's git operations (fetch, lazy blob fetch, push) must authenticate.
     machine.succeed(
         f"curl -sf -X POST http://localhost:3000/api/v1/user/repos "
         f"-H 'Authorization: token {token}' "
         f"-H 'Content-Type: application/json' "
-        f"-d '{{\"name\": \"testrepo\", \"auto_init\": true, \"default_branch\": \"main\"}}'"
+        f"-d '{{\"name\": \"testrepo\", \"auto_init\": true, \"default_branch\": \"main\", \"private\": true}}'"
     )
 
     # Create a file with many lines up front (before branch protection blocks

@@ -11,7 +11,9 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"time"
 )
 
 // HTTPClient implements Client using Gitea's REST API over HTTP.
@@ -19,15 +21,35 @@ type HTTPClient struct {
 	baseURL    string
 	token      string
 	httpClient *http.Client
+	gitCache   *gitCache
 }
 
 // NewHTTPClient creates a new HTTP-based Gitea API client.
 func NewHTTPClient(baseURL, token string) *HTTPClient {
-	return &HTTPClient{
+	c := &HTTPClient{
 		baseURL:    strings.TrimRight(baseURL, "/"),
 		token:      token,
 		httpClient: &http.Client{},
 	}
+	// Git auth via extraHeader; see gitcache.go for why.
+	var authFlags []string
+	if token != "" {
+		authFlags = []string{"-c", "http." + c.baseURL + "/.extraheader=Authorization: token " + token}
+	}
+	c.gitCache = newGitCache(filepath.Join(os.TempDir(), "gitea-mq-cache"), authFlags, c.redact)
+	return c
+}
+
+// SetGitCacheDir points the persistent git cache at dir. Call before any
+// merge/push operation; the default is a directory under os.TempDir().
+func (c *HTTPClient) SetGitCacheDir(dir string) {
+	c.gitCache.baseDir = dir
+}
+
+// CleanupGitCache removes cached repositories not used within maxAge, e.g.
+// repositories removed from the configuration. Call at startup.
+func (c *HTTPClient) CleanupGitCache(maxAge time.Duration) {
+	c.gitCache.cleanupStale(maxAge)
 }
 
 // do executes an HTTP request with authentication and returns the response.
@@ -389,75 +411,65 @@ func (c *HTTPClient) redact(s string) string {
 	return strings.ReplaceAll(s, c.token, "***")
 }
 
-// MergeBranches creates a merge of head into base and pushes it as branch
-// gitea-mq/<head-short>. It shells out to git because Gitea has no API to merge
-// two arbitrary refs into a new branch.
-//
-// Steps:
-//  1. Shallow-clone the repo (base branch only)
-//  2. Fetch the head SHA
-//  3. git merge --no-ff the head SHA into base
-//  4. Push the result as gitea-mq/<head-short>
-//
-// On conflict git merge exits non-zero and we return a MergeConflictError.
+// MergeBranches creates a merge commit of head into base and pushes it as
+// branchName, entirely inside the persistent git cache (Gitea has no API to
+// merge two arbitrary refs into a new branch). Conflicts are returned as
+// MergeConflictError.
 func (c *HTTPClient) MergeBranches(ctx context.Context, owner, repo, base, head, branchName string) (*MergeResult, error) {
-	gitRun, cleanup, err := gitTempRepo(ctx, "gitea-mq-merge-*",
-		"GIT_AUTHOR_NAME=gitea-mq", "GIT_AUTHOR_EMAIL=gitea-mq@localhost",
-		"GIT_COMMITTER_NAME=gitea-mq", "GIT_COMMITTER_EMAIL=gitea-mq@localhost")
+	refs := []string{"+refs/heads/" + base + ":refs/heads/" + base, head}
+	var result *MergeResult
+	err := c.gitCache.withRepo(ctx, c.cloneURL(owner, repo), owner, repo, refs, func(run gitRunFunc) error {
+		sha, conflictOut, err := mergeCommit(run, "refs/heads/"+base, head, "mq: merge "+head+" into "+base)
+		if err != nil {
+			return fmt.Errorf("merge: %w", err)
+		}
+		if sha == "" {
+			return &MergeConflictError{Base: base, Head: head, Message: conflictOut}
+		}
+		if _, err := run("push", "--quiet", "origin", sha+":refs/heads/"+branchName); err != nil {
+			return fmt.Errorf("push: %w", err)
+		}
+		result = &MergeResult{SHA: sha}
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer cleanup()
+	slog.Debug("created merge branch", "branch", branchName, "sha", shortSHA(result.SHA))
+	return result, nil
+}
 
-	// Wrap the runner so failures carry the redacted command line and output.
-	run := func(args ...string) ([]byte, error) {
-		out, err := gitRun(args...)
-		if err != nil {
-			return out, fmt.Errorf("git %s: %w\n%s", c.redact(strings.Join(args, " ")), err, c.redact(string(out)))
-		}
-		return out, nil
-	}
+// gitRunFunc executes one git command inside the cached repository.
+type gitRunFunc = func(args ...string) (string, error)
 
-	authedURL := c.authedCloneURL(owner, repo)
-
-	// Full clone of the base branch. We need enough history for git to
-	// find the common ancestor with the PR head, so shallow clones don't
-	// work reliably here.
-	if _, err := run("clone", "--single-branch", "--branch", base, authedURL, "."); err != nil {
-		return nil, fmt.Errorf("clone: %w", err)
-	}
-
-	// Fetch the PR head SHA so we can merge it.
-	if _, err := run("fetch", "origin", head); err != nil {
-		return nil, fmt.Errorf("fetch head: %w", err)
-	}
-
-	// Merge head into base. --no-ff ensures a merge commit even if fast-forward
-	// is possible, so CI always sees the combined result.
-	mergeOut, mergeErr := run("merge", "--no-ff", "-m", "mq: merge "+head+" into "+base, "FETCH_HEAD")
-	if mergeErr != nil {
-		// Check if this is a merge conflict.
-		if strings.Contains(string(mergeOut), "CONFLICT") || strings.Contains(string(mergeOut), "Automatic merge failed") {
-			return nil, &MergeConflictError{Base: base, Head: head, Message: string(mergeOut)}
-		}
-		return nil, fmt.Errorf("merge: %w", mergeErr)
-	}
-
-	// Push as the requested branch name.
-	if _, err := run("push", "origin", "HEAD:refs/heads/"+branchName); err != nil {
-		return nil, fmt.Errorf("push: %w", err)
-	}
-
-	// Read the merge commit SHA.
-	shaOut, err := run("rev-parse", "HEAD")
+// mergeCommit merges head into base in-memory (merge-tree + commit-tree) and
+// returns the merge commit SHA; a conflict returns an empty SHA plus
+// merge-tree's report. A merge commit is created even when fast-forward would
+// be possible, so CI always sees the combined result (like merge --no-ff).
+func mergeCommit(run gitRunFunc, base, head, msg string) (sha, conflictOut string, err error) {
+	out, err := run("merge-tree", "--write-tree", base, head)
 	if err != nil {
-		return nil, fmt.Errorf("rev-parse: %w", err)
+		// merge-tree exits 1 on content conflicts and >1 on real errors.
+		if gitExitCode(err) == 1 {
+			return "", out, nil
+		}
+		return "", "", err
 	}
-	sha := strings.TrimSpace(string(shaOut))
+	tree := strings.TrimSpace(out)
+	commit, err := run("commit-tree", tree, "-p", base, "-p", head, "-m", msg)
+	if err != nil {
+		return "", "", err
+	}
+	return strings.TrimSpace(commit), "", nil
+}
 
-	slog.Debug("created merge branch", "branch", branchName, "sha", shortSHA(sha))
-
-	return &MergeResult{SHA: sha}, nil
+// gitExitCode extracts the git process exit code from a runner error, or -1.
+func gitExitCode(err error) int {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return ee.ExitCode()
+	}
+	return -1
 }
 
 // StackStep is the per-head outcome of StackMerges.
@@ -466,119 +478,81 @@ type StackStep struct {
 	Err      error
 }
 
-// StackMerges clones base once and merges each head onto it in order, pushing
-// the result as branch. On a per-head conflict the merge is aborted and the
-// step marked; subsequent heads merge onto the pre-conflict tip. A clone or
-// final-push failure is returned as err so the caller can retry the whole
-// build instead of mis-attributing a transient network error to one PR.
+// StackMerges merges each head onto base in order inside the cached repo and
+// pushes the result as branch. On a per-head conflict or fetch failure the
+// step is marked and subsequent heads merge onto the pre-failure tip. A
+// cache or final-push failure is returned as err so the caller can retry the
+// whole build instead of mis-attributing a transient error to one PR.
 func (c *HTTPClient) StackMerges(ctx context.Context, owner, repo, base string, heads []string, branch string) (string, []StackStep, error) {
-	run, cleanup, err := gitTempRepo(ctx, "gitea-mq-stack-*",
-		"GIT_AUTHOR_NAME=gitea-mq", "GIT_AUTHOR_EMAIL=gitea-mq@localhost",
-		"GIT_COMMITTER_NAME=gitea-mq", "GIT_COMMITTER_EMAIL=gitea-mq@localhost")
+	steps := make([]StackStep, len(heads))
+	refs := []string{"+refs/heads/" + base + ":refs/heads/" + base}
+	var tip string
+	err := c.gitCache.withRepo(ctx, c.cloneURL(owner, repo), owner, repo, refs, func(run gitRunFunc) error {
+		current := "refs/heads/" + base
+		for i, head := range heads {
+			// Heads are fetched one by one so a vanished head SHA fails only
+			// its own step, not the whole batch.
+			if _, err := run("fetch", "--quiet", "--filter=blob:none", "origin", head); err != nil {
+				steps[i].Err = fmt.Errorf("fetch %s: %w", shortSHA(head), err)
+				continue
+			}
+			sha, _, err := mergeCommit(run, current, head,
+				fmt.Sprintf("mq: merge %s into %s", shortSHA(head), base))
+			if err != nil {
+				steps[i].Err = fmt.Errorf("merge %s: %w", shortSHA(head), err)
+				continue
+			}
+			if sha == "" {
+				steps[i].Conflict = true
+				continue
+			}
+			current, tip = sha, sha
+		}
+		if tip == "" {
+			return nil
+		}
+		if _, err := run("push", "--quiet", "origin", tip+":refs/heads/"+branch); err != nil {
+			return fmt.Errorf("push %s: %w", branch, err)
+		}
+		return nil
+	})
 	if err != nil {
 		return "", nil, err
 	}
-	defer cleanup()
-
-	url := c.authedCloneURL(owner, repo)
-
-	if out, err := run("clone", "--single-branch", "--branch", base, url, "."); err != nil {
-		return "", nil, fmt.Errorf("clone %s: %w\n%s", base, err, c.redact(string(out)))
+	if tip != "" {
+		slog.Debug("stack-merge built", "branch", branch, "heads", len(heads), "tip", shortSHA(tip))
 	}
-
-	steps := make([]StackStep, len(heads))
-	var tip string
-	for i, head := range heads {
-		if out, err := run("fetch", "-q", "origin", head); err != nil {
-			steps[i].Err = fmt.Errorf("fetch %s: %s", shortSHA(head), c.redact(string(out)))
-			continue
-		}
-		out, err := run("merge", "--no-ff", "-m",
-			fmt.Sprintf("mq: merge %s into %s", shortSHA(head), base), "FETCH_HEAD")
-		if err != nil {
-			s := string(out)
-			if strings.Contains(s, "CONFLICT") || strings.Contains(s, "Automatic merge failed") {
-				steps[i].Conflict = true
-			} else {
-				steps[i].Err = fmt.Errorf("merge %s: %s", shortSHA(head), c.redact(string(out)))
-			}
-			_, _ = run("merge", "--abort")
-			continue
-		}
-		sha, _ := run("rev-parse", "HEAD")
-		tip = strings.TrimSpace(string(sha))
-	}
-
-	if tip == "" {
-		return "", steps, nil
-	}
-	if out, err := run("push", "origin", "HEAD:refs/heads/"+branch); err != nil {
-		return "", nil, fmt.Errorf("push %s: %w\n%s", branch, err, c.redact(string(out)))
-	}
-	slog.Debug("stack-merge built", "branch", branch, "heads", len(heads), "tip", shortSHA(tip))
 	return tip, steps, nil
 }
 
-// authedCloneURL returns the repo's HTTPS clone URL with the API token
-// embedded as basic-auth for non-interactive git operations.
-func (c *HTTPClient) authedCloneURL(owner, repo string) string {
-	plain := fmt.Sprintf("%s/%s/%s.git", c.baseURL, owner, repo)
-	scheme, rest, _ := strings.Cut(plain, "://")
-	return fmt.Sprintf("%s://gitea-mq:%s@%s", scheme, c.token, rest)
+// cloneURL returns the repo's plain HTTPS clone URL; authentication is
+// injected per git invocation via an extraHeader, never stored in the URL.
+func (c *HTTPClient) cloneURL(owner, repo string) string {
+	return fmt.Sprintf("%s/%s/%s.git", c.baseURL, owner, repo)
 }
 
-// gitTempRepo creates a temporary directory and returns a runner that
-// executes git commands inside it with prompts disabled plus the given extra
-// environment variables. cleanup removes the directory.
-func gitTempRepo(ctx context.Context, pattern string, extraEnv ...string) (func(args ...string) ([]byte, error), func(), error) {
-	tmpDir, err := os.MkdirTemp("", pattern)
-	if err != nil {
-		return nil, nil, fmt.Errorf("create temp dir: %w", err)
-	}
-	run := func(args ...string) ([]byte, error) {
-		cmd := exec.CommandContext(ctx, "git", args...)
-		cmd.Dir = tmpDir
-		cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), extraEnv...)
-		return cmd.CombinedOutput()
-	}
-	return run, func() { _ = os.RemoveAll(tmpDir) }, nil
-}
-
-// FastForwardRef pushes sha to refs/heads/branch with a non-force refspec.
-// git's client-side fast-forward check needs sha's ancestry back to the
-// current branch tip, so we fetch sha without a depth limit. The server
-// already has every object (sha is the tip of a branch we built there) so the
-// resulting push pack is empty — cost is the fetch, same order as the full
-// single-branch clone MergeBranches already does.
+// FastForwardRef pushes sha to refs/heads/branch with a non-force refspec
+// straight from the cached repo. git's client-side fast-forward check needs
+// sha's ancestry back to the current branch tip, so both are fetched first;
+// the push pack itself is empty because the server already has sha.
 func (c *HTTPClient) FastForwardRef(ctx context.Context, owner, repo, branch, sha string) error {
-	run, cleanup, err := gitTempRepo(ctx, "gitea-mq-ff-*")
-	if err != nil {
-		return err
-	}
-	defer cleanup()
-
-	url := c.authedCloneURL(owner, repo)
-
-	if out, err := run("init", "--bare", "-q"); err != nil {
-		return fmt.Errorf("git init: %s: %w", out, err)
-	}
-	if out, err := run("fetch", "-q", url, sha); err != nil {
-		return fmt.Errorf("git fetch %s: %s: %w", shortSHA(sha), c.redact(string(out)), err)
-	}
-	out, err := run("push", url, sha+":refs/heads/"+branch)
-	if err == nil {
-		return nil
-	}
-	msg := c.redact(string(out))
-	low := strings.ToLower(msg)
-	switch {
-	case strings.Contains(low, "non-fast-forward") || strings.Contains(low, "fetch first"):
-		return &NotFastForwardError{Branch: branch, SHA: sha}
-	case strings.Contains(low, "protected branch") || strings.Contains(low, "not allowed to push"):
-		return &ProtectedBranchError{Branch: branch, Message: msg}
-	default:
-		return fmt.Errorf("git push %s: %w\n%s", branch, err, msg)
-	}
+	refs := []string{"+refs/heads/" + branch + ":refs/heads/" + branch, sha}
+	return c.gitCache.withRepo(ctx, c.cloneURL(owner, repo), owner, repo, refs, func(run gitRunFunc) error {
+		out, err := run("push", "origin", sha+":refs/heads/"+branch)
+		if err == nil {
+			return nil
+		}
+		msg := c.redact(out)
+		low := strings.ToLower(msg)
+		switch {
+		case strings.Contains(low, "non-fast-forward") || strings.Contains(low, "fetch first"):
+			return &NotFastForwardError{Branch: branch, SHA: sha}
+		case strings.Contains(low, "protected branch") || strings.Contains(low, "not allowed to push"):
+			return &ProtectedBranchError{Branch: branch, Message: msg}
+		default:
+			return fmt.Errorf("git push %s: %w", branch, err)
+		}
+	})
 }
 
 // EditIssueState sets an issue/PR state via PATCH /repos/{o}/{r}/issues/{n}.

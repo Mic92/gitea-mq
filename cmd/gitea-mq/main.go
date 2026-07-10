@@ -83,6 +83,8 @@ func run() error {
 	var giteaWebhookSecret string
 	if cfg.Gitea != nil {
 		giteaClient := gitea.NewHTTPClient(cfg.Gitea.URL, cfg.Gitea.Token)
+		giteaClient.SetGitCacheDir(cfg.CacheDir)
+		giteaClient.CleanupGitCache(gitea.DefaultCacheMaxAge)
 		forges.Register(gitea.NewForge(giteaClient, cfg.Gitea.URL))
 		giteaWebhookSecret = cfg.Gitea.WebhookSecret
 		if cfg.Gitea.Topic != "" {
