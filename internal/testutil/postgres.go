@@ -130,9 +130,9 @@ func StartPostgresServer(ctx context.Context) (*PostgresServer, error) {
 	return server, nil
 }
 
-// NewTestDB creates a fresh database on the given server and returns a
-// connected, migrated pool. The pool is closed when the test finishes.
-func NewTestDB(t *testing.T, server *PostgresServer) *pgxpool.Pool {
+// createTestDB creates a fresh database on the server and returns its
+// connection string.
+func createTestDB(t *testing.T, server *PostgresServer) string {
 	t.Helper()
 
 	if server == nil {
@@ -140,21 +140,22 @@ func NewTestDB(t *testing.T, server *PostgresServer) *pgxpool.Pool {
 	}
 
 	dbName := fmt.Sprintf("testdb%d", server.dbCount.Add(1))
-
-	cmd := exec.CommandContext(
-		t.Context(), "createdb",
-		"-h", server.TempDir,
-		"-U", "postgres",
-		dbName,
-	)
+	cmd := exec.CommandContext(t.Context(), "createdb", "-h", server.TempDir, "-U", "postgres", dbName)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("createdb: %v", err)
 	}
 
-	connStr := fmt.Sprintf("postgres://?dbname=%s&user=postgres&host=%s", dbName, server.TempDir)
+	return fmt.Sprintf("postgres://?dbname=%s&user=postgres&host=%s", dbName, server.TempDir)
+}
+
+// NewTestDB creates a fresh database on the given server and returns a
+// connected, migrated pool. The pool is closed when the test finishes.
+func NewTestDB(t *testing.T, server *PostgresServer) *pgxpool.Pool {
+	t.Helper()
+
+	connStr := createTestDB(t, server)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
@@ -174,19 +175,7 @@ func NewTestDB(t *testing.T, server *PostgresServer) *pgxpool.Pool {
 func NewRawTestDB(t *testing.T, server *PostgresServer) *pgxpool.Pool {
 	t.Helper()
 
-	if server == nil {
-		t.Fatal("postgres server not started")
-	}
-
-	dbName := fmt.Sprintf("testdb%d", server.dbCount.Add(1))
-	cmd := exec.CommandContext(t.Context(), "createdb", "-h", server.TempDir, "-U", "postgres", dbName)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("createdb: %v", err)
-	}
-
-	connStr := fmt.Sprintf("postgres://?dbname=%s&user=postgres&host=%s", dbName, server.TempDir)
+	connStr := createTestDB(t, server)
 	pool, err := pgxpool.New(t.Context(), connStr)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
@@ -202,11 +191,7 @@ func RunWithPostgres(m *testing.M) int {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	_ = os.Unsetenv("PGDATABASE")
-	_ = os.Unsetenv("PGUSER")
-	_ = os.Unsetenv("PGHOST")
-
-	server, err := StartPostgresServer(ctx)
+	server, err := startSharedPostgres(ctx)
 	if err != nil {
 		slog.Error("failed to start postgres", "error", err)
 
@@ -215,11 +200,23 @@ func RunWithPostgres(m *testing.M) int {
 
 	defer server.Cleanup()
 
-	// Store in package-level var so NewTestDB can find it.
-	// Each test package has its own copy of this via SetServer.
-	globalServer = server
-
 	return m.Run()
+}
+
+// startSharedPostgres clears inherited PG* connection env vars, starts the
+// shared postgres server, and stores it in the package-level var so TestDB
+// can find it. The caller must Cleanup the returned server.
+func startSharedPostgres(ctx context.Context) (*PostgresServer, error) {
+	_ = os.Unsetenv("PGDATABASE")
+	_ = os.Unsetenv("PGUSER")
+	_ = os.Unsetenv("PGHOST")
+
+	server, err := StartPostgresServer(ctx)
+	if err != nil {
+		return nil, err
+	}
+	globalServer = server
+	return server, nil
 }
 
 //nolint:gochecknoglobals
