@@ -383,11 +383,7 @@ func RunWithPostgresAndGitea(m *testing.M) int {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	_ = os.Unsetenv("PGDATABASE")
-	_ = os.Unsetenv("PGUSER")
-	_ = os.Unsetenv("PGHOST")
-
-	pgServer, err := StartPostgresServer(ctx)
+	pgServer, err := startSharedPostgres(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to start postgres: %v\n", err)
 
@@ -395,8 +391,6 @@ func RunWithPostgresAndGitea(m *testing.M) int {
 	}
 
 	defer pgServer.Cleanup()
-
-	globalServer = pgServer
 
 	if _, lookErr := exec.LookPath("gitea"); lookErr != nil {
 		fmt.Fprintf(os.Stderr, "gitea not in PATH, skipping Gitea integration tests\n")
