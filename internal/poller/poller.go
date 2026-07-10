@@ -390,20 +390,12 @@ func handleSuccessTimeout(ctx context.Context, deps *Deps, result *PollResult, e
 		return
 	}
 
-	targetURL := forge.DashboardPRURL(deps.ExternalURL, deps.Forge.Kind(), deps.Owner, deps.Repo, entry.PrNumber)
-	_ = deps.Forge.SetMQStatus(ctx, deps.Owner, deps.Repo, entry.PrHeadSha, forge.MQStatus{
-		State: pg.CheckStateError, Description: "Automerge did not complete in time", TargetURL: targetURL,
+	removeTimedOut(ctx, deps, result, entry, timedOutRemoval{
+		statusDescription: "Automerge did not complete in time",
+		errorMessage:      "automerge did not complete in time",
+		comment:           "⚠️ Removed from merge queue: PR was marked as ready to merge but Gitea did not merge it in time. This may indicate a branch protection issue.",
+		logMsg:            "removed PR due to success-but-not-merged timeout",
 	})
-	_ = deps.Queue.SetError(ctx, deps.RepoID, entry.PrNumber, "automerge did not complete in time")
-
-	if err := removePR(ctx, deps, result, entry, removeOpts{
-		cancelAutomerge: true,
-		comment:         "⚠️ Removed from merge queue: PR was marked as ready to merge but Gitea did not merge it in time. This may indicate a branch protection issue.",
-		advance:         true,
-		logMsg:          "removed PR due to success-but-not-merged timeout",
-	}); err != nil {
-		result.Errors = append(result.Errors, fmt.Errorf("dequeue timed-out PR #%d: %w", entry.PrNumber, err))
-	}
 }
 
 // handleTestingTimeout removes entries that have been in "testing" longer
@@ -421,20 +413,39 @@ func handleTestingTimeout(ctx context.Context, deps *Deps, result *PollResult, e
 		return
 	}
 
+	merge.CleanupMergeBranch(ctx, deps.Forge, deps.Owner, deps.Repo, entry)
+	removeTimedOut(ctx, deps, result, entry, timedOutRemoval{
+		statusDescription: "CI did not report within timeout",
+		errorMessage:      "CI did not report within timeout",
+		comment:           "⚠️ Removed from merge queue: CI did not report a status within the timeout. The CI server may have lost the build.",
+		logMsg:            "removed PR due to testing timeout",
+	})
+}
+
+// timedOutRemoval describes how a timed-out entry is reported before removal.
+type timedOutRemoval struct {
+	statusDescription string // MQ commit status shown on the PR head
+	errorMessage      string // stored on the queue entry
+	comment           string // posted on the PR
+	logMsg            string
+}
+
+// removeTimedOut marks the entry's MQ status and queue error, then dequeues it
+// (cancelling automerge and advancing the queue).
+func removeTimedOut(ctx context.Context, deps *Deps, result *PollResult, entry *pg.QueueEntry, opts timedOutRemoval) {
 	targetURL := forge.DashboardPRURL(deps.ExternalURL, deps.Forge.Kind(), deps.Owner, deps.Repo, entry.PrNumber)
 	_ = deps.Forge.SetMQStatus(ctx, deps.Owner, deps.Repo, entry.PrHeadSha, forge.MQStatus{
-		State: pg.CheckStateError, Description: "CI did not report within timeout", TargetURL: targetURL,
+		State: pg.CheckStateError, Description: opts.statusDescription, TargetURL: targetURL,
 	})
-	_ = deps.Queue.SetError(ctx, deps.RepoID, entry.PrNumber, "CI did not report within timeout")
-	merge.CleanupMergeBranch(ctx, deps.Forge, deps.Owner, deps.Repo, entry)
+	_ = deps.Queue.SetError(ctx, deps.RepoID, entry.PrNumber, opts.errorMessage)
 
 	if err := removePR(ctx, deps, result, entry, removeOpts{
 		cancelAutomerge: true,
-		comment:         "⚠️ Removed from merge queue: CI did not report a status within the timeout. The CI server may have lost the build.",
+		comment:         opts.comment,
 		advance:         true,
-		logMsg:          "removed PR due to testing timeout",
+		logMsg:          opts.logMsg,
 	}); err != nil {
-		result.Errors = append(result.Errors, fmt.Errorf("dequeue timed-out testing PR #%d: %w", entry.PrNumber, err))
+		result.Errors = append(result.Errors, fmt.Errorf("dequeue timed-out PR #%d: %w", entry.PrNumber, err))
 	}
 }
 
