@@ -64,8 +64,12 @@ type Repo struct {
 	Owner, Name   string
 	DefaultBranch string
 
-	PRs       map[int64]*PR
-	Refs      map[string]string // branch -> sha
+	PRs  map[int64]*PR
+	Refs map[string]string // branch -> sha
+	// Parents[sha] lists a commit's parent SHAs. hMerge records the merge
+	// commit's parents here so hUpdateRef can do a real ancestry walk for
+	// its fast-forward check.
+	Parents   map[string][]string
 	CheckRuns map[string][]*CheckRun
 	Rulesets  []*Ruleset
 	// BehindBy["base...head"] feeds GET /compare/{base}...{head}.behind_by.
@@ -164,6 +168,7 @@ func (s *Server) AddRepo(owner, name string) *Repo {
 		DefaultBranch:  "main",
 		PRs:            map[int64]*PR{},
 		Refs:           map[string]string{"main": "sha-main"},
+		Parents:        map[string][]string{},
 		CheckRuns:      map[string][]*CheckRun{},
 		BehindBy:       map[string]int{},
 		ConflictOn:     map[string]bool{},
@@ -646,9 +651,7 @@ func (s *Server) hUpdateRef(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 403, map[string]any{"message": "Changes must be made through a pull request. (protected branch)"})
 			return
 		}
-		// hMerge encodes lineage as merge(old,head); a SHA that does not
-		// contain the current tip's text is treated as non-fast-forward.
-		if old != body.SHA && !strings.Contains(body.SHA, old) {
+		if !rp.isAncestor(old, body.SHA) {
 			s.mu.Unlock()
 			writeJSON(w, 422, map[string]any{"message": "Update is not a fast forward"})
 			return
@@ -657,6 +660,20 @@ func (s *Server) hUpdateRef(w http.ResponseWriter, r *http.Request) {
 	rp.Refs[branch] = body.SHA
 	s.mu.Unlock()
 	writeJSON(w, 200, map[string]any{"ref": "refs/heads/" + branch, "object": map[string]any{"sha": body.SHA}})
+}
+
+// isAncestor reports whether ancestor is reachable from sha via Parents.
+// Callers must hold s.mu.
+func (rp *Repo) isAncestor(ancestor, sha string) bool {
+	if ancestor == sha {
+		return true
+	}
+	for _, p := range rp.Parents[sha] {
+		if rp.isAncestor(ancestor, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) hDeleteRef(w http.ResponseWriter, r *http.Request) {
@@ -709,6 +726,7 @@ func (s *Server) hMerge(w http.ResponseWriter, r *http.Request) {
 	}
 	// Encode the base SHA so tests can verify the merge used a fresh base.
 	mergeSHA := fmt.Sprintf("merge(%s,%s)", rp.Refs[body.Base], body.Head)
+	rp.Parents[mergeSHA] = []string{rp.Refs[body.Base], body.Head}
 	rp.Refs[body.Base] = mergeSHA
 	writeJSON(w, 201, map[string]any{"sha": mergeSHA})
 }
