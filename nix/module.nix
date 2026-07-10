@@ -252,6 +252,9 @@ in
         Restart = "on-failure";
         RestartSec = 5;
 
+        # Persistent bare git clones used for merge operations.
+        CacheDirectory = "gitea-mq";
+
         # Credentials: systemd loads files and exposes them under /run/credentials.
         LoadCredential =
           lib.optionals giteaEnabled [
@@ -277,6 +280,7 @@ in
         GITEA_MQ_REFRESH_INTERVAL = cfg.refreshInterval;
         GITEA_MQ_DISCOVERY_INTERVAL = cfg.discoveryInterval;
         GITEA_MQ_LOG_LEVEL = cfg.logLevel;
+        GITEA_MQ_CACHE_DIR = "/var/cache/gitea-mq";
       }
       // lib.optionalAttrs (cfg.repos != [ ]) {
         GITEA_MQ_REPOS = lib.concatStringsSep "," cfg.repos;

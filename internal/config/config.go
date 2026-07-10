@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -29,6 +30,8 @@ type Config struct {
 	RefreshInterval     time.Duration
 	DiscoveryInterval   time.Duration
 	LogLevel            string
+	// CacheDir holds persistent bare git clones used for merge operations.
+	CacheDir string
 }
 
 type GiteaConfig struct {
@@ -149,6 +152,15 @@ func Load() (*Config, error) {
 	cfg.BisectMaxSteps, err = parseInt("GITEA_MQ_BISECT_MAX_STEPS", 0, 0)
 	if err != nil {
 		return nil, err
+	}
+
+	cfg.CacheDir = os.Getenv("GITEA_MQ_CACHE_DIR")
+	if cfg.CacheDir == "" {
+		base, err := os.UserCacheDir()
+		if err != nil {
+			base = os.TempDir()
+		}
+		cfg.CacheDir = filepath.Join(base, "gitea-mq")
 	}
 
 	cfg.LogLevel = envOrDefault("GITEA_MQ_LOG_LEVEL", "info")

@@ -62,6 +62,7 @@ variables.
 | `GITEA_MQ_BISECT_MAX_STEPS` | no | `0` | Cap on CI builds spent bisecting one batch. `0` = unlimited |
 | `GITEA_MQ_REFRESH_INTERVAL` | no | `10s` | Dashboard auto-refresh interval |
 | `GITEA_MQ_DISCOVERY_INTERVAL` | no | `5m` | How often to re-scan Gitea topics and GitHub installations |
+| `GITEA_MQ_CACHE_DIR` | no | `$XDG_CACHE_HOME/gitea-mq` | Directory for persistent bare git clones used for merge operations; unused repos are removed after 30 days |
 | `GITEA_MQ_LOG_LEVEL` | no | `info` | Log level: debug, info, warn, error |
 
 ## Batching (bors-style)
