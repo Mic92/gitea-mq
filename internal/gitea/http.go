@@ -160,33 +160,19 @@ func paginateUntilEmpty[T any](ctx context.Context, c *HTTPClient, pathFmt, errL
 // {ok, data: [...]}). extract pulls the page items out of the decoded
 // wrapper. Same EOF contract as paginate.
 func paginateWrapped[Wrapper, Item any](ctx context.Context, c *HTTPClient, pathFmt, errLabel string, extract func(*Wrapper) []Item) ([]Item, error) {
-	var all []Item
-
-	for page := 1; ; page++ {
-		path := fmt.Sprintf(pathFmt, page)
-
-		resp, err := c.do(ctx, http.MethodGet, path, nil)
-		if err != nil {
-			return nil, err
-		}
-
-		var w Wrapper
-		if err := c.decodeJSON(resp, &w); err != nil {
-			return nil, fmt.Errorf("%s: %w", errLabel, err)
-		}
-
-		items := extract(&w)
-		all = append(all, items...)
-
-		if len(items) < 50 {
-			return all, nil
-		}
-	}
+	return paginatePages(ctx, c, pathFmt, errLabel, extract, false)
 }
 
 // paginateWrappedUntilEmpty is paginateUntilEmpty for wrapped responses.
 // Same EOF contract as paginateUntilEmpty.
 func paginateWrappedUntilEmpty[Wrapper, Item any](ctx context.Context, c *HTTPClient, pathFmt, errLabel string, extract func(*Wrapper) []Item) ([]Item, error) {
+	return paginatePages(ctx, c, pathFmt, errLabel, extract, true)
+}
+
+// paginatePages fetches pages until the end-of-data condition: with
+// untilEmpty the loop stops on the first empty page, otherwise a short page
+// (< 50 items) is treated as the last one.
+func paginatePages[Wrapper, Item any](ctx context.Context, c *HTTPClient, pathFmt, errLabel string, extract func(*Wrapper) []Item, untilEmpty bool) ([]Item, error) {
 	var all []Item
 
 	for page := 1; ; page++ {
@@ -203,11 +189,11 @@ func paginateWrappedUntilEmpty[Wrapper, Item any](ctx context.Context, c *HTTPCl
 		}
 
 		items := extract(&w)
-		if len(items) == 0 {
+		all = append(all, items...)
+
+		if (untilEmpty && len(items) == 0) || (!untilEmpty && len(items) < 50) {
 			return all, nil
 		}
-
-		all = append(all, items...)
 	}
 }
 
