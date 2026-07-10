@@ -2,6 +2,7 @@
 package github
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"net/http"
@@ -37,9 +38,7 @@ type App struct {
 // NewApp constructs an App. baseURL must be the REST root (e.g.
 // https://api.github.com or http://127.0.0.1:PORT/api/v3 for ghfake).
 func NewApp(appID int64, privateKey []byte, baseURL string) (*App, error) {
-	if baseURL == "" {
-		baseURL = DefaultBaseURL
-	}
+	baseURL = cmp.Or(baseURL, DefaultBaseURL)
 	// Wrap the base transport in an ETag cache so unchanged GETs revalidate
 	// with a 304, which GitHub does not charge against the rate limit. Both
 	// the app client and every installation client derive from this transport

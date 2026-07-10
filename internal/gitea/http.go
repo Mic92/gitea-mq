@@ -523,8 +523,8 @@ func (c *HTTPClient) StackMerges(ctx context.Context, owner, repo, base string, 
 // embedded as basic-auth for non-interactive git operations.
 func (c *HTTPClient) authedCloneURL(owner, repo string) string {
 	plain := fmt.Sprintf("%s/%s/%s.git", c.baseURL, owner, repo)
-	i := strings.Index(plain, "://")
-	return fmt.Sprintf("%s://gitea-mq:%s@%s", plain[:i], c.token, plain[i+3:])
+	scheme, rest, _ := strings.Cut(plain, "://")
+	return fmt.Sprintf("%s://gitea-mq:%s@%s", scheme, c.token, rest)
 }
 
 // gitTempRepo creates a temporary directory and returns a runner that

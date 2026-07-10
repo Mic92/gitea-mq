@@ -2,6 +2,7 @@ package github
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -25,10 +26,7 @@ type githubForge struct {
 // NewForge wraps a GitHub App as a forge. htmlURL is the user-facing web root
 // (distinct from the API base URL); empty defaults to github.com.
 func NewForge(app *App, htmlURL string) forge.Forge {
-	if htmlURL == "" {
-		htmlURL = "https://github.com"
-	}
-	return &githubForge{app: app, htmlURL: htmlURL}
+	return &githubForge{app: app, htmlURL: cmp.Or(htmlURL, "https://github.com")}
 }
 
 func (f *githubForge) Kind() forge.Kind { return forge.KindGithub }

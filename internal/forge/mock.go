@@ -1,6 +1,7 @@
 package forge
 
 import (
+	"cmp"
 	"context"
 	"sync"
 )
@@ -61,10 +62,7 @@ func (m *MockForge) CallsTo(method string) []MockCall {
 }
 
 func (m *MockForge) Kind() Kind {
-	if m.KindVal == "" {
-		return KindGitea
-	}
-	return m.KindVal
+	return cmp.Or(m.KindVal, KindGitea)
 }
 
 func (m *MockForge) RepoHTMLURL(owner, name string) string {
