@@ -1,0 +1,7 @@
+{
+  "ignore": [
+    "**/internal/store/pg/*.go",
+    "**/openspec/**"
+  ],
+  "gitignore": true
+}
