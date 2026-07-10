@@ -538,21 +538,40 @@ func (c *HTTPClient) cloneURL(owner, repo string) string {
 func (c *HTTPClient) FastForwardRef(ctx context.Context, owner, repo, branch, sha string) error {
 	refs := []string{"+refs/heads/" + branch + ":refs/heads/" + branch, sha}
 	return c.gitCache.withRepo(ctx, c.cloneURL(owner, repo), owner, repo, refs, func(run gitRunFunc) error {
-		out, err := run("push", "origin", sha+":refs/heads/"+branch)
+		out, err := run("push", "--porcelain", "origin", sha+":refs/heads/"+branch)
 		if err == nil {
 			return nil
 		}
-		msg := c.redact(out)
-		low := strings.ToLower(msg)
-		switch {
-		case strings.Contains(low, "non-fast-forward") || strings.Contains(low, "fetch first"):
-			return &NotFastForwardError{Branch: branch, SHA: sha}
-		case strings.Contains(low, "protected branch") || strings.Contains(low, "not allowed to push"):
-			return &ProtectedBranchError{Branch: branch, Message: msg}
-		default:
-			return fmt.Errorf("git push %s: %w", branch, err)
-		}
+		return classifyPushFailure(branch, sha, c.redact(out), err)
 	})
+}
+
+// classifyPushFailure maps a failed `git push --porcelain` to a typed error
+// by parsing its rejection line: "! <from>:<to> <summary> (<reason>)".
+// Client-side ancestry rejections carry fixed reasons; "[remote rejected]"
+// carries the server hook's message, i.e. branch protection denied the push.
+// Output without a rejection line stays a generic error.
+func classifyPushFailure(branch, sha, out string, err error) error {
+	for line := range strings.Lines(out) {
+		flag, rest, ok := strings.Cut(line, "\t")
+		if !ok || flag != "!" {
+			continue
+		}
+		_, result, ok := strings.Cut(rest, "\t")
+		if !ok {
+			continue
+		}
+		summary, reason, _ := strings.Cut(strings.TrimSpace(result), " (")
+		reason = strings.TrimSuffix(reason, ")")
+		if summary == "[remote rejected]" {
+			return &ProtectedBranchError{Branch: branch, Message: reason}
+		}
+		switch reason {
+		case "non-fast-forward", "fetch first", "needs force", "stale info":
+			return &NotFastForwardError{Branch: branch, SHA: sha}
+		}
+	}
+	return fmt.Errorf("git push %s: %w", branch, err)
 }
 
 // EditIssueState sets an issue/PR state via PATCH /repos/{o}/{r}/issues/{n}.

@@ -169,6 +169,7 @@ func TestForge_FastForward(t *testing.T) {
 	srv, f := newTestForge(t)
 	repo := srv.Repo("org", "app")
 	repo.Refs["main"] = "base"
+	repo.Parents["merge(base,sha)"] = []string{"base", "sha"}
 	ctx := context.Background()
 
 	if err := f.FastForward(ctx, "org", "app", "main", "merge(base,sha)"); err != nil {
