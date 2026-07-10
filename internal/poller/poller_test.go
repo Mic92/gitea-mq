@@ -41,6 +41,30 @@ func makePR(index int64, headSHA, baseBranch string) gitea.PR {
 	}
 }
 
+// mockAutomergePRs makes the forge report the given PRs as open with
+// auto-merge scheduled — the standard starting point for most poller tests.
+func mockAutomergePRs(mock *gitea.MockClient, prs ...gitea.PR) {
+	mock.ListOpenPRsFn = func(_ context.Context, _, _ string) ([]gitea.PR, error) {
+		return prs, nil
+	}
+	mock.GetPRTimelineFn = func(_ context.Context, _, _ string, _ int64) ([]gitea.TimelineComment, error) {
+		return automergeTimeline(), nil
+	}
+}
+
+// runPollerFor runs poller.Run with the given intervals until wait elapses.
+func runPollerFor(ctx context.Context, deps *poller.Deps, tick, idle, wait time.Duration) {
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		poller.Run(runCtx, deps, tick, idle)
+		close(done)
+	}()
+	time.Sleep(wait)
+	cancel()
+	<-done
+}
+
 func automergeTimeline() []gitea.TimelineComment {
 	return []gitea.TimelineComment{{ID: 1, Type: "pull_scheduled_merge", CreatedAt: time.Now()}}
 }
@@ -58,12 +82,7 @@ func TestPollOnce_SkipQueueIfUpToDate(t *testing.T) {
 	deps, mock, svc, ctx, repoID := setupPollerTest(t)
 	deps.SkipQueueIfUpToDate = true
 
-	mock.ListOpenPRsFn = func(_ context.Context, _, _ string) ([]gitea.PR, error) {
-		return []gitea.PR{makePR(42, "sha42", "main")}, nil
-	}
-	mock.GetPRTimelineFn = func(_ context.Context, _, _ string, _ int64) ([]gitea.TimelineComment, error) {
-		return automergeTimeline(), nil
-	}
+	mockAutomergePRs(mock, makePR(42, "sha42", "main"))
 	mock.CompareCommitsFn = func(_ context.Context, _, _, base, head string) (*gitea.Compare, error) {
 		if base != "sha42" || head != "main" {
 			t.Errorf("compare called with base=%q head=%q, want sha42...main", base, head)
@@ -105,12 +124,7 @@ func TestPollOnce_SkipQueueIfUpToDate_BehindBase(t *testing.T) {
 	deps, mock, svc, ctx, repoID := setupPollerTest(t)
 	deps.SkipQueueIfUpToDate = true
 
-	mock.ListOpenPRsFn = func(_ context.Context, _, _ string) ([]gitea.PR, error) {
-		return []gitea.PR{makePR(42, "sha42", "main")}, nil
-	}
-	mock.GetPRTimelineFn = func(_ context.Context, _, _ string, _ int64) ([]gitea.TimelineComment, error) {
-		return automergeTimeline(), nil
-	}
+	mockAutomergePRs(mock, makePR(42, "sha42", "main"))
 	mock.CompareCommitsFn = func(_ context.Context, _, _, _, _ string) (*gitea.Compare, error) {
 		return &gitea.Compare{TotalCommits: 3}, nil
 	}
@@ -133,12 +147,7 @@ func TestPollOnce_SkipQueueIfUpToDate_BehindBase(t *testing.T) {
 func TestPollOnce_NewAutomergePR_Enqueues(t *testing.T) {
 	deps, mock, svc, ctx, repoID := setupPollerTest(t)
 
-	mock.ListOpenPRsFn = func(_ context.Context, _, _ string) ([]gitea.PR, error) {
-		return []gitea.PR{makePR(42, "sha42", "main")}, nil
-	}
-	mock.GetPRTimelineFn = func(_ context.Context, _, _ string, _ int64) ([]gitea.TimelineComment, error) {
-		return automergeTimeline(), nil
-	}
+	mockAutomergePRs(mock, makePR(42, "sha42", "main"))
 	mock.MergeBranchesFn = func(_ context.Context, _, _, _, _, _ string) (*gitea.MergeResult, error) {
 		return &gitea.MergeResult{SHA: "mock-merge-sha"}, nil
 	}
@@ -303,12 +312,7 @@ func TestPollOnce_MergeBranchChecksPolled_Success(t *testing.T) {
 	_ = svc.UpdateState(ctx, repoID, 42, pg.EntryStateTesting)
 	_ = svc.SetMergeBranch(ctx, repoID, 42, merge.BranchName(42), "mergesha42")
 
-	mock.ListOpenPRsFn = func(_ context.Context, _, _ string) ([]gitea.PR, error) {
-		return []gitea.PR{makePR(42, "sha42", "main")}, nil
-	}
-	mock.GetPRTimelineFn = func(_ context.Context, _, _ string, _ int64) ([]gitea.TimelineComment, error) {
-		return automergeTimeline(), nil
-	}
+	mockAutomergePRs(mock, makePR(42, "sha42", "main"))
 	mock.GetCombinedCommitStatusFn = func(_ context.Context, _, _, sha string) (*gitea.CombinedStatus, error) {
 		if sha == "mergesha42" {
 			return &gitea.CombinedStatus{
@@ -339,69 +343,54 @@ func TestPollOnce_MergeBranchChecksPolled_Success(t *testing.T) {
 	}
 }
 
-func TestPollOnce_TestingNeverReports_TimesOut(t *testing.T) {
-	deps, mock, svc, ctx, repoID := setupPollerTest(t)
-	deps.CheckTimeout = 1 * time.Millisecond
-
-	if _, err := svc.Enqueue(ctx, repoID, 42, "sha42", "main"); err != nil {
-		t.Fatal(err)
-	}
-	_ = svc.UpdateState(ctx, repoID, 42, pg.EntryStateTesting)
-	time.Sleep(5 * time.Millisecond)
-
-	mock.ListOpenPRsFn = func(_ context.Context, _, _ string) ([]gitea.PR, error) {
-		return []gitea.PR{makePR(42, "sha42", "main")}, nil
-	}
-	mock.GetPRTimelineFn = func(_ context.Context, _, _ string, _ int64) ([]gitea.TimelineComment, error) {
-		return automergeTimeline(), nil
-	}
-
-	result, err := poller.PollOnce(ctx, deps)
-	if err != nil {
-		t.Fatalf("PollOnce: %v", err)
-	}
-	if len(result.Dequeued) != 1 || result.Dequeued[0] != 42 {
-		t.Fatalf("expected PR #42 dequeued, got %v", result.Dequeued)
-	}
-	if len(mock.CallsTo("CancelAutoMerge")) != 1 {
-		t.Fatal("expected CancelAutoMerge call")
-	}
-	statusCalls := mock.CallsTo("CreateCommitStatus")
-	if len(statusCalls) != 1 || statusCalls[0].Args[3].(gitea.CommitStatus).State != "error" {
-		t.Fatalf("expected single error status, got %v", statusCalls)
-	}
-}
-
-func TestPollOnce_SuccessButNotMerged_TimesOut(t *testing.T) {
-	deps, mock, svc, ctx, repoID := setupPollerTest(t)
-	deps.SuccessTimeout = 1 * time.Millisecond
-
-	if _, err := svc.Enqueue(ctx, repoID, 42, "sha42", "main"); err != nil {
-		t.Fatal(err)
-	}
-	_ = svc.UpdateState(ctx, repoID, 42, pg.EntryStateSuccess)
-	time.Sleep(5 * time.Millisecond)
-
-	mock.ListOpenPRsFn = func(_ context.Context, _, _ string) ([]gitea.PR, error) {
-		return []gitea.PR{makePR(42, "sha42", "main")}, nil
-	}
-	mock.GetPRTimelineFn = func(_ context.Context, _, _ string, _ int64) ([]gitea.TimelineComment, error) {
-		return automergeTimeline(), nil
+// A stuck entry (testing that never reports, or success that Gitea never
+// merges) must be dequeued with an error status once its timeout elapses.
+func TestPollOnce_Timeouts(t *testing.T) {
+	cases := []struct {
+		name      string
+		state     pg.EntryState
+		configure func(*poller.Deps)
+	}{
+		{
+			name:      "testing_never_reports",
+			state:     pg.EntryStateTesting,
+			configure: func(d *poller.Deps) { d.CheckTimeout = 1 * time.Millisecond },
+		},
+		{
+			name:      "success_but_not_merged",
+			state:     pg.EntryStateSuccess,
+			configure: func(d *poller.Deps) { d.SuccessTimeout = 1 * time.Millisecond },
+		},
 	}
 
-	result, err := poller.PollOnce(ctx, deps)
-	if err != nil {
-		t.Fatalf("PollOnce: %v", err)
-	}
-	if len(result.Dequeued) != 1 || result.Dequeued[0] != 42 {
-		t.Fatalf("expected PR #42 dequeued, got %v", result.Dequeued)
-	}
-	if len(mock.CallsTo("CancelAutoMerge")) != 1 {
-		t.Fatal("expected CancelAutoMerge call")
-	}
-	statusCalls := mock.CallsTo("CreateCommitStatus")
-	if len(statusCalls) != 1 || statusCalls[0].Args[3].(gitea.CommitStatus).State != "error" {
-		t.Fatalf("expected single error status, got %v", statusCalls)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			deps, mock, svc, ctx, repoID := setupPollerTest(t)
+			tc.configure(deps)
+
+			if _, err := svc.Enqueue(ctx, repoID, 42, "sha42", "main"); err != nil {
+				t.Fatal(err)
+			}
+			_ = svc.UpdateState(ctx, repoID, 42, tc.state)
+			time.Sleep(5 * time.Millisecond)
+
+			mockAutomergePRs(mock, makePR(42, "sha42", "main"))
+
+			result, err := poller.PollOnce(ctx, deps)
+			if err != nil {
+				t.Fatalf("PollOnce: %v", err)
+			}
+			if len(result.Dequeued) != 1 || result.Dequeued[0] != 42 {
+				t.Fatalf("expected PR #42 dequeued, got %v", result.Dequeued)
+			}
+			if len(mock.CallsTo("CancelAutoMerge")) != 1 {
+				t.Fatal("expected CancelAutoMerge call")
+			}
+			statusCalls := mock.CallsTo("CreateCommitStatus")
+			if len(statusCalls) != 1 || statusCalls[0].Args[3].(gitea.CommitStatus).State != "error" {
+				t.Fatalf("expected single error status, got %v", statusCalls)
+			}
+		})
 	}
 }
 
@@ -447,12 +436,7 @@ func TestPollOnce_CIGating(t *testing.T) {
 			deps, mock, svc, ctx, repoID := setupPollerTest(t)
 			deps.FallbackChecks = tc.fallbackChecks
 
-			mock.ListOpenPRsFn = func(_ context.Context, _, _ string) ([]gitea.PR, error) {
-				return []gitea.PR{makePR(42, "sha42", "main")}, nil
-			}
-			mock.GetPRTimelineFn = func(_ context.Context, _, _ string, _ int64) ([]gitea.TimelineComment, error) {
-				return automergeTimeline(), nil
-			}
+			mockAutomergePRs(mock, makePR(42, "sha42", "main"))
 			mock.GetCombinedCommitStatusFn = func(_ context.Context, _, _, _ string) (*gitea.CombinedStatus, error) {
 				return tc.status, nil
 			}
@@ -486,12 +470,7 @@ func TestPollOnce_MergeBranchError_NotifiesUser(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mock.ListOpenPRsFn = func(_ context.Context, _, _ string) ([]gitea.PR, error) {
-		return []gitea.PR{makePR(42, "sha42", "main")}, nil
-	}
-	mock.GetPRTimelineFn = func(_ context.Context, _, _ string, _ int64) ([]gitea.TimelineComment, error) {
-		return automergeTimeline(), nil
-	}
+	mockAutomergePRs(mock, makePR(42, "sha42", "main"))
 	mock.MergeBranchesFn = func(_ context.Context, _, _, _, _, _ string) (*gitea.MergeResult, error) {
 		return nil, fmt.Errorf("merge: git merge: exit status 128\nfatal: refusing to merge unrelated histories")
 	}
@@ -559,19 +538,8 @@ func TestRun_IdleRepoSkipsPeriodicPoll(t *testing.T) {
 		return nil, nil
 	}
 
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	done := make(chan struct{})
-	go func() {
-		// Fast tick, long idle interval: idle repo polls only at startup.
-		poller.Run(runCtx, deps, 5*time.Millisecond, time.Hour)
-		close(done)
-	}()
-
-	time.Sleep(100 * time.Millisecond)
-	cancel()
-	<-done
+	// Fast tick, long idle interval: idle repo polls only at startup.
+	runPollerFor(ctx, deps, 5*time.Millisecond, time.Hour, 100*time.Millisecond)
 
 	if listed != 1 {
 		t.Fatalf("idle repo polled forge %d times, want 1 (startup only)", listed)
@@ -591,18 +559,7 @@ func TestRun_NoIdleGatingPollsEveryTick(t *testing.T) {
 		return nil, nil
 	}
 
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	done := make(chan struct{})
-	go func() {
-		poller.Run(runCtx, deps, 5*time.Millisecond, time.Hour)
-		close(done)
-	}()
-
-	time.Sleep(60 * time.Millisecond)
-	cancel()
-	<-done
+	runPollerFor(ctx, deps, 5*time.Millisecond, time.Hour, 60*time.Millisecond)
 
 	// Startup poll plus several periodic polls despite the repo being idle.
 	if listed < 3 {
