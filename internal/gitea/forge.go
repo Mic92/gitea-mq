@@ -46,6 +46,11 @@ func (f *giteaForge) StackMerges(ctx context.Context, owner, repo, base string, 
 
 func (f *giteaForge) Kind() forge.Kind { return forge.KindGitea }
 
+// Gitea/Forgejo have no commit-status webhook; CI results are polled.
+func (f *giteaForge) Capabilities() forge.Capabilities {
+	return forge.Capabilities{StatusWebhook: false}
+}
+
 func (f *giteaForge) RepoHTMLURL(owner, name string) string {
 	return f.baseURL + "/" + owner + "/" + name
 }

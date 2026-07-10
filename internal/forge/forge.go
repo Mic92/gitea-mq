@@ -170,9 +170,18 @@ type SetupConfig struct {
 	WebhookSecret string
 }
 
+// Capabilities lets callers branch on forge features instead of on Kind.
+type Capabilities struct {
+	// StatusWebhook: forge delivers commit-status/check-run results via
+	// webhooks. Without it CI results must be polled, so idle gating is
+	// unsafe.
+	StatusWebhook bool
+}
+
 // Forge abstracts all operations gitea-mq performs against a hosting forge.
 type Forge interface {
 	Kind() Kind
+	Capabilities() Capabilities
 	RepoHTMLURL(owner, name string) string
 	BranchHTMLURL(owner, name, branch string) string
 

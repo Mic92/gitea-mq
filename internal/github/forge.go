@@ -31,6 +31,10 @@ func NewForge(app *App, htmlURL string) forge.Forge {
 
 func (f *githubForge) Kind() forge.Kind { return forge.KindGithub }
 
+func (f *githubForge) Capabilities() forge.Capabilities {
+	return forge.Capabilities{StatusWebhook: true}
+}
+
 func (f *githubForge) RepoHTMLURL(owner, name string) string {
 	return fmt.Sprintf("%s/%s/%s", f.htmlURL, owner, name)
 }
