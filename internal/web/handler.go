@@ -235,6 +235,16 @@ func overviewHandler(deps *Deps) http.HandlerFunc {
 	}
 }
 
+// forgeFor resolves the forge for ref, returning nil when no forge set is
+// configured or the ref's forge is unknown.
+func forgeFor(deps *Deps, ref forge.RepoRef) forge.Forge {
+	if deps.Forges == nil {
+		return nil
+	}
+	f, _ := deps.Forges.For(ref)
+	return f
+}
+
 // serverError logs err with the given message/args and replies 500.
 func serverError(w http.ResponseWriter, msg string, err error, args ...any) {
 	slog.Error(msg, append(args, "error", err)...)
@@ -316,10 +326,9 @@ func serveRepoDetail(w http.ResponseWriter, r *http.Request, deps *Deps, ref for
 		Name:            name,
 		RefreshInterval: deps.RefreshInterval,
 	}
-	if deps.Forges != nil {
-		if f, _ := deps.Forges.For(ref); f != nil {
-			data.RepoURL = f.RepoHTMLURL(owner, name)
-		}
+	f := forgeFor(deps, ref)
+	if f != nil {
+		data.RepoURL = f.RepoHTMLURL(owner, name)
 	}
 
 	batches, err := deps.Queue.ListLiveBatches(ctx, repo.ID)
@@ -338,10 +347,8 @@ func serveRepoDetail(w http.ResponseWriter, r *http.Request, deps *Deps, ref for
 			Current:      len(b.CurrentIds),
 			Members:      len(b.MemberIds),
 		}
-		if deps.Forges != nil {
-			if f, _ := deps.Forges.For(ref); f != nil && rb.BranchName != "" {
-				rb.BranchURL = f.BranchHTMLURL(owner, name, rb.BranchName)
-			}
+		if f != nil && rb.BranchName != "" {
+			rb.BranchURL = f.BranchHTMLURL(owner, name, rb.BranchName)
 		}
 		data.Batches = append(data.Batches, rb)
 	}
@@ -422,10 +429,7 @@ func servePRDetail(w http.ResponseWriter, r *http.Request, deps *Deps, ref forge
 	}
 
 	// Fetch PR title/author from the forge (graceful degradation).
-	var f forge.Forge
-	if deps.Forges != nil {
-		f, _ = deps.Forges.For(ref)
-	}
+	f := forgeFor(deps, ref)
 	if f != nil {
 		pr, err := f.GetPR(ctx, owner, name, prNumber)
 		if err != nil {
