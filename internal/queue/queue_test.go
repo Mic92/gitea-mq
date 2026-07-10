@@ -274,3 +274,47 @@ func TestLoadActiveQueuesExcludesTerminal(t *testing.T) {
 		t.Fatalf("expected only PR #10 active, got %v", active)
 	}
 }
+
+// Position is scoped to the target branch and ignores terminal entries.
+func TestPosition(t *testing.T) {
+	svc, ctx, repoID := testutil.TestQueueService(t)
+
+	for _, pr := range []int64{10, 20, 30} {
+		if _, err := svc.Enqueue(ctx, repoID, pr, "sha", "main"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Different branch must not count towards main's positions.
+	if _, err := svc.Enqueue(ctx, repoID, 40, "sha", "release"); err != nil {
+		t.Fatal(err)
+	}
+
+	pos, err := svc.Position(ctx, repoID, "main", 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pos != 3 {
+		t.Fatalf("PR #30 position = %d, want 3", pos)
+	}
+
+	// A failed entry ahead in the queue no longer occupies a position.
+	if err := svc.UpdateState(ctx, repoID, 10, pg.EntryStateFailed); err != nil {
+		t.Fatal(err)
+	}
+	pos, err = svc.Position(ctx, repoID, "main", 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pos != 2 {
+		t.Fatalf("PR #30 position after failure ahead = %d, want 2", pos)
+	}
+
+	// Unknown PR reports position 0.
+	pos, err = svc.Position(ctx, repoID, "main", 99)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pos != 0 {
+		t.Fatalf("unknown PR position = %d, want 0", pos)
+	}
+}
