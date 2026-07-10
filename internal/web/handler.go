@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/Mic92/gitea-mq/internal/batch"
@@ -179,8 +178,14 @@ type Deps struct {
 func NewMux(deps *Deps) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/static/style.css", staticCSSHandler)
-	mux.HandleFunc("/", overviewHandler(deps))
-	mux.HandleFunc("/repo/", repoHandler(deps))
+	mux.HandleFunc("/{$}", overviewHandler(deps))
+	repo := repoHandler(deps)
+	mux.HandleFunc("/repo/{forge}/{owner}/{name}", repo)
+	mux.HandleFunc("/repo/{forge}/{owner}/{name}/pr/{number}", repo)
+	// Legacy paths without {forge} resolve as gitea so existing MQStatus
+	// target_urls and bookmarks keep working.
+	mux.HandleFunc("/repo/{owner}/{name}", repo)
+	mux.HandleFunc("/repo/{owner}/{name}/pr/{number}", repo)
 	return mux
 }
 
@@ -199,12 +204,6 @@ func staticCSSHandler(w http.ResponseWriter, _ *http.Request) {
 // overviewHandler serves the overview page at GET /.
 func overviewHandler(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Only match exact root path for the overview.
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-
 		ctx := r.Context()
 		data := OverviewData{
 			RefreshInterval: deps.RefreshInterval,
@@ -263,40 +262,26 @@ func renderHTML(w http.ResponseWriter, name string, data any) {
 //   - GET /repo/{forge}/{owner}/{name} — repo queue listing
 //   - GET /repo/{forge}/{owner}/{name}/pr/{number} — PR detail
 //
-// Legacy two-/three-segment paths without {forge} resolve as gitea so existing
-// MQStatus target_urls and bookmarks keep working.
+// When the {forge} path value is absent (legacy routes) the forge defaults to
+// gitea.
 func repoHandler(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/repo/"), "/"), "/")
-
 		kind := forge.KindGitea
-		if len(parts) > 0 && forge.Kind(parts[0]).Valid() {
-			kind = forge.Kind(parts[0])
-			parts = parts[1:]
+		if k := r.PathValue("forge"); k != "" {
+			kind = forge.Kind(k)
+			if !kind.Valid() {
+				http.NotFound(w, r)
+				return
+			}
 		}
 
-		var owner, name, prNumberStr string
-		switch {
-		case len(parts) == 2:
-			owner, name = parts[0], parts[1]
-		case len(parts) == 4 && parts[2] == "pr":
-			owner, name, prNumberStr = parts[0], parts[1], parts[3]
-		default:
-			http.NotFound(w, r)
-			return
-		}
-		if owner == "" || name == "" {
-			http.NotFound(w, r)
-			return
-		}
-
-		ref := forge.RepoRef{Forge: kind, Owner: owner, Name: name}
+		ref := forge.RepoRef{Forge: kind, Owner: r.PathValue("owner"), Name: r.PathValue("name")}
 		if !deps.Repos.Contains(ref.String()) {
 			http.NotFound(w, r)
 			return
 		}
 
-		if prNumberStr != "" {
+		if prNumberStr := r.PathValue("number"); prNumberStr != "" {
 			servePRDetail(w, r, deps, ref, prNumberStr)
 		} else {
 			serveRepoDetail(w, r, deps, ref)
