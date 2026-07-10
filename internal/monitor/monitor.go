@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Mic92/gitea-mq/internal/forge"
+	"github.com/Mic92/gitea-mq/internal/logutil"
 	"github.com/Mic92/gitea-mq/internal/merge"
 	"github.com/Mic92/gitea-mq/internal/queue"
 	"github.com/Mic92/gitea-mq/internal/store/pg"
@@ -160,10 +161,10 @@ func skipPendingMirroredStatuses(ctx context.Context, f forge.Forge, owner, repo
 		if c.State != pg.CheckStatePending || c.Description != merge.StaleMirrorDescription {
 			continue
 		}
-		_ = f.MirrorCheck(ctx, owner, repo, sha, ctxName, forge.Check{
+		logutil.WarnIfErr(f.MirrorCheck(ctx, owner, repo, sha, ctxName, forge.Check{
 			State:       forge.CheckState("skipped"),
 			Description: merge.StaleMirrorDescription,
-		})
+		}), "mirror check skip failed", "sha", sha, "context", ctxName)
 	}
 }
 
