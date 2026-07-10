@@ -401,59 +401,40 @@ func (c *HTTPClient) redact(s string) string {
 //
 // On conflict git merge exits non-zero and we return a MergeConflictError.
 func (c *HTTPClient) MergeBranches(ctx context.Context, owner, repo, base, head, branchName string) (*MergeResult, error) {
-	tmpDir, err := os.MkdirTemp("", "gitea-mq-merge-*")
+	gitRun, cleanup, err := gitTempRepo(ctx, "gitea-mq-merge-*",
+		"GIT_AUTHOR_NAME=gitea-mq", "GIT_AUTHOR_EMAIL=gitea-mq@localhost",
+		"GIT_COMMITTER_NAME=gitea-mq", "GIT_COMMITTER_EMAIL=gitea-mq@localhost")
 	if err != nil {
-		return nil, fmt.Errorf("create temp dir: %w", err)
+		return nil, err
 	}
-	defer func() {
-		if err := os.RemoveAll(tmpDir); err != nil {
-			slog.Warn("failed to remove temp dir", "path", tmpDir, "error", err)
-		}
-	}()
+	defer cleanup()
 
-	cloneURL := fmt.Sprintf("%s/%s/%s.git", c.baseURL, owner, repo)
-
-	// Use token auth via URL for git push.
-	authedURL := fmt.Sprintf(
-		"%s://gitea-mq:%s@%s",
-		cloneURL[:strings.Index(cloneURL, "://")],
-		c.token,
-		cloneURL[strings.Index(cloneURL, "://")+3:],
-	)
-
+	// Wrap the runner so failures carry the redacted command line and output.
 	run := func(args ...string) ([]byte, error) {
-		cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-		cmd.Dir = tmpDir
-		cmd.Env = append(
-			os.Environ(),
-			"GIT_TERMINAL_PROMPT=0",
-			"GIT_AUTHOR_NAME=gitea-mq",
-			"GIT_AUTHOR_EMAIL=gitea-mq@localhost",
-			"GIT_COMMITTER_NAME=gitea-mq",
-			"GIT_COMMITTER_EMAIL=gitea-mq@localhost",
-		)
-		out, err := cmd.CombinedOutput()
+		out, err := gitRun(args...)
 		if err != nil {
-			return out, fmt.Errorf("%s: %w\n%s", c.redact(strings.Join(args, " ")), err, c.redact(string(out)))
+			return out, fmt.Errorf("git %s: %w\n%s", c.redact(strings.Join(args, " ")), err, c.redact(string(out)))
 		}
 		return out, nil
 	}
 
+	authedURL := c.authedCloneURL(owner, repo)
+
 	// Full clone of the base branch. We need enough history for git to
 	// find the common ancestor with the PR head, so shallow clones don't
 	// work reliably here.
-	if _, err := run("git", "clone", "--single-branch", "--branch", base, authedURL, "."); err != nil {
+	if _, err := run("clone", "--single-branch", "--branch", base, authedURL, "."); err != nil {
 		return nil, fmt.Errorf("clone: %w", err)
 	}
 
 	// Fetch the PR head SHA so we can merge it.
-	if _, err := run("git", "fetch", "origin", head); err != nil {
+	if _, err := run("fetch", "origin", head); err != nil {
 		return nil, fmt.Errorf("fetch head: %w", err)
 	}
 
 	// Merge head into base. --no-ff ensures a merge commit even if fast-forward
 	// is possible, so CI always sees the combined result.
-	mergeOut, mergeErr := run("git", "merge", "--no-ff", "-m", "mq: merge "+head+" into "+base, "FETCH_HEAD")
+	mergeOut, mergeErr := run("merge", "--no-ff", "-m", "mq: merge "+head+" into "+base, "FETCH_HEAD")
 	if mergeErr != nil {
 		// Check if this is a merge conflict.
 		if strings.Contains(string(mergeOut), "CONFLICT") || strings.Contains(string(mergeOut), "Automatic merge failed") {
@@ -463,12 +444,12 @@ func (c *HTTPClient) MergeBranches(ctx context.Context, owner, repo, base, head,
 	}
 
 	// Push as the requested branch name.
-	if _, err := run("git", "push", "origin", "HEAD:refs/heads/"+branchName); err != nil {
+	if _, err := run("push", "origin", "HEAD:refs/heads/"+branchName); err != nil {
 		return nil, fmt.Errorf("push: %w", err)
 	}
 
 	// Read the merge commit SHA.
-	shaOut, err := run("git", "rev-parse", "HEAD")
+	shaOut, err := run("rev-parse", "HEAD")
 	if err != nil {
 		return nil, fmt.Errorf("rev-parse: %w", err)
 	}
