@@ -242,6 +242,16 @@ func (s *Service) List(ctx context.Context, repoID int64, targetBranch string) (
 	return entries, nil
 }
 
+// Position returns the PR's 1-based position among active entries for its
+// target branch, or 0 when the PR is not queued.
+func (s *Service) Position(ctx context.Context, repoID int64, targetBranch string, prNumber int64) (int64, error) {
+	return s.queries().CountQueuePosition(ctx, pg.CountQueuePositionParams{
+		RepoID:       repoID,
+		TargetBranch: targetBranch,
+		PrNumber:     prNumber,
+	})
+}
+
 // UpdateState transitions a queue entry to a new state.
 func (s *Service) UpdateState(ctx context.Context, repoID, prNumber int64, state pg.EntryState) error {
 	return s.queries().UpdateEntryState(ctx, pg.UpdateEntryStateParams{

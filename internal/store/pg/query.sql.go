@@ -45,7 +45,10 @@ func (q *Queries) ClearEntryMergeBranch(ctx context.Context, ids []int64) error 
 const countQueuePosition = `-- name: CountQueuePosition :one
 SELECT COUNT(*) FROM queue_entries qe
 WHERE qe.repo_id = $1 AND qe.target_branch = $2
-  AND qe.enqueued_at <= (SELECT qe2.enqueued_at FROM queue_entries qe2 WHERE qe2.repo_id = $1 AND qe2.pr_number = $3)
+  AND qe.state NOT IN ('failed', 'cancelled')
+  AND qe.enqueued_at <= (SELECT qe2.enqueued_at FROM queue_entries qe2
+                         WHERE qe2.repo_id = $1 AND qe2.pr_number = $3
+                           AND qe2.state NOT IN ('failed', 'cancelled'))
 `
 
 type CountQueuePositionParams struct {

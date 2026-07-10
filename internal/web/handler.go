@@ -400,18 +400,11 @@ func servePRDetail(w http.ResponseWriter, r *http.Request, deps *Deps, ref forge
 		data.EnqueuedAt = entry.EnqueuedAt.Time.UTC()
 	}
 
-	// Determine queue position.
-	entries, err := deps.Queue.ListActiveEntries(ctx, repo.ID)
+	pos, err := deps.Queue.Position(ctx, repo.ID, entry.TargetBranch, prNumber)
 	if err != nil {
-		slog.Error("failed to list active entries", "error", err)
-	} else {
-		for i, e := range entries {
-			if e.PrNumber == prNumber {
-				data.Position = i + 1
-				break
-			}
-		}
+		slog.Error("failed to compute queue position", "pr", prNumber, "error", err)
 	}
+	data.Position = int(pos)
 
 	// Fetch PR title/author from the forge (graceful degradation).
 	f := forgeFor(deps, ref)
