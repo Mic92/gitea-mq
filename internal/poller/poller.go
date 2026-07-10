@@ -49,6 +49,22 @@ type Deps struct {
 	// work. Safe only on forges that deliver CI status via webhooks (GitHub);
 	// must stay false for Gitea/Forgejo, which have no commit-status webhook.
 	IdleGating bool
+	// Now overrides the wall clock in timeout checks; nil means time.Now.
+	// Tests use it instead of sleeping past real timeouts.
+	Now func() time.Time
+	// Ticks replaces Run's periodic ticker when non-nil so tests can drive
+	// polls deterministically.
+	Ticks <-chan time.Time
+	// TickDone, when non-nil, is signalled after each trigger/tick has been
+	// fully handled, letting tests sequence polls without sleeping.
+	TickDone chan<- struct{}
+}
+
+func (d *Deps) now() time.Time {
+	if d.Now != nil {
+		return d.Now()
+	}
+	return time.Now()
 }
 
 type PollResult struct {
@@ -386,7 +402,7 @@ func reconcileEntries(ctx context.Context, deps *Deps, result *PollResult, openP
 // merged by the forge within SuccessTimeout, which usually points at a branch
 // protection misconfiguration.
 func handleSuccessTimeout(ctx context.Context, deps *Deps, result *PollResult, entry *pg.QueueEntry) {
-	if entry.State != pg.EntryStateSuccess || !timedOut(entry.CompletedAt, deps.SuccessTimeout) {
+	if entry.State != pg.EntryStateSuccess || !timedOut(deps.now(), entry.CompletedAt, deps.SuccessTimeout) {
 		return
 	}
 
@@ -408,7 +424,7 @@ func handleTestingTimeout(ctx context.Context, deps *Deps, result *PollResult, e
 	if entry.ActiveBatchID.Valid {
 		return
 	}
-	if entry.State != pg.EntryStateTesting || !timedOut(entry.TestingStartedAt, deps.CheckTimeout) {
+	if entry.State != pg.EntryStateTesting || !timedOut(deps.now(), entry.TestingStartedAt, deps.CheckTimeout) {
 		return
 	}
 
@@ -421,10 +437,10 @@ func handleTestingTimeout(ctx context.Context, deps *Deps, result *PollResult, e
 	})
 }
 
-// timedOut reports whether ts is set and lies more than timeout in the past.
+// timedOut reports whether ts is set and lies more than timeout before now.
 // A non-positive timeout disables the check.
-func timedOut(ts pgtype.Timestamptz, timeout time.Duration) bool {
-	return timeout > 0 && ts.Valid && time.Since(ts.Time) > timeout
+func timedOut(now time.Time, ts pgtype.Timestamptz, timeout time.Duration) bool {
+	return timeout > 0 && ts.Valid && now.Sub(ts.Time) > timeout
 }
 
 // timedOutRemoval describes how a timed-out entry is reported before removal.
@@ -543,6 +559,12 @@ func hasActiveWork(ctx context.Context, deps *Deps) bool {
 	return len(entries) > 0
 }
 
+func notifyTickDone(deps *Deps) {
+	if deps.TickDone != nil {
+		deps.TickDone <- struct{}{}
+	}
+}
+
 // Run starts the polling loop. The first poll happens immediately. idleInterval
 // throttles reconciles for idle repos only when deps.IdleGating is set.
 func Run(ctx context.Context, deps *Deps, interval, idleInterval time.Duration) {
@@ -574,8 +596,12 @@ func Run(ctx context.Context, deps *Deps, interval, idleInterval time.Duration) 
 	if idleInterval < interval {
 		idleInterval = interval
 	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	ticks := deps.Ticks
+	if ticks == nil {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		ticks = ticker.C
+	}
 	lastFull := time.Now()
 
 	for {
@@ -586,12 +612,14 @@ func Run(ctx context.Context, deps *Deps, interval, idleInterval time.Duration) 
 		case <-deps.Trigger:
 			doPoll(false)
 			lastFull = time.Now()
-		case <-ticker.C:
-			if deps.IdleGating && !hasActiveWork(ctx, deps) && time.Since(lastFull) < idleInterval {
-				continue
+			notifyTickDone(deps)
+		case <-ticks:
+			skipIdle := deps.IdleGating && !hasActiveWork(ctx, deps) && time.Since(lastFull) < idleInterval
+			if !skipIdle {
+				doPoll(true)
+				lastFull = time.Now()
 			}
-			doPoll(true)
-			lastFull = time.Now()
+			notifyTickDone(deps)
 		}
 	}
 }
