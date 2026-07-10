@@ -52,15 +52,25 @@ func mockAutomergePRs(mock *gitea.MockClient, prs ...gitea.PR) {
 	}
 }
 
-// runPollerFor runs poller.Run with the given intervals until wait elapses.
-func runPollerFor(ctx context.Context, deps *poller.Deps, tick, idle, wait time.Duration) {
+// runPollerTicks runs poller.Run driven by an injected tick channel and
+// delivers n ticks, waiting for each to be fully handled via TickDone, so no
+// wall-clock sleeps and no ticks racing cancellation.
+func runPollerTicks(ctx context.Context, deps *poller.Deps, n int) {
+	ticks := make(chan time.Time)
+	tickDone := make(chan struct{})
+	deps.Ticks = ticks
+	deps.TickDone = tickDone
+
 	runCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {
-		poller.Run(runCtx, deps, tick, idle)
+		poller.Run(runCtx, deps, time.Hour, time.Hour)
 		close(done)
 	}()
-	time.Sleep(wait)
+	for range n {
+		ticks <- time.Now()
+		<-tickDone
+	}
 	cancel()
 	<-done
 }
@@ -372,7 +382,8 @@ func TestPollOnce_Timeouts(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = svc.UpdateState(ctx, repoID, 42, tc.state)
-			time.Sleep(5 * time.Millisecond)
+			// Fake clock past the 1ms timeout instead of sleeping.
+			deps.Now = func() time.Time { return time.Now().Add(time.Second) }
 
 			mockAutomergePRs(mock, makePR(42, "sha42", "main"))
 
@@ -538,8 +549,8 @@ func TestRun_IdleRepoSkipsPeriodicPoll(t *testing.T) {
 		return nil, nil
 	}
 
-	// Fast tick, long idle interval: idle repo polls only at startup.
-	runPollerFor(ctx, deps, 5*time.Millisecond, time.Hour, 100*time.Millisecond)
+	// Long idle interval: idle repo polls only at startup despite ticks.
+	runPollerTicks(ctx, deps, 5)
 
 	if listed != 1 {
 		t.Fatalf("idle repo polled forge %d times, want 1 (startup only)", listed)
@@ -559,7 +570,7 @@ func TestRun_NoIdleGatingPollsEveryTick(t *testing.T) {
 		return nil, nil
 	}
 
-	runPollerFor(ctx, deps, 5*time.Millisecond, time.Hour, 60*time.Millisecond)
+	runPollerTicks(ctx, deps, 4)
 
 	// Startup poll plus several periodic polls despite the repo being idle.
 	if listed < 3 {
@@ -573,8 +584,13 @@ func TestRun_TriggerPollsIdleRepo(t *testing.T) {
 	deps, mock, _, ctx, _ := setupPollerTest(t)
 	deps.IdleGating = true
 
-	trigger := make(chan struct{}, 1)
+	trigger := make(chan struct{})
 	deps.Trigger = trigger
+
+	// TickDone tells us when the triggered poll finished; the real ticker
+	// (1h interval) never fires within the test.
+	tickDone := make(chan struct{})
+	deps.TickDone = tickDone
 
 	var listed int
 	mock.ListOpenPRsFn = func(_ context.Context, _, _ string) ([]gitea.PR, error) {
@@ -591,10 +607,10 @@ func TestRun_TriggerPollsIdleRepo(t *testing.T) {
 		close(done)
 	}()
 
-	// Let the startup poll settle, then fire a webhook-style trigger.
-	time.Sleep(20 * time.Millisecond)
+	// Fire a webhook-style trigger and wait until it is fully handled so the
+	// poll count is deterministic.
 	trigger <- struct{}{}
-	time.Sleep(50 * time.Millisecond)
+	<-tickDone
 	cancel()
 	<-done
 
