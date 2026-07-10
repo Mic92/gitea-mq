@@ -15,6 +15,7 @@ import (
 	"github.com/Mic92/gitea-mq/internal/monitor"
 	"github.com/Mic92/gitea-mq/internal/queue"
 	"github.com/Mic92/gitea-mq/internal/store/pg"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Deps struct {
@@ -385,8 +386,7 @@ func reconcileEntries(ctx context.Context, deps *Deps, result *PollResult, openP
 // merged by the forge within SuccessTimeout, which usually points at a branch
 // protection misconfiguration.
 func handleSuccessTimeout(ctx context.Context, deps *Deps, result *PollResult, entry *pg.QueueEntry) {
-	if entry.State != pg.EntryStateSuccess || deps.SuccessTimeout <= 0 ||
-		!entry.CompletedAt.Valid || time.Since(entry.CompletedAt.Time) <= deps.SuccessTimeout {
+	if entry.State != pg.EntryStateSuccess || !timedOut(entry.CompletedAt, deps.SuccessTimeout) {
 		return
 	}
 
@@ -408,8 +408,7 @@ func handleTestingTimeout(ctx context.Context, deps *Deps, result *PollResult, e
 	if entry.ActiveBatchID.Valid {
 		return
 	}
-	if entry.State != pg.EntryStateTesting || deps.CheckTimeout <= 0 ||
-		!entry.TestingStartedAt.Valid || time.Since(entry.TestingStartedAt.Time) <= deps.CheckTimeout {
+	if entry.State != pg.EntryStateTesting || !timedOut(entry.TestingStartedAt, deps.CheckTimeout) {
 		return
 	}
 
@@ -420,6 +419,12 @@ func handleTestingTimeout(ctx context.Context, deps *Deps, result *PollResult, e
 		comment:           "⚠️ Removed from merge queue: CI did not report a status within the timeout. The CI server may have lost the build.",
 		logMsg:            "removed PR due to testing timeout",
 	})
+}
+
+// timedOut reports whether ts is set and lies more than timeout in the past.
+// A non-positive timeout disables the check.
+func timedOut(ts pgtype.Timestamptz, timeout time.Duration) bool {
+	return timeout > 0 && ts.Valid && time.Since(ts.Time) > timeout
 }
 
 // timedOutRemoval describes how a timed-out entry is reported before removal.
