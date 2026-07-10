@@ -647,5 +647,21 @@ func (c *HTTPClient) CreateWebhook(ctx context.Context, owner, repo string, opts
 		fmt.Sprintf("create webhook in %s/%s", owner, repo))
 }
 
+// ServerVersion returns the Gitea/Forgejo server version string.
+// GET /version
+func (c *HTTPClient) ServerVersion(ctx context.Context) (string, error) {
+	resp, err := c.do(ctx, http.MethodGet, "/version", nil)
+	if err != nil {
+		return "", err
+	}
+	var v struct {
+		Version string `json:"version"`
+	}
+	if err := c.decodeJSON(resp, &v); err != nil {
+		return "", fmt.Errorf("get server version: %w", err)
+	}
+	return v.Version, nil
+}
+
 // Ensure HTTPClient implements Client at compile time.
 var _ Client = (*HTTPClient)(nil)

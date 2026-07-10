@@ -247,4 +247,8 @@ type Client interface {
 	// CreateWebhook creates a webhook on a repository.
 	// POST /repos/{owner}/{repo}/hooks
 	CreateWebhook(ctx context.Context, owner, repo string, opts CreateWebhookOpts) error
+
+	// ServerVersion returns the Gitea/Forgejo server version string.
+	// GET /version
+	ServerVersion(ctx context.Context) (string, error)
 }
