@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/Mic92/gitea-mq/internal/forge"
 )
@@ -15,6 +18,9 @@ import (
 type giteaForge struct {
 	client  Client
 	baseURL string
+
+	capsOnce sync.Once
+	caps     forge.Capabilities
 }
 
 // NewForge wraps a Gitea Client as a forge.Forge. baseURL is the Gitea
@@ -46,9 +52,22 @@ func (f *giteaForge) StackMerges(ctx context.Context, owner, repo, base string, 
 
 func (f *giteaForge) Kind() forge.Kind { return forge.KindGitea }
 
-// Gitea/Forgejo have no commit-status webhook; CI results are polled.
+// Capabilities probes the server version once: Gitea >= 1.24 delivers
+// commit-status webhooks, older Gitea and Forgejo must be polled. On probe
+// failure it stays at the polling default.
 func (f *giteaForge) Capabilities() forge.Capabilities {
-	return forge.Capabilities{StatusWebhook: false}
+	f.capsOnce.Do(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		version, err := f.client.ServerVersion(ctx)
+		if err != nil {
+			slog.Warn("gitea: server version probe failed, assuming no status webhook", "error", err)
+			return
+		}
+		f.caps.StatusWebhook = supportsStatusWebhook(version)
+		slog.Info("gitea: server capabilities detected", "version", version, "status_webhook", f.caps.StatusWebhook)
+	})
+	return f.caps
 }
 
 func (f *giteaForge) RepoHTMLURL(owner, name string) string {

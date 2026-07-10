@@ -250,3 +250,33 @@ func TestForge_URLHelpers(t *testing.T) {
 		t.Errorf("BranchHTMLURL = %q", got)
 	}
 }
+
+func TestForge_Capabilities(t *testing.T) {
+	cases := []struct {
+		name    string
+		version string
+		err     error
+		want    bool
+	}{
+		{"gitea 1.24", "1.24.2", nil, true},
+		{"gitea 1.23", "1.23.5", nil, false},
+		{"forgejo compat 1.22", "11.0.1+gitea-1.22.0", nil, false},
+		{"probe failure", "", errors.New("boom"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mock := &gitea.MockClient{
+				ServerVersionFn: func(context.Context) (string, error) { return tc.version, tc.err },
+			}
+			f := newForge(mock)
+			if got := f.Capabilities().StatusWebhook; got != tc.want {
+				t.Fatalf("StatusWebhook = %v, want %v", got, tc.want)
+			}
+			// Result is cached; a second call must not probe again.
+			f.Capabilities()
+			if calls := len(mock.CallsTo("ServerVersion")); calls != 1 {
+				t.Fatalf("ServerVersion calls = %d, want 1", calls)
+			}
+		})
+	}
+}
