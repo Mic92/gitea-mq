@@ -267,6 +267,16 @@ func (s *Server) repo(r *http.Request) (*Repo, bool) {
 	return repo, ok
 }
 
+// repoOr404 resolves the repo from the request path, replying 404 when the
+// repo is unknown so handlers only need the ok check.
+func (s *Server) repoOr404(w http.ResponseWriter, r *http.Request) (*Repo, bool) {
+	rp, ok := s.repo(r)
+	if !ok {
+		http.NotFound(w, r)
+	}
+	return rp, ok
+}
+
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
@@ -329,18 +339,16 @@ func repoJSON(r *Repo) map[string]any {
 }
 
 func (s *Server) hGetRepo(w http.ResponseWriter, r *http.Request) {
-	rp, ok := s.repo(r)
+	rp, ok := s.repoOr404(w, r)
 	if !ok {
-		http.NotFound(w, r)
 		return
 	}
 	writeJSON(w, 200, repoJSON(rp))
 }
 
 func (s *Server) hPatchRepo(w http.ResponseWriter, r *http.Request) {
-	rp, ok := s.repo(r)
+	rp, ok := s.repoOr404(w, r)
 	if !ok {
-		http.NotFound(w, r)
 		return
 	}
 	var body map[string]any
@@ -378,9 +386,8 @@ func prJSON(owner, name string, p *PR) map[string]any {
 }
 
 func (s *Server) hListPRs(w http.ResponseWriter, r *http.Request) {
-	rp, ok := s.repo(r)
+	rp, ok := s.repoOr404(w, r)
 	if !ok {
-		http.NotFound(w, r)
 		return
 	}
 	state := r.URL.Query().Get("state")
@@ -397,9 +404,8 @@ func (s *Server) hListPRs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hGetPR(w http.ResponseWriter, r *http.Request) {
-	rp, ok := s.repo(r)
+	rp, ok := s.repoOr404(w, r)
 	if !ok {
-		http.NotFound(w, r)
 		return
 	}
 	n, _ := strconv.ParseInt(r.PathValue("n"), 10, 64)
@@ -414,9 +420,8 @@ func (s *Server) hGetPR(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hEditPR(w http.ResponseWriter, r *http.Request) {
-	rp, ok := s.repo(r)
+	rp, ok := s.repoOr404(w, r)
 	if !ok {
-		http.NotFound(w, r)
 		return
 	}
 	n, _ := strconv.ParseInt(r.PathValue("n"), 10, 64)
@@ -439,9 +444,8 @@ func (s *Server) hEditPR(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hCreatePR(w http.ResponseWriter, r *http.Request) {
-	rp, ok := s.repo(r)
+	rp, ok := s.repoOr404(w, r)
 	if !ok {
-		http.NotFound(w, r)
 		return
 	}
 	var body struct{ Title, Head, Base string }
@@ -458,8 +462,7 @@ func (s *Server) hCreatePR(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hCreateComment(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.repo(r); !ok {
-		http.NotFound(w, r)
+	if _, ok := s.repoOr404(w, r); !ok {
 		return
 	}
 	writeJSON(w, 201, map[string]any{"id": s.nextID()})
@@ -480,9 +483,8 @@ func checkRunJSON(c *CheckRun) map[string]any {
 }
 
 func (s *Server) hCreateCheckRun(w http.ResponseWriter, r *http.Request) {
-	rp, ok := s.repo(r)
+	rp, ok := s.repoOr404(w, r)
 	if !ok {
-		http.NotFound(w, r)
 		return
 	}
 	var body struct {
@@ -506,9 +508,8 @@ func (s *Server) hCreateCheckRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hUpdateCheckRun(w http.ResponseWriter, r *http.Request) {
-	rp, ok := s.repo(r)
+	rp, ok := s.repoOr404(w, r)
 	if !ok {
-		http.NotFound(w, r)
 		return
 	}
 	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -547,9 +548,8 @@ func (s *Server) hUpdateCheckRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hListCheckRuns(w http.ResponseWriter, r *http.Request) {
-	rp, ok := s.repo(r)
+	rp, ok := s.repoOr404(w, r)
 	if !ok {
-		http.NotFound(w, r)
 		return
 	}
 	sha := r.PathValue("sha")
@@ -567,8 +567,7 @@ func (s *Server) hListCheckRuns(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hListStatuses(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.repo(r); !ok {
-		http.NotFound(w, r)
+	if _, ok := s.repoOr404(w, r); !ok {
 		return
 	}
 	writeJSON(w, 200, []any{})
@@ -577,9 +576,8 @@ func (s *Server) hListStatuses(w http.ResponseWriter, r *http.Request) {
 // --- handlers: refs / merge ---
 
 func (s *Server) hGetRef(w http.ResponseWriter, r *http.Request) {
-	rp, ok := s.repo(r)
+	rp, ok := s.repoOr404(w, r)
 	if !ok {
-		http.NotFound(w, r)
 		return
 	}
 	branch := strings.TrimPrefix(r.PathValue("ref"), "heads/")
@@ -594,9 +592,8 @@ func (s *Server) hGetRef(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hCreateRef(w http.ResponseWriter, r *http.Request) {
-	rp, ok := s.repo(r)
+	rp, ok := s.repoOr404(w, r)
 	if !ok {
-		http.NotFound(w, r)
 		return
 	}
 	var body struct {
@@ -626,9 +623,8 @@ func (s *Server) hCreateRef(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hUpdateRef(w http.ResponseWriter, r *http.Request) {
-	rp, ok := s.repo(r)
+	rp, ok := s.repoOr404(w, r)
 	if !ok {
-		http.NotFound(w, r)
 		return
 	}
 	branch := strings.TrimPrefix(r.PathValue("ref"), "heads/")
@@ -664,9 +660,8 @@ func (s *Server) hUpdateRef(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hDeleteRef(w http.ResponseWriter, r *http.Request) {
-	rp, ok := s.repo(r)
+	rp, ok := s.repoOr404(w, r)
 	if !ok {
-		http.NotFound(w, r)
 		return
 	}
 	branch := strings.TrimPrefix(r.PathValue("ref"), "heads/")
@@ -682,9 +677,8 @@ func (s *Server) hDeleteRef(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hListBranches(w http.ResponseWriter, r *http.Request) {
-	rp, ok := s.repo(r)
+	rp, ok := s.repoOr404(w, r)
 	if !ok {
-		http.NotFound(w, r)
 		return
 	}
 	s.mu.Lock()
@@ -697,9 +691,8 @@ func (s *Server) hListBranches(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hMerge(w http.ResponseWriter, r *http.Request) {
-	rp, ok := s.repo(r)
+	rp, ok := s.repoOr404(w, r)
 	if !ok {
-		http.NotFound(w, r)
 		return
 	}
 	var body struct{ Base, Head, CommitMessage string }
@@ -721,9 +714,8 @@ func (s *Server) hMerge(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hCompare(w http.ResponseWriter, r *http.Request) {
-	rp, ok := s.repo(r)
+	rp, ok := s.repoOr404(w, r)
 	if !ok {
-		http.NotFound(w, r)
 		return
 	}
 	s.mu.Lock()
@@ -735,9 +727,8 @@ func (s *Server) hCompare(w http.ResponseWriter, r *http.Request) {
 // --- handlers: rules ---
 
 func (s *Server) hRulesForBranch(w http.ResponseWriter, r *http.Request) {
-	rp, ok := s.repo(r)
+	rp, ok := s.repoOr404(w, r)
 	if !ok {
-		http.NotFound(w, r)
 		return
 	}
 	b := r.PathValue("b")
@@ -763,9 +754,8 @@ func (s *Server) hRulesForBranch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hListRulesets(w http.ResponseWriter, r *http.Request) {
-	rp, ok := s.repo(r)
+	rp, ok := s.repoOr404(w, r)
 	if !ok {
-		http.NotFound(w, r)
 		return
 	}
 	s.mu.Lock()
@@ -774,9 +764,8 @@ func (s *Server) hListRulesets(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hCreateRuleset(w http.ResponseWriter, r *http.Request) {
-	rp, ok := s.repo(r)
+	rp, ok := s.repoOr404(w, r)
 	if !ok {
-		http.NotFound(w, r)
 		return
 	}
 	var rs Ruleset
