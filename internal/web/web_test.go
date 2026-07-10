@@ -11,6 +11,7 @@ import (
 
 	"github.com/Mic92/gitea-mq/internal/forge"
 	"github.com/Mic92/gitea-mq/internal/gitea"
+	"github.com/Mic92/gitea-mq/internal/queue"
 	"github.com/Mic92/gitea-mq/internal/store/pg"
 	"github.com/Mic92/gitea-mq/internal/testutil"
 	"github.com/Mic92/gitea-mq/internal/web"
@@ -41,6 +42,29 @@ func giteaForges(mock *gitea.MockClient) *forge.Set {
 	return s
 }
 
+// newDeps builds web.Deps with the given repos registered and a default
+// refresh interval; tests tweak fields afterwards as needed.
+func newDeps(svc *queue.Service, forges *forge.Set, repos ...forge.RepoRef) *web.Deps {
+	return &web.Deps{
+		Queue:           svc,
+		Forges:          forges,
+		Repos:           &staticRepoLister{repos: repos},
+		RefreshInterval: 10,
+	}
+}
+
+// getPage serves a GET request against a fresh mux and returns the body,
+// failing the test unless the response is 200.
+func getPage(t *testing.T, deps *web.Deps, path string) string {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	web.NewMux(deps).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET %s: expected 200, got %d", path, rec.Code)
+	}
+	return rec.Body.String()
+}
+
 func TestOverviewShowsRepoAndQueueData(t *testing.T) {
 	svc, ctx, repoID := testutil.TestQueueService(t)
 	if _, err := svc.Enqueue(ctx, repoID, 42, "abc123", "main"); err != nil {
@@ -50,26 +74,13 @@ func TestOverviewShowsRepoAndQueueData(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	deps := &web.Deps{
-		Queue: svc,
-		Repos: &staticRepoLister{repos: []forge.RepoRef{
-			giteaRef("org", "app"),
-			giteaRef("org", "lib"),
-			{Forge: forge.KindGithub, Owner: "ghorg", Name: "proj"},
-		}},
-		RefreshInterval: 5,
-	}
+	deps := newDeps(svc, nil,
+		giteaRef("org", "app"),
+		giteaRef("org", "lib"),
+		forge.RepoRef{Forge: forge.KindGithub, Owner: "ghorg", Name: "proj"})
+	deps.RefreshInterval = 5
 
-	mux := web.NewMux(deps)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec.Code)
-	}
-
-	body := rec.Body.String()
+	body := getPage(t, deps, "/")
 
 	// Both repos listed as links.
 	if !strings.Contains(body, `href="/repo/gitea/org/app"`) {
@@ -106,18 +117,7 @@ func TestOverviewShowsRepoAndQueueData(t *testing.T) {
 func TestOverviewNoReposShowsHelpMessage(t *testing.T) {
 	svc, _, _ := testutil.TestQueueService(t)
 
-	deps := &web.Deps{
-		Queue:           svc,
-		Repos:           &staticRepoLister{repos: nil},
-		RefreshInterval: 10,
-	}
-
-	mux := web.NewMux(deps)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	body := rec.Body.String()
+	body := getPage(t, newDeps(svc, nil), "/")
 	if !strings.Contains(body, "No repositories discovered yet") {
 		t.Errorf("expected helpful setup message, got:\n%s", body)
 	}
@@ -138,22 +138,7 @@ func TestRepoDetailShowsPRs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	deps := &web.Deps{
-		Queue:           svc,
-		Repos:           &staticRepoLister{repos: []forge.RepoRef{giteaRef("org", "app")}},
-		RefreshInterval: 10,
-	}
-
-	mux := web.NewMux(deps)
-	req := httptest.NewRequest(http.MethodGet, "/repo/org/app", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec.Code)
-	}
-
-	body := rec.Body.String()
+	body := getPage(t, newDeps(svc, nil, giteaRef("org", "app")), "/repo/org/app")
 
 	// Both PRs listed as links to PR detail pages.
 	if !strings.Contains(body, `href="/repo/gitea/org/app/pr/42"`) {
@@ -203,23 +188,7 @@ func TestPRDetailHeadOfQueueTesting(t *testing.T) {
 		}, nil
 	}
 
-	deps := &web.Deps{
-		Queue:           svc,
-		Repos:           &staticRepoLister{repos: []forge.RepoRef{giteaRef("org", "app")}},
-		Forges:          giteaForges(mock),
-		RefreshInterval: 10,
-	}
-
-	mux := web.NewMux(deps)
-	req := httptest.NewRequest(http.MethodGet, "/repo/org/app/pr/42", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec.Code)
-	}
-
-	body := rec.Body.String()
+	body := getPage(t, newDeps(svc, giteaForges(mock), giteaRef("org", "app")), "/repo/org/app/pr/42")
 	if !strings.Contains(body, "Fix login bug") {
 		t.Error("expected PR title")
 	}
@@ -282,23 +251,7 @@ func TestPRDetailNonHeadQueued(t *testing.T) {
 		return &gitea.PR{Index: index, Title: "Some PR", User: &gitea.User{Login: "bob"}}, nil
 	}
 
-	deps := &web.Deps{
-		Queue:           svc,
-		Repos:           &staticRepoLister{repos: []forge.RepoRef{giteaRef("org", "app")}},
-		Forges:          giteaForges(mock),
-		RefreshInterval: 10,
-	}
-
-	mux := web.NewMux(deps)
-	req := httptest.NewRequest(http.MethodGet, "/repo/org/app/pr/43", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec.Code)
-	}
-
-	body := rec.Body.String()
+	body := getPage(t, newDeps(svc, giteaForges(mock), giteaRef("org", "app")), "/repo/org/app/pr/43")
 	if !strings.Contains(body, "queued") {
 		t.Error("expected queued state")
 	}
@@ -323,23 +276,7 @@ func TestPRDetailGiteaAPIFailure(t *testing.T) {
 		return nil, fmt.Errorf("connection refused")
 	}
 
-	deps := &web.Deps{
-		Queue:           svc,
-		Repos:           &staticRepoLister{repos: []forge.RepoRef{giteaRef("org", "app")}},
-		Forges:          giteaForges(mock),
-		RefreshInterval: 10,
-	}
-
-	mux := web.NewMux(deps)
-	req := httptest.NewRequest(http.MethodGet, "/repo/org/app/pr/42", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 even on API failure, got %d", rec.Code)
-	}
-
-	body := rec.Body.String()
+	body := getPage(t, newDeps(svc, giteaForges(mock), giteaRef("org", "app")), "/repo/org/app/pr/42")
 	// Should show placeholders.
 	if !strings.Contains(body, "—") {
 		t.Error("expected '—' placeholder for title/author on API failure")
@@ -352,12 +289,7 @@ func TestPRDetailGiteaAPIFailure(t *testing.T) {
 
 func TestRepoHandler_ForgeRouting(t *testing.T) {
 	svc, _, _ := testutil.TestQueueService(t)
-	deps := &web.Deps{
-		Queue:  svc,
-		Forges: giteaForges(&gitea.MockClient{}),
-		Repos:  &staticRepoLister{repos: []forge.RepoRef{giteaRef("org", "app")}},
-	}
-	mux := web.NewMux(deps)
+	mux := web.NewMux(newDeps(svc, giteaForges(&gitea.MockClient{}), giteaRef("org", "app")))
 
 	for _, tc := range []struct {
 		path     string
