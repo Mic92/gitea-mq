@@ -7,6 +7,8 @@ package registry
 import (
 	"context"
 	"log/slog"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -259,6 +261,9 @@ func (r *RepoRegistry) List() []forge.RepoRef {
 	for _, m := range r.repos {
 		refs = append(refs, m.Ref)
 	}
+	slices.SortFunc(refs, func(a, b forge.RepoRef) int {
+		return strings.Compare(a.String(), b.String())
+	})
 	return refs
 }
 
