@@ -18,7 +18,7 @@ type MockForge struct {
 	mu    sync.Mutex
 	Calls []MockCall
 
-	KindVal Kind
+	KindVal         Kind
 	CapabilitiesVal Capabilities
 
 	RepoHTMLURLFn       func(owner, name string) string

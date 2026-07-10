@@ -11,6 +11,7 @@ import (
 
 	"github.com/Mic92/gitea-mq/internal/batch"
 	"github.com/Mic92/gitea-mq/internal/forge"
+	"github.com/Mic92/gitea-mq/internal/logutil"
 	"github.com/Mic92/gitea-mq/internal/merge"
 	"github.com/Mic92/gitea-mq/internal/monitor"
 	"github.com/Mic92/gitea-mq/internal/queue"
@@ -90,10 +91,10 @@ func removePR(ctx context.Context, deps *Deps, result *PollResult, entry *pg.Que
 	}
 
 	if opts.cancelAutomerge {
-		_ = deps.Forge.CancelAutoMerge(ctx, deps.Owner, deps.Repo, entry.PrNumber)
+		logutil.WarnIfErr(deps.Forge.CancelAutoMerge(ctx, deps.Owner, deps.Repo, entry.PrNumber), "cancel automerge failed", "pr", entry.PrNumber)
 	}
 	if opts.comment != "" {
-		_ = deps.Forge.Comment(ctx, deps.Owner, deps.Repo, entry.PrNumber, opts.comment)
+		logutil.WarnIfErr(deps.Forge.Comment(ctx, deps.Owner, deps.Repo, entry.PrNumber, opts.comment), "post comment failed", "pr", entry.PrNumber)
 	}
 	// The batch engine owns gitea-mq/batch/<id>; deleting it here can race a
 	// concurrent Build and cause MergeInto to fail with wrong attribution.
@@ -455,10 +456,10 @@ type timedOutRemoval struct {
 // (cancelling automerge and advancing the queue).
 func removeTimedOut(ctx context.Context, deps *Deps, result *PollResult, entry *pg.QueueEntry, opts timedOutRemoval) {
 	targetURL := forge.DashboardPRURL(deps.ExternalURL, deps.Forge.Kind(), deps.Owner, deps.Repo, entry.PrNumber)
-	_ = deps.Forge.SetMQStatus(ctx, deps.Owner, deps.Repo, entry.PrHeadSha, forge.MQStatus{
+	logutil.WarnIfErr(deps.Forge.SetMQStatus(ctx, deps.Owner, deps.Repo, entry.PrHeadSha, forge.MQStatus{
 		State: pg.CheckStateError, Description: opts.statusDescription, TargetURL: targetURL,
-	})
-	_ = deps.Queue.SetError(ctx, deps.RepoID, entry.PrNumber, opts.errorMessage)
+	}), "set mq status failed", "pr", entry.PrNumber)
+	logutil.WarnIfErr(deps.Queue.SetError(ctx, deps.RepoID, entry.PrNumber, opts.errorMessage), "set queue error failed", "pr", entry.PrNumber)
 
 	if err := removePR(ctx, deps, result, entry, removeOpts{
 		cancelAutomerge: true,
@@ -536,9 +537,9 @@ func tryFastForwardSuccess(ctx context.Context, deps *Deps, result *PollResult, 
 	}
 
 	targetURL := forge.DashboardPRURL(deps.ExternalURL, deps.Forge.Kind(), deps.Owner, deps.Repo, head.PrNumber)
-	_ = deps.Forge.SetMQStatus(ctx, deps.Owner, deps.Repo, head.PrHeadSha, forge.MQStatus{
+	logutil.WarnIfErr(deps.Forge.SetMQStatus(ctx, deps.Owner, deps.Repo, head.PrHeadSha, forge.MQStatus{
 		State: pg.CheckStateSuccess, Description: "Already up to date with target branch", TargetURL: targetURL,
-	})
+	}), "set mq status failed", "pr", head.PrNumber)
 	if err := deps.Queue.UpdateState(ctx, deps.RepoID, head.PrNumber, pg.EntryStateSuccess); err != nil {
 		result.Errors = append(result.Errors, fmt.Errorf("update state to success for PR #%d: %w", head.PrNumber, err))
 		return true

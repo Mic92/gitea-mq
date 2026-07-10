@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Mic92/gitea-mq/internal/forge"
+	"github.com/Mic92/gitea-mq/internal/logutil"
 	"github.com/Mic92/gitea-mq/internal/merge"
 	"github.com/Mic92/gitea-mq/internal/queue"
 	"github.com/Mic92/gitea-mq/internal/store/pg"
@@ -208,14 +209,14 @@ func (e *Engine) Build(ctx context.Context, b *pg.Batch) error {
 	// raced in before SetMergeBranch (still keyed on the old SHA) is wiped.
 	desc := fmt.Sprintf("Testing batch #%d (%d PRs)", b.ID, len(b.MemberIds))
 	for _, ent := range surv {
-		_ = e.Queue.SetMergeBranch(ctx, e.RepoID, ent.PrNumber, branch, tip)
+		logutil.WarnIfErr(e.Queue.SetMergeBranch(ctx, e.RepoID, ent.PrNumber, branch, tip), "set merge branch failed", "pr", ent.PrNumber)
 		if first {
-			_ = e.Forge.SetMQStatus(ctx, e.Owner, e.Repo, ent.PrHeadSha, forge.MQStatus{
+			logutil.WarnIfErr(e.Forge.SetMQStatus(ctx, e.Owner, e.Repo, ent.PrHeadSha, forge.MQStatus{
 				State: pg.CheckStatePending, Description: desc, TargetURL: e.prURL(ent.PrNumber),
-			})
+			}), "set mq status failed", "pr", ent.PrNumber)
 		}
 	}
-	_ = e.Queue.ClearCheckStatuses(ctx, b.CurrentIds)
+	logutil.WarnIfErr(e.Queue.ClearCheckStatuses(ctx, b.CurrentIds), "clear check statuses failed", "batch", b.ID)
 
 	slog.Info("batch built", "batch", b.ID, "build", b.Builds, "sha", tip,
 		"current", len(surv), "pending", len(loadPending(b.Pending)))
@@ -261,9 +262,9 @@ func (e *Engine) HandlePass(ctx context.Context, b *pg.Batch) error {
 	var wg sync.WaitGroup
 	for i := range entries {
 		ent := &entries[i]
-		_ = e.Forge.SetMQStatus(ctx, e.Owner, e.Repo, ent.PrHeadSha, forge.MQStatus{
+		logutil.WarnIfErr(e.Forge.SetMQStatus(ctx, e.Owner, e.Repo, ent.PrHeadSha, forge.MQStatus{
 			State: pg.CheckStateSuccess, Description: desc, TargetURL: e.prURL(ent.PrNumber),
-		})
+		}), "set mq status failed", "pr", ent.PrNumber)
 		if _, err := e.Queue.Dequeue(ctx, e.RepoID, ent.PrNumber); err != nil {
 			slog.Warn("dequeue landed PR failed", "pr", ent.PrNumber, "err", err)
 		}
@@ -319,7 +320,7 @@ func (e *Engine) HandleFail(ctx context.Context, b *pg.Batch, failedCheck, targe
 	b.CurrentIds = left
 	// Right-half members leave the branch; clear their routing so late events
 	// for this build's SHA cannot reach them.
-	_ = e.Queue.ClearMergeBranch(ctx, right)
+	logutil.WarnIfErr(e.Queue.ClearMergeBranch(ctx, right), "clear merge branch failed", "batch", b.ID)
 	slog.Info("batch bisecting", "batch", b.ID, "build", b.Builds,
 		"failed_check", failedCheck, "left", len(left), "right", len(right))
 	return e.rebuild(ctx, b)
@@ -407,8 +408,8 @@ func (e *Engine) ReconcileLive(ctx context.Context) error {
 		case pg.BatchStateTesting:
 			entries, _ := e.Queue.GetEntriesByIDs(ctx, b.CurrentIds)
 			for _, ent := range entries {
-				_ = e.Queue.SetMergeBranch(ctx, e.RepoID, ent.PrNumber,
-					b.BranchName.String, b.BranchSha.String)
+				logutil.WarnIfErr(e.Queue.SetMergeBranch(ctx, e.RepoID, ent.PrNumber,
+					b.BranchName.String, b.BranchSha.String), "set merge branch failed", "pr", ent.PrNumber)
 			}
 		}
 		unlock()
@@ -472,7 +473,7 @@ func (e *Engine) next(ctx context.Context, b *pg.Batch) error {
 	if err := e.Queue.SaveBatch(ctx, b); err != nil {
 		return err
 	}
-	_ = e.Forge.DeleteBranch(ctx, e.Owner, e.Repo, b.BranchName.String)
+	logutil.WarnIfErr(e.Forge.DeleteBranch(ctx, e.Owner, e.Repo, b.BranchName.String), "delete batch branch failed", "branch", b.BranchName.String)
 
 	slog.Info("batch done", "batch", b.ID, "landed", len(b.LandedIds),
 		"ejected", len(b.EjectedIds), "builds", b.Builds, "flaky", b.Flaky)
@@ -484,11 +485,11 @@ func (e *Engine) next(ctx context.Context, b *pg.Batch) error {
 
 // eject removes a single member: status, cancel automerge, comment, dequeue.
 func (e *Engine) eject(ctx context.Context, b *pg.Batch, ent *pg.QueueEntry, state pg.CheckState, statusDesc, comment string) {
-	_ = e.Forge.SetMQStatus(ctx, e.Owner, e.Repo, ent.PrHeadSha, forge.MQStatus{
+	logutil.WarnIfErr(e.Forge.SetMQStatus(ctx, e.Owner, e.Repo, ent.PrHeadSha, forge.MQStatus{
 		State: state, Description: statusDesc, TargetURL: e.prURL(ent.PrNumber),
-	})
-	_ = e.Forge.CancelAutoMerge(ctx, e.Owner, e.Repo, ent.PrNumber)
-	_ = e.Forge.Comment(ctx, e.Owner, e.Repo, ent.PrNumber, comment)
+	}), "set mq status failed", "pr", ent.PrNumber)
+	logutil.WarnIfErr(e.Forge.CancelAutoMerge(ctx, e.Owner, e.Repo, ent.PrNumber), "cancel automerge failed", "pr", ent.PrNumber)
+	logutil.WarnIfErr(e.Forge.Comment(ctx, e.Owner, e.Repo, ent.PrNumber, comment), "post comment failed", "pr", ent.PrNumber)
 	if _, err := e.Queue.Dequeue(ctx, e.RepoID, ent.PrNumber); err != nil {
 		slog.Warn("dequeue ejected PR failed", "pr", ent.PrNumber, "err", err)
 	}
@@ -520,9 +521,9 @@ func (e *Engine) ensureMergedOrClose(ctx context.Context, ent *pg.QueueEntry, sh
 		case <-time.After(interval):
 		}
 	}
-	_ = e.Forge.Comment(ctx, e.Owner, e.Repo, ent.PrNumber,
-		fmt.Sprintf("✅ Merged as `%s` via batch #%d.", sha, batchID))
-	_ = e.Forge.ClosePR(ctx, e.Owner, e.Repo, ent.PrNumber)
+	logutil.WarnIfErr(e.Forge.Comment(ctx, e.Owner, e.Repo, ent.PrNumber,
+		fmt.Sprintf("✅ Merged as `%s` via batch #%d.", sha, batchID)), "post comment failed", "pr", ent.PrNumber)
+	logutil.WarnIfErr(e.Forge.ClosePR(ctx, e.Owner, e.Repo, ent.PrNumber), "close pr failed", "pr", ent.PrNumber)
 }
 
 func (e *Engine) prURL(n int64) string {

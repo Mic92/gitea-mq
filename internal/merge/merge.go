@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Mic92/gitea-mq/internal/forge"
+	"github.com/Mic92/gitea-mq/internal/logutil"
 	"github.com/Mic92/gitea-mq/internal/queue"
 	"github.com/Mic92/gitea-mq/internal/store/pg"
 )
@@ -42,12 +43,13 @@ func StartTesting(ctx context.Context, f forge.Forge, svc *queue.Service, owner,
 	if conflict {
 		slog.Info("merge conflict", "pr", entry.PrNumber)
 
-		_ = f.CancelAutoMerge(ctx, owner, repo, entry.PrNumber)
-		_ = f.SetMQStatus(ctx, owner, repo, entry.PrHeadSha, forge.MQStatus{
+		logutil.WarnIfErr(f.CancelAutoMerge(ctx, owner, repo, entry.PrNumber), "cancel automerge failed", "pr", entry.PrNumber)
+		logutil.WarnIfErr(f.SetMQStatus(ctx, owner, repo, entry.PrHeadSha, forge.MQStatus{
 			State: pg.CheckStateFailure, Description: "Merge conflict with target branch", TargetURL: targetURL,
-		})
-		_ = f.Comment(ctx, owner, repo, entry.PrNumber,
-			"❌ Removed from merge queue: merge conflict with target branch. Please rebase and re-schedule automerge.")
+		}), "set mq status failed", "pr", entry.PrNumber)
+		logutil.WarnIfErr(f.Comment(ctx, owner, repo, entry.PrNumber,
+			"❌ Removed from merge queue: merge conflict with target branch. Please rebase and re-schedule automerge."),
+			"post comment failed", "pr", entry.PrNumber)
 
 		if _, err := svc.Dequeue(ctx, repoID, entry.PrNumber); err != nil {
 			return nil, fmt.Errorf("dequeue conflicting PR #%d: %w", entry.PrNumber, err)
@@ -59,12 +61,13 @@ func StartTesting(ctx context.Context, f forge.Forge, svc *queue.Service, owner,
 		// user and remove rather than retry silently.
 		slog.Error("merge branch creation failed", "pr", entry.PrNumber, "error", err)
 
-		_ = f.CancelAutoMerge(ctx, owner, repo, entry.PrNumber)
-		_ = f.SetMQStatus(ctx, owner, repo, entry.PrHeadSha, forge.MQStatus{
+		logutil.WarnIfErr(f.CancelAutoMerge(ctx, owner, repo, entry.PrNumber), "cancel automerge failed", "pr", entry.PrNumber)
+		logutil.WarnIfErr(f.SetMQStatus(ctx, owner, repo, entry.PrHeadSha, forge.MQStatus{
 			State: pg.CheckStateError, Description: "Failed to create merge branch", TargetURL: targetURL,
-		})
-		_ = f.Comment(ctx, owner, repo, entry.PrNumber,
-			fmt.Sprintf("❌ Removed from merge queue: failed to create merge branch.\n\n```\n%v\n```", err))
+		}), "set mq status failed", "pr", entry.PrNumber)
+		logutil.WarnIfErr(f.Comment(ctx, owner, repo, entry.PrNumber,
+			fmt.Sprintf("❌ Removed from merge queue: failed to create merge branch.\n\n```\n%v\n```", err)),
+			"post comment failed", "pr", entry.PrNumber)
 
 		if _, err := svc.Dequeue(ctx, repoID, entry.PrNumber); err != nil {
 			return nil, fmt.Errorf("dequeue PR #%d after merge error: %w", entry.PrNumber, err)
@@ -83,9 +86,9 @@ func StartTesting(ctx context.Context, f forge.Forge, svc *queue.Service, owner,
 	// show outdated results while new CI runs.
 	clearStaleMirroredStatuses(ctx, f, owner, repo, entry.PrHeadSha)
 
-	_ = f.SetMQStatus(ctx, owner, repo, entry.PrHeadSha, forge.MQStatus{
+	logutil.WarnIfErr(f.SetMQStatus(ctx, owner, repo, entry.PrHeadSha, forge.MQStatus{
 		State: pg.CheckStatePending, Description: "Testing merge result", TargetURL: targetURL,
-	})
+	}), "set mq status failed", "pr", entry.PrNumber)
 
 	slog.Info("started testing", "pr", entry.PrNumber, "branch", branchName, "sha", mergeSHA)
 
@@ -102,10 +105,10 @@ func clearStaleMirroredStatuses(ctx context.Context, f forge.Forge, owner, repo,
 		if !forge.IsOwnContext(ctxName) {
 			continue
 		}
-		_ = f.MirrorCheck(ctx, owner, repo, sha, ctxName, forge.Check{
+		logutil.WarnIfErr(f.MirrorCheck(ctx, owner, repo, sha, ctxName, forge.Check{
 			State:       pg.CheckStatePending,
 			Description: StaleMirrorDescription,
-		})
+		}), "mirror check reset failed", "sha", sha, "context", ctxName)
 	}
 }
 
