@@ -170,7 +170,7 @@ func (r *RepoRegistry) Add(ctx context.Context, ref forge.RepoRef) error {
 		CheckTimeout:        r.deps.CheckTimeout,
 		SkipQueueIfUpToDate: r.deps.SkipQueueIfUpToDate,
 		Batch:               batchEngine,
-		IdleGating:          f.Kind() == forge.KindGithub,
+		IdleGating:          f.Capabilities().StatusWebhook,
 	}
 	go poller.Run(pollerCtx, pollerDeps, r.deps.PollInterval, r.deps.IdlePollInterval)
 

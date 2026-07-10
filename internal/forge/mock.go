@@ -19,6 +19,7 @@ type MockForge struct {
 	Calls []MockCall
 
 	KindVal Kind
+	CapabilitiesVal Capabilities
 
 	RepoHTMLURLFn       func(owner, name string) string
 	BranchHTMLURLFn     func(owner, name, branch string) string
@@ -63,6 +64,10 @@ func (m *MockForge) CallsTo(method string) []MockCall {
 
 func (m *MockForge) Kind() Kind {
 	return cmp.Or(m.KindVal, KindGitea)
+}
+
+func (m *MockForge) Capabilities() Capabilities {
+	return m.CapabilitiesVal
 }
 
 func (m *MockForge) RepoHTMLURL(owner, name string) string {
