@@ -491,22 +491,15 @@ type StackStep struct {
 // final-push failure is returned as err so the caller can retry the whole
 // build instead of mis-attributing a transient network error to one PR.
 func (c *HTTPClient) StackMerges(ctx context.Context, owner, repo, base string, heads []string, branch string) (string, []StackStep, error) {
-	tmpDir, err := os.MkdirTemp("", "gitea-mq-stack-*")
+	run, cleanup, err := gitTempRepo(ctx, "gitea-mq-stack-*",
+		"GIT_AUTHOR_NAME=gitea-mq", "GIT_AUTHOR_EMAIL=gitea-mq@localhost",
+		"GIT_COMMITTER_NAME=gitea-mq", "GIT_COMMITTER_EMAIL=gitea-mq@localhost")
 	if err != nil {
-		return "", nil, fmt.Errorf("create temp dir: %w", err)
+		return "", nil, err
 	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	defer cleanup()
 
 	url := c.authedCloneURL(owner, repo)
-	run := func(args ...string) ([]byte, error) {
-		cmd := exec.CommandContext(ctx, "git", args...)
-		cmd.Dir = tmpDir
-		cmd.Env = append(os.Environ(),
-			"GIT_TERMINAL_PROMPT=0",
-			"GIT_AUTHOR_NAME=gitea-mq", "GIT_AUTHOR_EMAIL=gitea-mq@localhost",
-			"GIT_COMMITTER_NAME=gitea-mq", "GIT_COMMITTER_EMAIL=gitea-mq@localhost")
-		return cmd.CombinedOutput()
-	}
 
 	if out, err := run("clone", "--single-branch", "--branch", base, url, "."); err != nil {
 		return "", nil, fmt.Errorf("clone %s: %w\n%s", base, err, c.redact(string(out)))
@@ -553,6 +546,23 @@ func (c *HTTPClient) authedCloneURL(owner, repo string) string {
 	return fmt.Sprintf("%s://gitea-mq:%s@%s", plain[:i], c.token, plain[i+3:])
 }
 
+// gitTempRepo creates a temporary directory and returns a runner that
+// executes git commands inside it with prompts disabled plus the given extra
+// environment variables. cleanup removes the directory.
+func gitTempRepo(ctx context.Context, pattern string, extraEnv ...string) (func(args ...string) ([]byte, error), func(), error) {
+	tmpDir, err := os.MkdirTemp("", pattern)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create temp dir: %w", err)
+	}
+	run := func(args ...string) ([]byte, error) {
+		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Dir = tmpDir
+		cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), extraEnv...)
+		return cmd.CombinedOutput()
+	}
+	return run, func() { _ = os.RemoveAll(tmpDir) }, nil
+}
+
 // FastForwardRef pushes sha to refs/heads/branch with a non-force refspec.
 // git's client-side fast-forward check needs sha's ancestry back to the
 // current branch tip, so we fetch sha without a depth limit. The server
@@ -560,19 +570,13 @@ func (c *HTTPClient) authedCloneURL(owner, repo string) string {
 // resulting push pack is empty — cost is the fetch, same order as the full
 // single-branch clone MergeBranches already does.
 func (c *HTTPClient) FastForwardRef(ctx context.Context, owner, repo, branch, sha string) error {
-	tmpDir, err := os.MkdirTemp("", "gitea-mq-ff-*")
+	run, cleanup, err := gitTempRepo(ctx, "gitea-mq-ff-*")
 	if err != nil {
-		return fmt.Errorf("create temp dir: %w", err)
+		return err
 	}
-	defer func() { _ = os.RemoveAll(tmpDir) }()
+	defer cleanup()
 
 	url := c.authedCloneURL(owner, repo)
-	run := func(args ...string) ([]byte, error) {
-		cmd := exec.CommandContext(ctx, "git", args...)
-		cmd.Dir = tmpDir
-		cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-		return cmd.CombinedOutput()
-	}
 
 	if out, err := run("init", "--bare", "-q"); err != nil {
 		return fmt.Errorf("git init: %s: %w", out, err)
