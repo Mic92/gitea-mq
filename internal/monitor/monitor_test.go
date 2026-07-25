@@ -246,3 +246,26 @@ func TestEvaluateChecks_FailureWinsOverPending(t *testing.T) {
 		t.Fatalf("unexpected failed check %q url %q", failed, url)
 	}
 }
+
+// Gitea/Forgejo branch protection allows glob patterns in required status
+// check contexts (e.g. "*/nix-build*"); they must match reported contexts.
+func TestEvaluateChecks_GlobRequiredChecks(t *testing.T) {
+	statuses := []pg.CheckStatus{
+		{Context: "buildbot/nix-eval", State: pg.CheckStateSuccess},
+		{Context: "buildbot/nix-build", State: pg.CheckStateSuccess},
+	}
+	if r, _, _ := monitor.EvaluateChecks(statuses, []string{"*/nix-build*"}); r != monitor.CheckSuccess {
+		t.Fatalf("expected CheckSuccess for matching glob, got %v", r)
+	}
+
+	statuses[1].State = pg.CheckStateFailure
+	statuses[1].TargetUrl = "https://ci/42"
+	r, failed, url := monitor.EvaluateChecks(statuses, []string{"*/nix-build*"})
+	if r != monitor.CheckFailure || failed != "buildbot/nix-build" || url != "https://ci/42" {
+		t.Fatalf("expected failure of buildbot/nix-build, got %v %q %q", r, failed, url)
+	}
+
+	if r, _, _ := monitor.EvaluateChecks(statuses, []string{"*/does-not-exist"}); r != monitor.CheckWaiting {
+		t.Fatalf("expected CheckWaiting for unmatched glob, got %v", r)
+	}
+}

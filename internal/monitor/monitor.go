@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/gobwas/glob"
+
 	"github.com/Mic92/gitea-mq/internal/forge"
 	"github.com/Mic92/gitea-mq/internal/logutil"
 	"github.com/Mic92/gitea-mq/internal/merge"
@@ -89,27 +91,50 @@ func EvaluateChecks(statuses []pg.CheckStatus, requiredChecks []string) (CheckRe
 		return CheckWaiting, "", ""
 	}
 
-	statusMap := make(map[string]pg.CheckStatus, len(statuses))
-	for _, s := range statuses {
-		statusMap[s.Context] = s
-	}
-
-	// Failures first: a failed required check decides the outcome even
-	// while other required checks are still pending.
+	// A failed required check decides the outcome even while other required
+	// checks are still pending, so scan everything before reporting waiting.
+	waiting := false
 	for _, req := range requiredChecks {
-		cs, ok := statusMap[req]
-		if ok && (cs.State == pg.CheckStateFailure || cs.State == pg.CheckStateError) {
-			return CheckFailure, req, cs.TargetUrl
+		matched := matchRequired(statuses, req)
+		if len(matched) == 0 {
+			waiting = true
+		}
+		for _, cs := range matched {
+			switch cs.State {
+			case pg.CheckStateFailure, pg.CheckStateError:
+				return CheckFailure, cs.Context, cs.TargetUrl
+			case pg.CheckStateSuccess:
+			default:
+				waiting = true
+			}
 		}
 	}
-	for _, req := range requiredChecks {
-		cs, ok := statusMap[req]
-		if !ok || cs.State != pg.CheckStateSuccess {
-			return CheckWaiting, "", ""
-		}
+	if waiting {
+		return CheckWaiting, "", ""
 	}
-
 	return CheckSuccess, "", ""
+}
+
+// matchRequired returns the statuses a required check refers to. Gitea and
+// Forgejo allow glob patterns in branch protection status_check_contexts;
+// an exact name wins over glob interpretation.
+func matchRequired(statuses []pg.CheckStatus, required string) []pg.CheckStatus {
+	for _, s := range statuses {
+		if s.Context == required {
+			return []pg.CheckStatus{s}
+		}
+	}
+	g, err := glob.Compile(required)
+	if err != nil {
+		return nil
+	}
+	var out []pg.CheckStatus
+	for _, s := range statuses {
+		if g.Match(s.Context) {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func CheckTimeout(entry *pg.QueueEntry, timeout time.Duration) bool {
