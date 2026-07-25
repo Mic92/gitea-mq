@@ -32,7 +32,8 @@ larger suite than PR CI).
   are only reconciled every `GITEA_MQ_IDLE_POLL_INTERVAL`; older versions fall
   back to polling every `GITEA_MQ_POLL_INTERVAL`.
 - PostgreSQL
-- For Gitea: an API token with repo read/write permissions
+- For Gitea/Forgejo: an API token with `repository` and `issue` read/write scopes
+  (the PR timeline and comments are served via the issue API)
 
 ## Configuration
 
@@ -43,7 +44,7 @@ variables.
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `GITEA_MQ_GITEA_URL` | gitea | - | Gitea instance URL. Setting this enables the Gitea backend. |
-| `GITEA_MQ_GITEA_TOKEN` | gitea | - | API token with repo scope |
+| `GITEA_MQ_GITEA_TOKEN` | gitea | - | API token with `repository` and `issue` read/write scopes |
 | `GITEA_MQ_REPOS` | no | - | Comma-separated `owner/repo` list of Gitea repos (optional when `GITEA_MQ_TOPIC` is set) |
 | `GITEA_MQ_TOPIC` | no | - | Discover Gitea repos by topic instead of (or in addition to) a static list |
 | `GITEA_MQ_WEBHOOK_SECRET` | gitea | - | Shared secret for the Gitea webhook HMAC |
