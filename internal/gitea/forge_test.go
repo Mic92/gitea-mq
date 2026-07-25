@@ -253,19 +253,23 @@ func TestForge_URLHelpers(t *testing.T) {
 
 func TestForge_Capabilities(t *testing.T) {
 	cases := []struct {
-		name    string
-		version string
-		err     error
-		want    bool
+		name       string
+		forgejo    bool
+		forgejoErr error
+		version    string
+		err        error
+		want       bool
 	}{
-		{"gitea 1.24", "1.24.2", nil, true},
-		{"gitea 1.23", "1.23.5", nil, false},
-		{"forgejo compat 1.22", "11.0.1+gitea-1.22.0", nil, false},
-		{"probe failure", "", errors.New("boom"), false},
+		{name: "gitea 1.24", version: "1.24.2", want: true},
+		{name: "gitea 1.23", version: "1.23.5", want: false},
+		{name: "forgejo", forgejo: true, version: "15.0.3", want: false},
+		{name: "forgejo probe failure", forgejoErr: errors.New("boom"), version: "1.24.2", want: false},
+		{name: "version probe failure", err: errors.New("boom"), want: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			mock := &gitea.MockClient{
+				IsForgejoFn:     func(context.Context) (bool, error) { return tc.forgejo, tc.forgejoErr },
 				ServerVersionFn: func(context.Context) (string, error) { return tc.version, tc.err },
 			}
 			f := newForge(mock)
@@ -274,8 +278,8 @@ func TestForge_Capabilities(t *testing.T) {
 			}
 			// Result is cached; a second call must not probe again.
 			f.Capabilities()
-			if calls := len(mock.CallsTo("ServerVersion")); calls != 1 {
-				t.Fatalf("ServerVersion calls = %d, want 1", calls)
+			if calls := len(mock.CallsTo("IsForgejo")); calls != 1 {
+				t.Fatalf("IsForgejo calls = %d, want 1", calls)
 			}
 		})
 	}

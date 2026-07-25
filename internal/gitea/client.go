@@ -251,4 +251,8 @@ type Client interface {
 	// ServerVersion returns the Gitea/Forgejo server version string.
 	// GET /version
 	ServerVersion(ctx context.Context) (string, error)
+
+	// IsForgejo reports whether the server is a Forgejo instance.
+	// GET /api/forgejo/v1/version (200 on Forgejo, 404 on Gitea)
+	IsForgejo(ctx context.Context) (bool, error)
 }

@@ -52,13 +52,22 @@ func (f *giteaForge) StackMerges(ctx context.Context, owner, repo, base string, 
 
 func (f *giteaForge) Kind() forge.Kind { return forge.KindGitea }
 
-// Capabilities probes the server version once: Gitea >= 1.24 delivers
-// commit-status webhooks, older Gitea and Forgejo must be polled. On probe
-// failure it stays at the polling default.
+// Capabilities probes the server once: Forgejo (detected via its dedicated
+// API root) never delivers commit-status webhooks; Gitea >= 1.24 does. On
+// probe failure it stays at the polling default.
 func (f *giteaForge) Capabilities() forge.Capabilities {
 	f.capsOnce.Do(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
+		isForgejo, err := f.client.IsForgejo(ctx)
+		if err != nil {
+			slog.Warn("gitea: forgejo probe failed, assuming no status webhook", "error", err)
+			return
+		}
+		if isForgejo {
+			slog.Info("gitea: server capabilities detected", "forgejo", true, "status_webhook", false)
+			return
+		}
 		version, err := f.client.ServerVersion(ctx)
 		if err != nil {
 			slog.Warn("gitea: server version probe failed, assuming no status webhook", "error", err)
