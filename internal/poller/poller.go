@@ -47,8 +47,8 @@ type Deps struct {
 	// path is taken when nil so BATCH_MAX=1 stays byte-for-byte unchanged.
 	Batch *batch.Engine
 	// IdleGating lets the periodic reconcile skip repos with no live queue
-	// work. Safe only on forges that deliver CI status via webhooks (GitHub);
-	// must stay false for Gitea/Forgejo, which have no commit-status webhook.
+	// work. Safe only on forges that deliver CI status via webhooks (GitHub,
+	// Gitea >= 1.24); must stay false for forges that need status polling.
 	IdleGating bool
 	// Now overrides the wall clock in timeout checks; nil means time.Now.
 	// Tests use it instead of sleeping past real timeouts.

@@ -42,6 +42,8 @@ type MockClient struct {
 	EditBranchProtectionFn    func(ctx context.Context, owner, repo, name string, opts EditBranchProtectionOpts) error
 	ListWebhooksFn            func(ctx context.Context, owner, repo string) ([]Webhook, error)
 	CreateWebhookFn           func(ctx context.Context, owner, repo string, opts CreateWebhookOpts) error
+	ServerVersionFn           func(ctx context.Context) (string, error)
+	IsForgejoFn               func(ctx context.Context) (bool, error)
 }
 
 // Ensure MockClient implements Client at compile time.
@@ -283,4 +285,24 @@ func (m *MockClient) CreateWebhook(ctx context.Context, owner, repo string, opts
 	}
 
 	return nil
+}
+
+func (m *MockClient) ServerVersion(ctx context.Context) (string, error) {
+	m.record("ServerVersion")
+
+	if m.ServerVersionFn != nil {
+		return m.ServerVersionFn(ctx)
+	}
+
+	return "", nil
+}
+
+func (m *MockClient) IsForgejo(ctx context.Context) (bool, error) {
+	m.record("IsForgejo")
+
+	if m.IsForgejoFn != nil {
+		return m.IsForgejoFn(ctx)
+	}
+
+	return false, nil
 }

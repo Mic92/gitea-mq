@@ -27,7 +27,10 @@ larger suite than PR CI).
 
 ## Requirements
 
-- Gitea >= 1.22 and/or a GitHub App
+- Gitea >= 1.22 and/or a GitHub App. With Gitea >= 1.24 (or a Forgejo release
+  based on it) CI results arrive via the commit-status webhook and idle repos
+  are only reconciled every `GITEA_MQ_IDLE_POLL_INTERVAL`; older versions fall
+  back to polling every `GITEA_MQ_POLL_INTERVAL`.
 - PostgreSQL
 - For Gitea: an API token with repo read/write permissions
 
@@ -54,7 +57,7 @@ variables.
 | `GITEA_MQ_WEBHOOK_PATH` | no | `/webhook` | Legacy alias for the Gitea webhook endpoint (the canonical path is `/webhook/gitea`) |
 | `GITEA_MQ_EXTERNAL_URL` | yes | - | URL where Gitea can reach this service (used for webhook auto-setup and commit status target URLs) |
 | `GITEA_MQ_POLL_INTERVAL` | no | `30s` | Reconcile poll interval for repos with active queue work |
-| `GITEA_MQ_IDLE_POLL_INTERVAL` | no | `15m` | Reconcile poll interval for idle repos (no active queue entries). Idle repos are driven by webhooks; this periodic poll is only a safety net for deliveries missed while the service was down. Keeping it long bounds forge API usage to the number of repos with live queues rather than all managed repos |
+| `GITEA_MQ_IDLE_POLL_INTERVAL` | no | `15m` | Reconcile poll interval for idle repos (no active queue entries). Only used on forges that deliver CI status via webhooks (GitHub, Gitea >= 1.24); there idle repos are driven by webhooks and this periodic poll is just a safety net for deliveries missed while the service was down. Keeping it long bounds forge API usage to the number of repos with live queues rather than all managed repos |
 | `GITEA_MQ_CHECK_TIMEOUT` | no | `1h` | Timeout for required checks |
 | `GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE` | no | `true` | Skip the merge-branch CI run when a PR is already rebased onto the target branch tip (its own green CI already covers the merged tree) |
 | `GITEA_MQ_REQUIRED_CHECKS` | no | - | Fallback required CI contexts when branch protection has none (comma-separated) |

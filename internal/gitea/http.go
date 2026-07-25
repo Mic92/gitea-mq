@@ -647,5 +647,51 @@ func (c *HTTPClient) CreateWebhook(ctx context.Context, owner, repo string, opts
 		fmt.Sprintf("create webhook in %s/%s", owner, repo))
 }
 
+// ServerVersion returns the Gitea/Forgejo server version string.
+// GET /version
+func (c *HTTPClient) ServerVersion(ctx context.Context) (string, error) {
+	resp, err := c.do(ctx, http.MethodGet, "/version", nil)
+	if err != nil {
+		return "", err
+	}
+	var v struct {
+		Version string `json:"version"`
+	}
+	if err := c.decodeJSON(resp, &v); err != nil {
+		return "", fmt.Errorf("get server version: %w", err)
+	}
+	return v.Version, nil
+}
+
+// IsForgejo reports whether the server is a Forgejo instance by probing the
+// Forgejo-only API root: GET /api/forgejo/v1/version returns 200 on Forgejo
+// and 404 on Gitea.
+func (c *HTTPClient) IsForgejo(ctx context.Context) (bool, error) {
+	url := c.baseURL + "/api/forgejo/v1/version"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return false, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "token "+c.token)
+	req.Header.Set("Accept", "application/json")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("probe forgejo version endpoint: %w", err)
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			slog.Warn("failed to close response body", "error", err)
+		}
+	}()
+	switch {
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return true, nil
+	case resp.StatusCode == http.StatusNotFound:
+		return false, nil
+	default:
+		return false, fmt.Errorf("probe forgejo version endpoint: unexpected status %d", resp.StatusCode)
+	}
+}
+
 // Ensure HTTPClient implements Client at compile time.
 var _ Client = (*HTTPClient)(nil)
