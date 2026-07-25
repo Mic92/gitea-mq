@@ -111,17 +111,17 @@ func removePR(ctx context.Context, deps *Deps, result *PollResult, entry *pg.Que
 	return nil
 }
 
-// prChecksGreen reports whether the PR's own head-commit checks are passing.
-// True when all required checks pass, or when no CI is configured at all.
-func prChecksGreen(ctx context.Context, deps *Deps, pr *forge.PR) (bool, error) {
+// prCheckResult evaluates the PR's own head-commit checks against the
+// required checks. Reports CheckSuccess when no CI is configured at all.
+func prCheckResult(ctx context.Context, deps *Deps, pr *forge.PR) (monitor.CheckResult, error) {
 	requiredChecks, err := monitor.ResolveRequiredChecks(ctx, deps.Forge, deps.Owner, deps.Repo, pr.BaseBranch, deps.FallbackChecks)
 	if err != nil {
-		return false, fmt.Errorf("resolve required checks for PR #%d: %w", pr.Number, err)
+		return monitor.CheckWaiting, fmt.Errorf("resolve required checks for PR #%d: %w", pr.Number, err)
 	}
 
 	checks, err := deps.Forge.GetCheckStates(ctx, deps.Owner, deps.Repo, pr.HeadSHA)
 	if err != nil {
-		return false, fmt.Errorf("get check states for PR #%d: %w", pr.Number, err)
+		return monitor.CheckWaiting, fmt.Errorf("get check states for PR #%d: %w", pr.Number, err)
 	}
 
 	// gitea-mq/* mirrors are our own output, not external CI.
@@ -134,11 +134,11 @@ func prChecksGreen(ctx context.Context, deps *Deps, pr *forge.PR) (bool, error) 
 	}
 
 	if len(requiredChecks) == 0 && len(externalStatuses) == 0 {
-		return true, nil
+		return monitor.CheckSuccess, nil
 	}
 
 	res, _, _ := monitor.EvaluateChecks(externalStatuses, requiredChecks)
-	return res == monitor.CheckSuccess, nil
+	return res, nil
 }
 
 // PollOnce runs a single reconcile cycle for one repository.
@@ -282,12 +282,12 @@ func enqueueAutoMergePRs(ctx context.Context, deps *Deps, result *PollResult, op
 			continue
 		}
 
-		green, err := prChecksGreen(ctx, deps, pr)
+		res, err := prCheckResult(ctx, deps, pr)
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("check CI status for PR #%d: %w", pr.Number, err))
 			continue
 		}
-		if !green {
+		if res != monitor.CheckSuccess {
 			continue
 		}
 
@@ -394,17 +394,29 @@ func reconcileEntries(ctx context.Context, deps *Deps, result *PollResult, openP
 			}
 			continue
 		}
-		handleSuccessTimeout(ctx, deps, result, &entry)
+		handleSuccessTimeout(ctx, deps, result, &entry, pr)
 		handleTestingTimeout(ctx, deps, result, &entry)
 	}
 }
 
 // handleSuccessTimeout removes entries that reported success but were never
 // merged by the forge within SuccessTimeout, which usually points at a branch
-// protection misconfiguration.
-func handleSuccessTimeout(ctx context.Context, deps *Deps, result *PollResult, entry *pg.QueueEntry) {
+// protection misconfiguration. While the PR's own required checks are still
+// pending the forge legitimately cannot merge yet, so removal is deferred —
+// but only up to CheckTimeout, so a stuck CI cannot block the queue forever.
+func handleSuccessTimeout(ctx context.Context, deps *Deps, result *PollResult, entry *pg.QueueEntry, pr *forge.PR) {
 	if entry.State != pg.EntryStateSuccess || !timedOut(deps.now(), entry.CompletedAt, deps.SuccessTimeout) {
 		return
+	}
+
+	if pr != nil && !timedOut(deps.now(), entry.CompletedAt, deps.CheckTimeout) {
+		res, err := prCheckResult(ctx, deps, pr)
+		if err != nil {
+			slog.Warn("success timeout: could not evaluate PR checks", "pr", entry.PrNumber, "error", err)
+		} else if res == monitor.CheckWaiting {
+			slog.Info("success timeout deferred: PR checks still pending", "pr", entry.PrNumber)
+			return
+		}
 	}
 
 	removeTimedOut(ctx, deps, result, entry, timedOutRemoval{

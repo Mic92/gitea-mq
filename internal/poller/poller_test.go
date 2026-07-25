@@ -405,6 +405,56 @@ func TestPollOnce_Timeouts(t *testing.T) {
 	}
 }
 
+// A PR in "success" whose own required checks are still running cannot be
+// merged by the forge yet, so the success timeout must wait for them — but
+// only up to CheckTimeout, so a stuck CI cannot block the queue forever.
+func TestPollOnce_SuccessTimeoutWaitsForPendingPRChecks(t *testing.T) {
+	cases := []struct {
+		name         string
+		clockAdvance time.Duration
+		wantDequeued bool
+	}{
+		{name: "pr_ci_still_running", clockAdvance: time.Second, wantDequeued: false},
+		{name: "pr_ci_stuck_past_check_timeout", clockAdvance: 2 * time.Hour, wantDequeued: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			deps, mock, svc, ctx, repoID := setupPollerTest(t)
+			deps.SuccessTimeout = 1 * time.Millisecond
+			deps.CheckTimeout = 1 * time.Hour
+			deps.FallbackChecks = []string{"ci/build"}
+
+			if _, err := svc.Enqueue(ctx, repoID, 42, "sha42", "main"); err != nil {
+				t.Fatal(err)
+			}
+			_ = svc.UpdateState(ctx, repoID, 42, pg.EntryStateSuccess)
+			deps.Now = func() time.Time { return time.Now().Add(tc.clockAdvance) }
+
+			mockAutomergePRs(mock, makePR(42, "sha42", "main"))
+			mock.GetCombinedCommitStatusFn = func(_ context.Context, _, _, _ string) (*gitea.CombinedStatus, error) {
+				return &gitea.CombinedStatus{
+					State:    "pending",
+					Statuses: []gitea.CommitStatusResult{{Context: "ci/build", Status: "pending"}},
+				}, nil
+			}
+
+			result, err := poller.PollOnce(ctx, deps)
+			if err != nil {
+				t.Fatalf("PollOnce: %v", err)
+			}
+
+			gotDequeued := len(result.Dequeued) == 1 && result.Dequeued[0] == 42
+			if gotDequeued != tc.wantDequeued {
+				t.Fatalf("dequeued=%v, want %v (result: %v)", gotDequeued, tc.wantDequeued, result.Dequeued)
+			}
+			if !tc.wantDequeued && len(mock.CallsTo("CancelAutoMerge")) != 0 {
+				t.Fatal("automerge must stay enabled while PR CI is pending")
+			}
+		})
+	}
+}
+
 // prChecksGreen gating: only enqueue once required checks (or none) are green.
 func TestPollOnce_CIGating(t *testing.T) {
 	cases := []struct {
