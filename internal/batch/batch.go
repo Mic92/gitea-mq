@@ -200,7 +200,7 @@ func (e *Engine) Build(ctx context.Context, b *pg.Batch) error {
 	b.TestingStartedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
 	first := b.Builds == 0
 	b.Builds++
-	if err := e.Queue.SaveBatch(ctx, b); err != nil {
+	if err := e.Queue.SaveBatch(ctx, b, b.EjectedIds...); err != nil {
 		return err
 	}
 
@@ -259,13 +259,12 @@ func (e *Engine) HandlePass(ctx context.Context, b *pg.Batch) error {
 		return err
 	}
 
-	// Persist the transition before the best-effort forge work below: the
-	// target branch has already moved.
+	// Persist before the best-effort forge work: the target already moved.
 	landed := b.CurrentIds
 	b.LandedIds = append(b.LandedIds, landed...)
 	b.CurrentIds = nil
 	build := popNext(b)
-	if err := e.Queue.SaveBatch(ctx, b, landed...); err != nil {
+	if err := e.Queue.SaveBatch(ctx, b, slices.Concat(landed, b.EjectedIds)...); err != nil {
 		return err
 	}
 	slog.Info("batch landed", "batch", b.ID, "sha", sha, "prs", len(entries))
@@ -363,7 +362,7 @@ func (e *Engine) OnMemberRemoved(ctx context.Context, targetBranch string, batch
 	b.Pending = loadPending(b.Pending).drop(id).bytes()
 	b.EjectedIds = append(b.EjectedIds, id)
 	if !wasCurrent {
-		return e.Queue.SaveBatch(ctx, b)
+		return e.Queue.SaveBatch(ctx, b, b.EjectedIds...)
 	}
 	if len(b.CurrentIds) == 0 {
 		return e.next(ctx, b)
@@ -455,14 +454,14 @@ func (e *Engine) stack(ctx context.Context, base string, heads []string, branch 
 // state guard) and then runs Build.
 func (e *Engine) rebuild(ctx context.Context, b *pg.Batch) error {
 	b.State = pg.BatchStateForming
-	if err := e.Queue.SaveBatch(ctx, b); err != nil {
+	if err := e.Queue.SaveBatch(ctx, b, b.EjectedIds...); err != nil {
 		return err
 	}
 	return e.Build(ctx, b)
 }
 
-// popNext pops the pending stack into current (forming) or marks the batch
-// done. Returns true when a build is needed.
+// popNext pops the pending stack into current or marks the batch done.
+// Returns true when a build is needed.
 func popNext(b *pg.Batch) bool {
 	pending := loadPending(b.Pending)
 	if n := len(pending); n > 0 {
@@ -480,8 +479,8 @@ func popNext(b *pg.Batch) bool {
 	return false
 }
 
-// finish builds the popped slice or cleans up the finished batch. A forming
-// row is retried by FormAndBuild, so errors here are recoverable.
+// finish builds the popped slice or cleans up the finished batch; forming
+// rows are retried by FormAndBuild.
 func (e *Engine) finish(ctx context.Context, b *pg.Batch, build bool) error {
 	if build {
 		return e.Build(ctx, b)
@@ -498,22 +497,20 @@ func (e *Engine) finish(ctx context.Context, b *pg.Batch, build bool) error {
 // next pops the pending stack and rebuilds, or finishes the batch.
 func (e *Engine) next(ctx context.Context, b *pg.Batch) error {
 	build := popNext(b)
-	if err := e.Queue.SaveBatch(ctx, b); err != nil {
+	if err := e.Queue.SaveBatch(ctx, b, b.EjectedIds...); err != nil {
 		return err
 	}
 	return e.finish(ctx, b, build)
 }
 
-// eject removes a single member: status, cancel automerge, comment, dequeue.
+// eject marks a single member for removal: status, cancel automerge, comment.
 func (e *Engine) eject(ctx context.Context, b *pg.Batch, ent *pg.QueueEntry, state pg.CheckState, statusDesc, comment string) {
 	logutil.WarnIfErr(e.Forge.SetMQStatus(ctx, e.Owner, e.Repo, ent.PrHeadSha, forge.MQStatus{
 		State: state, Description: statusDesc, TargetURL: e.prURL(ent.PrNumber),
 	}), "set mq status failed", "pr", ent.PrNumber)
 	logutil.WarnIfErr(e.Forge.CancelAutoMerge(ctx, e.Owner, e.Repo, ent.PrNumber), "cancel automerge failed", "pr", ent.PrNumber)
 	logutil.WarnIfErr(e.Forge.Comment(ctx, e.Owner, e.Repo, ent.PrNumber, comment), "post comment failed", "pr", ent.PrNumber)
-	if _, err := e.Queue.Dequeue(ctx, e.RepoID, ent.PrNumber); err != nil {
-		slog.Warn("dequeue ejected PR failed", "pr", ent.PrNumber, "err", err)
-	}
+	// The next SaveBatch deletes EjectedIds from the queue.
 	b.EjectedIds = append(b.EjectedIds, ent.ID)
 }
 

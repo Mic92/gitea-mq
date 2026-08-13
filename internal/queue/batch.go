@@ -100,8 +100,7 @@ func nn(s []int64) []int64 {
 	return s
 }
 
-// SaveBatch persists the mutable fields of a batch row. Any removeEntries
-// are deleted from the queue in the same transaction.
+// SaveBatch persists the batch row
 func (s *Service) SaveBatch(ctx context.Context, b *pg.Batch, removeEntries ...int64) error {
 	if len(removeEntries) == 0 {
 		return saveBatch(ctx, s.queries(), b)
