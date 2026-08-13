@@ -100,6 +100,16 @@ func (q *Queries) CreateBatch(ctx context.Context, arg CreateBatchParams) (Batch
 	return i, err
 }
 
+const deleteEntriesByIDs = `-- name: DeleteEntriesByIDs :exec
+DELETE FROM queue_entries
+WHERE id = ANY($1::bigint[])
+`
+
+func (q *Queries) DeleteEntriesByIDs(ctx context.Context, ids []int64) error {
+	_, err := q.db.Exec(ctx, deleteEntriesByIDs, ids)
+	return err
+}
+
 const dequeueAllByRepo = `-- name: DequeueAllByRepo :exec
 DELETE FROM queue_entries
 WHERE repo_id = $1
@@ -140,8 +150,7 @@ type EnqueuePRParams struct {
 }
 
 func (q *Queries) EnqueuePR(ctx context.Context, arg EnqueuePRParams) (QueueEntry, error) {
-	row := q.db.QueryRow(
-		ctx, enqueuePR,
+	row := q.db.QueryRow(ctx, enqueuePR,
 		arg.RepoID,
 		arg.PrNumber,
 		arg.PrHeadSha,
@@ -613,8 +622,7 @@ type SaveBatchParams struct {
 }
 
 func (q *Queries) SaveBatch(ctx context.Context, arg SaveBatchParams) (Batch, error) {
-	row := q.db.QueryRow(
-		ctx, saveBatch,
+	row := q.db.QueryRow(ctx, saveBatch,
 		arg.ID,
 		arg.State,
 		arg.CurrentIds,
@@ -665,8 +673,7 @@ type SaveCheckStatusParams struct {
 }
 
 func (q *Queries) SaveCheckStatus(ctx context.Context, arg SaveCheckStatusParams) error {
-	_, err := q.db.Exec(
-		ctx, saveCheckStatus,
+	_, err := q.db.Exec(ctx, saveCheckStatus,
 		arg.QueueEntryID,
 		arg.Context,
 		arg.State,
@@ -770,8 +777,7 @@ type UpdateEntryMergeBranchParams struct {
 }
 
 func (q *Queries) UpdateEntryMergeBranch(ctx context.Context, arg UpdateEntryMergeBranchParams) error {
-	_, err := q.db.Exec(
-		ctx, updateEntryMergeBranch,
+	_, err := q.db.Exec(ctx, updateEntryMergeBranch,
 		arg.RepoID,
 		arg.PrNumber,
 		arg.MergeBranchName,

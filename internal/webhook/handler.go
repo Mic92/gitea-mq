@@ -105,6 +105,8 @@ func Handler(secret string, repos RepoLookup, queueSvc *queue.Service) http.Hand
 // Returning 200 even on internal errors avoids forge retries causing duplicate
 // processing.
 func routeCheck(ctx context.Context, rm *RepoMonitor, svc *queue.Service, sha, checkCtx string, c forge.Check) {
+	// The forge may close the request early; keep processing anyway.
+	ctx = context.WithoutCancel(ctx)
 	entry := findEntryForCommit(ctx, svc, rm.Deps.RepoID, sha)
 	if entry == nil {
 		return

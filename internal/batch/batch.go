@@ -258,6 +258,18 @@ func (e *Engine) HandlePass(ctx context.Context, b *pg.Batch) error {
 	if err != nil {
 		return err
 	}
+
+	// Persist the transition before the best-effort forge work below: the
+	// target branch has already moved.
+	landed := b.CurrentIds
+	b.LandedIds = append(b.LandedIds, landed...)
+	b.CurrentIds = nil
+	build := popNext(b)
+	if err := e.Queue.SaveBatch(ctx, b, landed...); err != nil {
+		return err
+	}
+	slog.Info("batch landed", "batch", b.ID, "sha", sha, "prs", len(entries))
+
 	desc := fmt.Sprintf("Merged via batch #%d", b.ID)
 	var wg sync.WaitGroup
 	for i := range entries {
@@ -265,17 +277,11 @@ func (e *Engine) HandlePass(ctx context.Context, b *pg.Batch) error {
 		logutil.WarnIfErr(e.Forge.SetMQStatus(ctx, e.Owner, e.Repo, ent.PrHeadSha, forge.MQStatus{
 			State: pg.CheckStateSuccess, Description: desc, TargetURL: e.prURL(ent.PrNumber),
 		}), "set mq status failed", "pr", ent.PrNumber)
-		if _, err := e.Queue.Dequeue(ctx, e.RepoID, ent.PrNumber); err != nil {
-			slog.Warn("dequeue landed PR failed", "pr", ent.PrNumber, "err", err)
-		}
 		wg.Go(func() { e.ensureMergedOrClose(ctx, ent, sha, b.ID) })
 	}
 	wg.Wait()
 
-	b.LandedIds = append(b.LandedIds, b.CurrentIds...)
-	b.CurrentIds = nil
-	slog.Info("batch landed", "batch", b.ID, "sha", sha, "prs", len(entries))
-	return e.next(ctx, b)
+	return e.finish(ctx, b, build)
 }
 
 // HandleFail bisects: split current, push the second half, rebuild the first.
@@ -455,32 +461,47 @@ func (e *Engine) rebuild(ctx context.Context, b *pg.Batch) error {
 	return e.Build(ctx, b)
 }
 
-// next pops the pending stack and rebuilds, or finishes the batch.
-func (e *Engine) next(ctx context.Context, b *pg.Batch) error {
+// popNext pops the pending stack into current (forming) or marks the batch
+// done. Returns true when a build is needed.
+func popNext(b *pg.Batch) bool {
 	pending := loadPending(b.Pending)
 	if n := len(pending); n > 0 {
 		b.CurrentIds = pending[n-1]
 		b.Pending = pending[:n-1].bytes()
-		return e.rebuild(ctx, b)
+		b.State = pg.BatchStateForming
+		return true
 	}
-
 	// Root failed but every member eventually landed and nobody was ejected →
 	// flaky CI or a cross-PR interaction across halves.
 	b.Flaky = len(b.EjectedIds) == 0 && b.Builds > 1 &&
 		len(b.LandedIds) == len(b.MemberIds)
 	b.State = pg.BatchStateDone
 	b.CurrentIds = nil
-	if err := e.Queue.SaveBatch(ctx, b); err != nil {
-		return err
+	return false
+}
+
+// finish builds the popped slice or cleans up the finished batch. A forming
+// row is retried by FormAndBuild, so errors here are recoverable.
+func (e *Engine) finish(ctx context.Context, b *pg.Batch, build bool) error {
+	if build {
+		return e.Build(ctx, b)
 	}
 	logutil.WarnIfErr(e.Forge.DeleteBranch(ctx, e.Owner, e.Repo, b.BranchName.String), "delete batch branch failed", "branch", b.BranchName.String)
-
 	slog.Info("batch done", "batch", b.ID, "landed", len(b.LandedIds),
 		"ejected", len(b.EjectedIds), "builds", b.Builds, "flaky", b.Flaky)
 	if e.Advance != nil {
 		e.Advance()
 	}
 	return nil
+}
+
+// next pops the pending stack and rebuilds, or finishes the batch.
+func (e *Engine) next(ctx context.Context, b *pg.Batch) error {
+	build := popNext(b)
+	if err := e.Queue.SaveBatch(ctx, b); err != nil {
+		return err
+	}
+	return e.finish(ctx, b, build)
 }
 
 // eject removes a single member: status, cancel automerge, comment, dequeue.

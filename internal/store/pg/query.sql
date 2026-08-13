@@ -90,6 +90,10 @@ LIMIT $3;
 SELECT * FROM queue_entries
 WHERE id = ANY(@ids::bigint[]);
 
+-- name: DeleteEntriesByIDs :exec
+DELETE FROM queue_entries
+WHERE id = ANY(@ids::bigint[]);
+
 -- name: SetEntryActiveBatch :exec
 UPDATE queue_entries
 SET active_batch_id = @active_batch_id, state = 'testing',
