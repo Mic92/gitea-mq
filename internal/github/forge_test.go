@@ -130,6 +130,22 @@ func TestForge_GetCheckStates_MapsRunsAndExcludesSelf(t *testing.T) {
 	}
 }
 
+func TestForge_GetCheckStates_PrefersLatestRunForContext(t *testing.T) {
+	srv, f := newTestForge(t)
+	srv.Repo("org", "app").CheckRuns["abc"] = []*ghfake.CheckRun{
+		{ID: 2, Name: "ci/build", Status: "completed", Conclusion: "success", DetailsURL: "https://ci/latest"},
+		{ID: 1, Name: "ci/build", Status: "completed", Conclusion: "cancelled", DetailsURL: "https://ci/old"},
+	}
+
+	got, err := f.GetCheckStates(context.Background(), "org", "app", "abc")
+	if err != nil {
+		t.Fatalf("GetCheckStates: %v", err)
+	}
+	if got["ci/build"].State != pg.CheckStateSuccess || got["ci/build"].TargetURL != "https://ci/latest" {
+		t.Errorf("ci/build = %+v, want latest successful run", got["ci/build"])
+	}
+}
+
 func TestForge_IsUpToDate(t *testing.T) {
 	srv, f := newTestForge(t)
 	repo := srv.Repo("org", "app")

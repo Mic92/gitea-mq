@@ -124,6 +124,7 @@ func (f *githubForge) GetCheckStates(ctx context.Context, owner, name, sha strin
 		return nil, err
 	}
 	out := map[string]forge.Check{}
+	latestRunIDs := map[string]int64{}
 
 	opts := &gh.ListCheckRunsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
 	for cr, err := range c.Checks.ListCheckRunsForRefIter(ctx, owner, name, sha, opts) {
@@ -134,6 +135,13 @@ func (f *githubForge) GetCheckStates(ctx context.Context, owner, name, sha strin
 		if cr.GetName() == forge.MQContext {
 			continue
 		}
+		// Retries and concurrency cancellation can leave multiple runs for one
+		// context. GitHub evaluates the newest run, so do not let an older run
+		// overwrite its state when API pages contain both.
+		if latestID, ok := latestRunIDs[cr.GetName()]; ok && cr.GetID() < latestID {
+			continue
+		}
+		latestRunIDs[cr.GetName()] = cr.GetID()
 		out[cr.GetName()] = forge.Check{
 			State:       CheckRunToState(cr.GetStatus(), cr.GetConclusion()),
 			Description: cr.GetOutput().GetSummary(),
