@@ -100,13 +100,26 @@ func nn(s []int64) []int64 {
 	return s
 }
 
-// SaveBatch persists the mutable fields of a batch row.
-func (s *Service) SaveBatch(ctx context.Context, b *pg.Batch) error {
+// SaveBatch persists the mutable fields of a batch row. Any removeEntries
+// are deleted from the queue in the same transaction.
+func (s *Service) SaveBatch(ctx context.Context, b *pg.Batch, removeEntries ...int64) error {
+	if len(removeEntries) == 0 {
+		return saveBatch(ctx, s.queries(), b)
+	}
+	return s.withTx(ctx, func(q *pg.Queries) error {
+		if err := q.DeleteEntriesByIDs(ctx, removeEntries); err != nil {
+			return fmt.Errorf("delete entries: %w", err)
+		}
+		return saveBatch(ctx, q, b)
+	})
+}
+
+func saveBatch(ctx context.Context, q *pg.Queries, b *pg.Batch) error {
 	pending := b.Pending
 	if len(pending) == 0 {
 		pending = []byte("[]")
 	}
-	saved, err := s.queries().SaveBatch(ctx, pg.SaveBatchParams{
+	saved, err := q.SaveBatch(ctx, pg.SaveBatchParams{
 		ID:               b.ID,
 		State:            b.State,
 		CurrentIds:       nn(b.CurrentIds),

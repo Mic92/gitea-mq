@@ -268,6 +268,38 @@ func TestBisect_BothHalvesPass_Flaky(t *testing.T) {
 
 // TestHandleCheck_EvaluatesAndDispatches drives the engine via the public
 // monitor entry point so the lock + guard + save + evaluate path is covered.
+// Cancelling the caller's context mid-HandlePass must not lose the landing.
+func TestHandlePass_ContextCanceledAfterFastForward(t *testing.T) {
+	e, f, svc, ctx := setup(t, 10, 20)
+
+	b, err := e.FormAndBuild(ctx, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cctx, cancel := context.WithCancel(ctx)
+	f.GetPRFn = func(_ context.Context, _, _ string, n int64) (*forge.PR, error) {
+		cancel()
+		return &forge.PR{Number: n, State: "open"}, nil
+	}
+
+	if err := e.HandlePass(cctx, b); err != nil {
+		t.Fatalf("HandlePass: %v", err)
+	}
+	b, err = svc.GetBatch(ctx, b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.State != pg.BatchStateDone || len(b.LandedIds) != 2 || len(b.CurrentIds) != 0 {
+		t.Fatalf("batch not landed: %+v", b)
+	}
+	for _, n := range []int64{10, 20} {
+		if ent, _ := svc.GetEntry(ctx, e.RepoID, n); ent != nil {
+			t.Fatalf("PR #%d still queued", n)
+		}
+	}
+}
+
 func TestHandleCheck_EvaluatesAndDispatches(t *testing.T) {
 	e, f, svc, ctx := setup(t, 10, 20)
 	f.merged[10], f.merged[20] = true, true
