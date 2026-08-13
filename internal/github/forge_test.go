@@ -106,6 +106,22 @@ func TestForge_GetRequiredChecks_ExcludesSelf(t *testing.T) {
 	}
 }
 
+// Required checks may live in classic branch protection instead of rulesets.
+func TestForge_GetRequiredChecks_MergesClassicProtection(t *testing.T) {
+	srv, f := newTestForge(t)
+	repo := srv.Repo("org", "app")
+	repo.RequiredChecks["main"] = []string{forge.MQContext, "ci/build"}
+	repo.ProtectionChecks["main"] = []string{"buildbot/nix-build", "ci/build", forge.MQContext}
+
+	got, err := f.GetRequiredChecks(context.Background(), "org", "app", "main")
+	if err != nil {
+		t.Fatalf("GetRequiredChecks: %v", err)
+	}
+	if !slices.Equal(got, []string{"ci/build", "buildbot/nix-build"}) {
+		t.Errorf("got %v", got)
+	}
+}
+
 func TestForge_GetCheckStates_MapsRunsAndExcludesSelf(t *testing.T) {
 	srv, f := newTestForge(t)
 	repo := srv.Repo("org", "app")
