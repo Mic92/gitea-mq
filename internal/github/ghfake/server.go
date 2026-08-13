@@ -88,6 +88,10 @@ type Repo struct {
 	// required_status_checks rule, decoupled from Rulesets so tests can
 	// stub rule evaluation directly.
 	RequiredChecks map[string][]string
+
+	// ProtectionChecks[branch] feeds classic branch protection; absent
+	// branches answer 404 like unprotected ones.
+	ProtectionChecks map[string][]string
 }
 
 // HookConfig mirrors the App-level webhook config (PATCH /app/hook/config).
@@ -163,18 +167,19 @@ func (s *Server) AddRepo(owner, name string) *Repo {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r := &Repo{
-		Owner:          owner,
-		Name:           name,
-		DefaultBranch:  "main",
-		PRs:            map[int64]*PR{},
-		Refs:           map[string]string{"main": "sha-main"},
-		Parents:        map[string][]string{},
-		CheckRuns:      map[string][]*CheckRun{},
-		BehindBy:       map[string]int{},
-		ConflictOn:     map[string]bool{},
-		ProtectedRefs:  map[string]bool{},
-		Settings:       map[string]any{},
-		RequiredChecks: map[string][]string{},
+		Owner:            owner,
+		Name:             name,
+		DefaultBranch:    "main",
+		PRs:              map[int64]*PR{},
+		Refs:             map[string]string{"main": "sha-main"},
+		Parents:          map[string][]string{},
+		CheckRuns:        map[string][]*CheckRun{},
+		BehindBy:         map[string]int{},
+		ConflictOn:       map[string]bool{},
+		ProtectedRefs:    map[string]bool{},
+		Settings:         map[string]any{},
+		RequiredChecks:   map[string][]string{},
+		ProtectionChecks: map[string][]string{},
 	}
 	s.repos[owner+"/"+name] = r
 	return r
@@ -254,6 +259,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 
 	// Rules / rulesets.
 	mux.HandleFunc("GET "+apiV3+"/repos/{o}/{r}/rules/branches/{b}", s.hRulesForBranch)
+	mux.HandleFunc("GET "+apiV3+"/repos/{o}/{r}/branches/{b}/protection/required_status_checks", s.hProtectionChecks)
 	mux.HandleFunc("GET "+apiV3+"/repos/{o}/{r}/rulesets", s.hListRulesets)
 	mux.HandleFunc("POST "+apiV3+"/repos/{o}/{r}/rulesets", s.hCreateRuleset)
 
@@ -743,6 +749,22 @@ func (s *Server) hCompare(w http.ResponseWriter, r *http.Request) {
 }
 
 // --- handlers: rules ---
+
+func (s *Server) hProtectionChecks(w http.ResponseWriter, r *http.Request) {
+	rp, ok := s.repoOr404(w, r)
+	if !ok {
+		return
+	}
+	b := r.PathValue("b")
+	s.mu.Lock()
+	checks, protected := rp.ProtectionChecks[b]
+	s.mu.Unlock()
+	if !protected {
+		writeJSON(w, 404, map[string]any{"message": "Branch not protected"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"strict": true, "contexts": checks})
+}
 
 func (s *Server) hRulesForBranch(w http.ResponseWriter, r *http.Request) {
 	rp, ok := s.repoOr404(w, r)

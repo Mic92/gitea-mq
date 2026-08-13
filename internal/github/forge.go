@@ -106,13 +106,29 @@ func (f *githubForge) GetRequiredChecks(ctx context.Context, owner, name, branch
 	if err != nil {
 		return nil, err
 	}
-	var out []string
+	var contexts []string
 	for _, r := range rules.RequiredStatusChecks {
 		for _, sc := range r.Parameters.RequiredStatusChecks {
-			if forge.IsOwnContext(sc.Context) {
-				continue
-			}
-			out = append(out, sc.Context)
+			contexts = append(contexts, sc.Context)
+		}
+	}
+
+	// Classic branch protection is separate from rulesets:
+	// 404 means the branch is unprotected.
+	rsc, resp, err := c.Repositories.GetRequiredStatusChecks(ctx, owner, name, branch)
+	if err != nil && (resp == nil || resp.StatusCode != http.StatusNotFound) {
+		return nil, fmt.Errorf("get branch protection checks for %s: %w", branch, err)
+	}
+	if err == nil && rsc.Contexts != nil {
+		contexts = append(contexts, *rsc.Contexts...)
+	}
+
+	var out []string
+	seen := map[string]bool{}
+	for _, c := range contexts {
+		if !forge.IsOwnContext(c) && !seen[c] {
+			seen[c] = true
+			out = append(out, c)
 		}
 	}
 	return out, nil
