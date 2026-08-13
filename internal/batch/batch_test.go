@@ -268,7 +268,7 @@ func TestBisect_BothHalvesPass_Flaky(t *testing.T) {
 
 // TestHandleCheck_EvaluatesAndDispatches drives the engine via the public
 // monitor entry point so the lock + guard + save + evaluate path is covered.
-// Cancelling the caller's context mid-HandlePass must not lose the landing.
+// HandlePass keeps the landing when the caller's context gets cancelled.
 func TestHandlePass_ContextCanceledAfterFastForward(t *testing.T) {
 	e, f, svc, ctx := setup(t, 10, 20)
 
