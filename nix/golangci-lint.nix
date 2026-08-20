@@ -9,7 +9,7 @@ gitea-mq.overrideAttrs (old: {
   env.CGO_ENABLED = "0";
   buildPhase = ''
     HOME=$TMPDIR
-    golangci-lint run
+    GOMAXPROCS=$NIX_BUILD_CORES golangci-lint run --concurrency $NIX_BUILD_CORES
   '';
   installPhase = ''
     touch $out
