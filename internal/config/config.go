@@ -24,6 +24,7 @@ type Config struct {
 	IdlePollInterval    time.Duration
 	CheckTimeout        time.Duration
 	RequiredChecks      []string
+	MergeLabel          string
 	SkipQueueIfUpToDate bool
 	BatchMax            int
 	BisectMaxSteps      int
@@ -138,6 +139,11 @@ func Load() (*Config, error) {
 				cfg.RequiredChecks = append(cfg.RequiredChecks, c)
 			}
 		}
+	}
+
+	cfg.MergeLabel = envOrDefault("GITEA_MQ_MERGE_LABEL", "merge-queue")
+	if cfg.MergeLabel == "none" {
+		cfg.MergeLabel = ""
 	}
 
 	cfg.SkipQueueIfUpToDate, err = parseBool("GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE", true)

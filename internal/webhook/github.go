@@ -22,6 +22,8 @@ var prTriggerActions = map[string]bool{
 	"reopened":            true,
 	"synchronize":         true,
 	"edited":              true, // base-branch retarget arrives as edited
+	"labeled":             true,
+	"unlabeled":           true,
 }
 
 // GithubHandler validates X-Hub-Signature-256, dispatches by X-GitHub-Event,

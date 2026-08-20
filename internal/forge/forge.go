@@ -124,6 +124,72 @@ type PR struct {
 	BaseBranch       string
 	HTMLURL          string
 	AutoMergeEnabled bool
+	Labels           []string
+}
+
+// HasLabel reports whether the PR carries the given label (case-insensitive,
+// matching forge semantics).
+func (p *PR) HasLabel(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, l := range p.Labels {
+		if strings.EqualFold(l, name) {
+			return true
+		}
+	}
+	return false
+}
+
+type StackPR struct {
+	Number  int64
+	HeadSHA string
+	Merged  bool
+}
+
+// Stack is an ordered (bottom→top) chain of stacked PRs targeting BaseBranch.
+type Stack struct {
+	BaseBranch string
+	PRs        []StackPR
+}
+
+// MembersUpTo returns the members up to and including number, and whether
+// number is part of the stack.
+func (s *Stack) MembersUpTo(number int64) ([]StackPR, bool) {
+	for i, p := range s.PRs {
+		if p.Number == number {
+			return s.PRs[:i+1], true
+		}
+	}
+	return nil, false
+}
+
+// StackResolver is optionally implemented by forges with native stacked-PR
+// support (GitHub). ResolveStack returns nil (no error) when the PR is not
+// part of a stack or the feature is unavailable.
+type StackResolver interface {
+	ResolveStack(ctx context.Context, owner, name string, number int64) (*Stack, error)
+}
+
+// ResolveStack looks up the PR's stack when the forge supports stacks.
+func ResolveStack(ctx context.Context, f Forge, owner, name string, number int64) (*Stack, error) {
+	sr, ok := f.(StackResolver)
+	if !ok {
+		return nil, nil
+	}
+	return sr.ResolveStack(ctx, owner, name, number)
+}
+
+// CancelMergeIntent withdraws whatever signal put the PR into the queue:
+// forge-native automerge and, when configured, the merge label.
+func CancelMergeIntent(ctx context.Context, f Forge, owner, name string, number int64, mergeLabel string) error {
+	err := f.CancelAutoMerge(ctx, owner, name, number)
+	if mergeLabel != "" {
+		if lerr := f.RemoveLabel(ctx, owner, name, number, mergeLabel); lerr != nil && err == nil {
+			err = lerr
+		}
+	}
+	return err
 }
 
 // MQStatus is the lifecycle state reported by gitea-mq for a head SHA.
@@ -205,6 +271,12 @@ type Forge interface {
 	IsUpToDate(ctx context.Context, owner, name, base, headSHA string) (bool, error)
 
 	CancelAutoMerge(ctx context.Context, owner, name string, number int64) error
+	// RemoveLabel removes a label from a PR; a missing label is not an error.
+	RemoveLabel(ctx context.Context, owner, name string, number int64, label string) error
+	// MergePR merges the PR (on GitHub: the whole stack up to and including
+	// it, atomically). May complete asynchronously; callers observe the
+	// PR's merged state.
+	MergePR(ctx context.Context, owner, name string, number int64) error
 	Comment(ctx context.Context, owner, name string, number int64, body string) error
 
 	EnsureRepoSetup(ctx context.Context, owner, name string, cfg SetupConfig) error

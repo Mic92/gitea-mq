@@ -22,6 +22,13 @@ type PR struct {
 	Head      *PRRef     `json:"head"`
 	Base      *PRRef     `json:"base"`
 	HTMLURL   string     `json:"html_url"`
+	Labels    []*Label   `json:"labels"`
+}
+
+// Label represents an issue/PR label from the Gitea API (subset of fields).
+type Label struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
 }
 
 // PRRef holds a branch ref and its current SHA.
@@ -191,6 +198,14 @@ type Client interface {
 	// CancelAutoMerge cancels the scheduled automerge for a pull request.
 	// DELETE /repos/{owner}/{repo}/pulls/{index}/merge
 	CancelAutoMerge(ctx context.Context, owner, repo string, index int64) error
+
+	// MergePR merges a pull request into its base branch.
+	// POST /repos/{owner}/{repo}/pulls/{index}/merge
+	MergePR(ctx context.Context, owner, repo string, index int64) error
+
+	// RemoveIssueLabel removes a label (by id) from an issue or PR.
+	// DELETE /repos/{owner}/{repo}/issues/{index}/labels/{id}
+	RemoveIssueLabel(ctx context.Context, owner, repo string, index, labelID int64) error
 
 	// GetBranchProtection returns the branch protection rule for a branch.
 	// GET /repos/{owner}/{repo}/branch_protections/{name}

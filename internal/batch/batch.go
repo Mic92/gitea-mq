@@ -49,6 +49,7 @@ type Engine struct {
 	BisectMaxSteps int
 	CheckTimeout   time.Duration
 	FallbackChecks []string
+	MergeLabel     string
 
 	// MergedPoll controls ensureMergedOrClose. Defaults: 200ms × 50 = 10s.
 	MergedPollInterval time.Duration
@@ -508,7 +509,7 @@ func (e *Engine) eject(ctx context.Context, b *pg.Batch, ent *pg.QueueEntry, sta
 	logutil.WarnIfErr(e.Forge.SetMQStatus(ctx, e.Owner, e.Repo, ent.PrHeadSha, forge.MQStatus{
 		State: state, Description: statusDesc, TargetURL: e.prURL(ent.PrNumber),
 	}), "set mq status failed", "pr", ent.PrNumber)
-	logutil.WarnIfErr(e.Forge.CancelAutoMerge(ctx, e.Owner, e.Repo, ent.PrNumber), "cancel automerge failed", "pr", ent.PrNumber)
+	logutil.WarnIfErr(forge.CancelMergeIntent(ctx, e.Forge, e.Owner, e.Repo, ent.PrNumber, e.MergeLabel), "cancel merge intent failed", "pr", ent.PrNumber)
 	logutil.WarnIfErr(e.Forge.Comment(ctx, e.Owner, e.Repo, ent.PrNumber, comment), "post comment failed", "pr", ent.PrNumber)
 	// The next SaveBatch deletes EjectedIds from the queue.
 	b.EjectedIds = append(b.EjectedIds, ent.ID)

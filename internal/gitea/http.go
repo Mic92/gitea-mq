@@ -581,6 +581,24 @@ func (c *HTTPClient) EditIssueState(ctx context.Context, owner, repo string, ind
 		fmt.Sprintf("edit issue #%d state in %s/%s", index, owner, repo))
 }
 
+// POST /repos/{owner}/{repo}/pulls/{index}/merge
+func (c *HTTPClient) MergePR(ctx context.Context, owner, repo string, index int64) error {
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%d/merge", owner, repo, index)
+	return c.doDiscard(ctx, http.MethodPost, path, map[string]string{"Do": "merge"},
+		fmt.Sprintf("merge PR #%d in %s/%s", index, owner, repo))
+}
+
+// DELETE /repos/{owner}/{repo}/issues/{index}/labels/{id}; 404 is success.
+func (c *HTTPClient) RemoveIssueLabel(ctx context.Context, owner, repo string, index, labelID int64) error {
+	path := fmt.Sprintf("/repos/%s/%s/issues/%d/labels/%d", owner, repo, index, labelID)
+	err := c.doDiscard(ctx, http.MethodDelete, path, nil,
+		fmt.Sprintf("remove label %d from PR #%d in %s/%s", labelID, index, owner, repo))
+	if err != nil && IsNotFound(err) {
+		return nil
+	}
+	return err
+}
+
 // NotFastForwardError indicates a rejected non-fast-forward push.
 type NotFastForwardError struct {
 	Branch, SHA string

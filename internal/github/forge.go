@@ -15,7 +15,10 @@ import (
 	"github.com/Mic92/gitea-mq/internal/forge"
 )
 
-var _ forge.Forge = (*githubForge)(nil)
+var (
+	_ forge.Forge         = (*githubForge)(nil)
+	_ forge.StackResolver = (*githubForge)(nil)
+)
 
 type githubForge struct {
 	app       *App
@@ -44,7 +47,12 @@ func (f *githubForge) BranchHTMLURL(owner, name, branch string) string {
 }
 
 func toForgePR(p *gh.PullRequest) forge.PR {
+	var labels []string
+	for _, l := range p.Labels {
+		labels = append(labels, l.GetName())
+	}
 	return forge.PR{
+		Labels:           labels,
 		Number:           int64(p.GetNumber()),
 		Title:            p.GetTitle(),
 		State:            p.GetState(),
@@ -395,6 +403,112 @@ func (f *githubForge) CancelAutoMerge(ctx context.Context, owner, name string, n
 			return nil
 		}
 		return fmt.Errorf("disablePullRequestAutoMerge: %s", msg)
+	}
+	return nil
+}
+
+func (f *githubForge) RemoveLabel(ctx context.Context, owner, name string, number int64, label string) error {
+	c, err := f.app.ClientForRepo(owner, name)
+	if err != nil {
+		return err
+	}
+	resp, err := c.Issues.RemoveLabelForIssue(ctx, owner, name, int(number), label)
+	// Idempotent: the label may already be gone.
+	if resp != nil && resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	return err
+}
+
+func stackAPIPath(owner, name string) string {
+	return fmt.Sprintf("repos/%s/%s/stacks", owner, name)
+}
+
+type remoteStack struct {
+	Base struct {
+		Ref string `json:"ref"`
+	} `json:"base"`
+	PullRequests []struct {
+		Number   int     `json:"number"`
+		MergedAt *string `json:"merged_at"`
+		Head     struct {
+			Sha string `json:"sha"`
+		} `json:"head"`
+	} `json:"pull_requests"`
+}
+
+// ResolveStack returns nil when the PR is not stacked or the repo has
+// stacked PRs disabled (404).
+func (f *githubForge) ResolveStack(ctx context.Context, owner, name string, number int64) (*forge.Stack, error) {
+	c, err := f.app.ClientForRepo(owner, name)
+	if err != nil {
+		return nil, err
+	}
+	req, err := c.NewRequest("GET", fmt.Sprintf("%s?pull_request=%d", stackAPIPath(owner, name), number), nil)
+	if err != nil {
+		return nil, err
+	}
+	var stacks []remoteStack
+	resp, err := c.Do(ctx, req, &stacks)
+	if err != nil {
+		if resp != nil && resp.StatusCode == http.StatusNotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("resolve stack for PR #%d: %w", number, err)
+	}
+	if len(stacks) == 0 {
+		return nil, nil
+	}
+	s := &forge.Stack{BaseBranch: stacks[0].Base.Ref}
+	for _, p := range stacks[0].PullRequests {
+		s.PRs = append(s.PRs, forge.StackPR{
+			Number:  int64(p.Number),
+			HeadSHA: p.Head.Sha,
+			Merged:  p.MergedAt != nil && *p.MergedAt != "",
+		})
+	}
+	return s, nil
+}
+
+type asyncMergeResult struct {
+	Status  string `json:"status"` // pending, merged, enqueued, failed
+	Details struct {
+		Message string `json:"message"`
+	} `json:"details"`
+}
+
+// MergePR uses the async merge API (atomic for stacks). 409 means a merge
+// request is already in flight; 404 falls back to the classic endpoint.
+func (f *githubForge) MergePR(ctx context.Context, owner, name string, number int64) error {
+	c, err := f.app.ClientForRepo(owner, name)
+	if err != nil {
+		return err
+	}
+	body := map[string]string{"merge_action": "default"}
+	req, err := c.NewRequest("PUT", fmt.Sprintf("repos/%s/%s/pulls/%d/merge-async", owner, name, number), body)
+	if err != nil {
+		return err
+	}
+	var result asyncMergeResult
+	resp, err := c.Do(ctx, req, &result)
+	if err != nil {
+		var accepted *gh.AcceptedError
+		switch {
+		case errors.As(err, &accepted):
+			if jerr := json.Unmarshal(accepted.Raw, &result); jerr != nil {
+				return fmt.Errorf("async merge PR #%d: decode 202 body: %w", number, jerr)
+			}
+		case resp != nil && resp.StatusCode == http.StatusConflict:
+			return nil
+		case resp != nil && resp.StatusCode == http.StatusNotFound:
+			_, _, merr := c.PullRequests.Merge(ctx, owner, name, int(number), "", nil)
+			return merr
+		default:
+			return fmt.Errorf("async merge PR #%d: %w", number, err)
+		}
+	}
+	if result.Status == "failed" {
+		return fmt.Errorf("async merge PR #%d failed: %s", number, result.Details.Message)
 	}
 	return nil
 }

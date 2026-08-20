@@ -18,6 +18,15 @@ CI runs there. If all required checks pass, gitea-mq marks its own status
 times out, gitea-mq cancels automerge and posts a comment saying what went
 wrong.
 
+Alternatively, adding the merge label (default `merge-queue`, see
+`GITEA_MQ_MERGE_LABEL`) to a PR enqueues it without automerge. On GitHub this
+is the way to merge [stacked pull requests](https://gh.io/stacks), which have
+no auto-merge: label the topmost PR you want to merge, gitea-mq tests the
+whole stack against the stack's base branch and, on green, marks all stack
+heads as passed and performs the atomic stack merge itself. Stacked PRs
+without the label get a pending `gitea-mq` status hinting at this workflow.
+Removing the label removes the PR from the queue.
+
 Only one PR is tested at a time per target branch. PRs targeting different
 branches get independent queues. If the head-of-queue PR already contains the
 current target tip, the merge-branch run is skipped and the PR's own green CI
@@ -62,6 +71,7 @@ variables.
 | `GITEA_MQ_CHECK_TIMEOUT` | no | `1h` | Timeout for required checks |
 | `GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE` | no | `true` | Skip the merge-branch CI run when a PR is already rebased onto the target branch tip (its own green CI already covers the merged tree) |
 | `GITEA_MQ_REQUIRED_CHECKS` | no | - | Fallback required CI contexts when branch protection has none (comma-separated) |
+| `GITEA_MQ_MERGE_LABEL` | no | `merge-queue` | Label that enqueues a PR (stack-aware on GitHub); set to `none` to disable |
 | `GITEA_MQ_BATCH_MAX` | no | `1` | Max PRs tested together as one batch. `1` = batching off (legacy behaviour). `0` = everything currently queued |
 | `GITEA_MQ_BISECT_MAX_STEPS` | no | `0` | Cap on CI builds spent bisecting one batch. `0` = unlimited |
 | `GITEA_MQ_REFRESH_INTERVAL` | no | `10s` | Dashboard auto-refresh interval |
