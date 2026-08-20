@@ -125,6 +125,7 @@ func run() error {
 		IdlePollInterval:    cfg.IdlePollInterval,
 		CheckTimeout:        cfg.CheckTimeout,
 		FallbackChecks:      cfg.RequiredChecks,
+		MergeLabel:          cfg.MergeLabel,
 		SuccessTimeout:      5 * time.Minute,
 		SkipQueueIfUpToDate: cfg.SkipQueueIfUpToDate,
 		BatchMax:            cfg.BatchMax,

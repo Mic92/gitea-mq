@@ -29,6 +29,8 @@ type MockClient struct {
 	CreateCommitStatusFn      func(ctx context.Context, owner, repo, sha string, status CommitStatus) error
 	CreateCommentFn           func(ctx context.Context, owner, repo string, index int64, body string) error
 	CancelAutoMergeFn         func(ctx context.Context, owner, repo string, index int64) error
+	MergePRFn                 func(ctx context.Context, owner, repo string, index int64) error
+	RemoveIssueLabelFn        func(ctx context.Context, owner, repo string, index, labelID int64) error
 	GetBranchProtectionFn     func(ctx context.Context, owner, repo, branch string) (*BranchProtection, error)
 	ListBranchesFn            func(ctx context.Context, owner, repo string) ([]Branch, error)
 	CreateBranchFn            func(ctx context.Context, owner, repo, name, target string) error
@@ -69,6 +71,26 @@ func (m *MockClient) CallsTo(method string) []MockCall {
 	}
 
 	return result
+}
+
+func (m *MockClient) MergePR(ctx context.Context, owner, repo string, index int64) error {
+	m.record("MergePR", owner, repo, index)
+
+	if m.MergePRFn != nil {
+		return m.MergePRFn(ctx, owner, repo, index)
+	}
+
+	return nil
+}
+
+func (m *MockClient) RemoveIssueLabel(ctx context.Context, owner, repo string, index, labelID int64) error {
+	m.record("RemoveIssueLabel", owner, repo, index, labelID)
+
+	if m.RemoveIssueLabelFn != nil {
+		return m.RemoveIssueLabelFn(ctx, owner, repo, index, labelID)
+	}
+
+	return nil
 }
 
 // Reset clears all recorded calls.

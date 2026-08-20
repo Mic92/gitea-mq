@@ -40,7 +40,9 @@ func TestGithubHandler_PRTriggersPoll(t *testing.T) {
 		{"auto_merge_disabled", 1},
 		{"closed", 1},
 		{"synchronize", 1},
-		{"labeled", 0}, // irrelevant action must not poke the poller
+		{"labeled", 1},
+		{"unlabeled", 1},
+		{"assigned", 0}, // irrelevant action must not poke the poller
 	} {
 		polled = 0
 		body := `{"action":"` + tc.action + `","pull_request":{"number":1},"repository":{"name":"app","owner":{"login":"org"}}}`

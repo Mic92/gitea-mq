@@ -37,6 +37,7 @@ type Deps struct {
 	IdlePollInterval    time.Duration
 	CheckTimeout        time.Duration
 	FallbackChecks      []string
+	MergeLabel          string
 	SuccessTimeout      time.Duration
 	SkipQueueIfUpToDate bool
 	BatchMax            int
@@ -118,6 +119,7 @@ func (r *RepoRegistry) Add(ctx context.Context, ref forge.RepoRef) error {
 			BisectMaxSteps: r.deps.BisectMaxSteps,
 			CheckTimeout:   r.deps.CheckTimeout,
 			FallbackChecks: r.deps.FallbackChecks,
+			MergeLabel:     r.deps.MergeLabel,
 			Advance:        triggerPoll,
 		}
 	}
@@ -144,6 +146,7 @@ func (r *RepoRegistry) Add(ctx context.Context, ref forge.RepoRef) error {
 		ExternalURL:    r.deps.ExternalURL,
 		CheckTimeout:   r.deps.CheckTimeout,
 		FallbackChecks: r.deps.FallbackChecks,
+		MergeLabel:     r.deps.MergeLabel,
 	}
 	if batchEngine != nil {
 		monDeps.Batch = batchEngine
@@ -168,6 +171,7 @@ func (r *RepoRegistry) Add(ctx context.Context, ref forge.RepoRef) error {
 		Trigger:             trigger,
 		ExternalURL:         r.deps.ExternalURL,
 		FallbackChecks:      r.deps.FallbackChecks,
+		MergeLabel:          r.deps.MergeLabel,
 		SuccessTimeout:      r.deps.SuccessTimeout,
 		CheckTimeout:        r.deps.CheckTimeout,
 		SkipQueueIfUpToDate: r.deps.SkipQueueIfUpToDate,

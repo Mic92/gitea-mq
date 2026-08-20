@@ -43,7 +43,7 @@ func TestStartTesting_Success(t *testing.T) {
 	}
 	entry, _ := svc.GetEntry(ctx, repoID, 42)
 
-	result, err := merge.StartTesting(ctx, f, svc, "org", "app", repoID, entry, "https://mq.example.com")
+	result, err := merge.StartTesting(ctx, f, svc, "org", "app", repoID, entry, "https://mq.example.com", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestStartTesting_Conflict(t *testing.T) {
 	}
 	entry, _ := svc.GetEntry(ctx, repoID, 42)
 
-	result, err := merge.StartTesting(ctx, f, svc, "org", "app", repoID, entry, "https://mq.example.com")
+	result, err := merge.StartTesting(ctx, f, svc, "org", "app", repoID, entry, "https://mq.example.com", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestStartTesting_ClearsStaleStatuses(t *testing.T) {
 	}
 	entry, _ := svc.GetEntry(ctx, repoID, 42)
 
-	result, err := merge.StartTesting(ctx, f, svc, "org", "app", repoID, entry, "https://mq.example.com")
+	result, err := merge.StartTesting(ctx, f, svc, "org", "app", repoID, entry, "https://mq.example.com", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +235,7 @@ func TestStartTesting_NoStaleStatuses(t *testing.T) {
 	}
 	entry, _ := svc.GetEntry(ctx, repoID, 42)
 
-	result, err := merge.StartTesting(ctx, f, svc, "org", "app", repoID, entry, "https://mq.example.com")
+	result, err := merge.StartTesting(ctx, f, svc, "org", "app", repoID, entry, "https://mq.example.com", "")
 	if err != nil {
 		t.Fatal(err)
 	}

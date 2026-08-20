@@ -35,7 +35,7 @@ type StartTestingResult struct {
 // StartTesting creates a merge branch for the head-of-queue PR and
 // transitions it to the "testing" state. If the merge conflicts, the PR
 // is removed from the queue with automerge cancelled and a comment posted.
-func StartTesting(ctx context.Context, f forge.Forge, svc *queue.Service, owner, repo string, repoID int64, entry *pg.QueueEntry, externalURL string) (*StartTestingResult, error) {
+func StartTesting(ctx context.Context, f forge.Forge, svc *queue.Service, owner, repo string, repoID int64, entry *pg.QueueEntry, externalURL, mergeLabel string) (*StartTestingResult, error) {
 	branchName := BranchName(entry.PrNumber)
 	targetURL := forge.DashboardPRURL(externalURL, f.Kind(), owner, repo, entry.PrNumber)
 
@@ -43,12 +43,12 @@ func StartTesting(ctx context.Context, f forge.Forge, svc *queue.Service, owner,
 	if conflict {
 		slog.Info("merge conflict", "pr", entry.PrNumber)
 
-		logutil.WarnIfErr(f.CancelAutoMerge(ctx, owner, repo, entry.PrNumber), "cancel automerge failed", "pr", entry.PrNumber)
+		logutil.WarnIfErr(forge.CancelMergeIntent(ctx, f, owner, repo, entry.PrNumber, mergeLabel), "cancel merge intent failed", "pr", entry.PrNumber)
 		logutil.WarnIfErr(f.SetMQStatus(ctx, owner, repo, entry.PrHeadSha, forge.MQStatus{
 			State: pg.CheckStateFailure, Description: "Merge conflict with target branch", TargetURL: targetURL,
 		}), "set mq status failed", "pr", entry.PrNumber)
 		logutil.WarnIfErr(f.Comment(ctx, owner, repo, entry.PrNumber,
-			"❌ Removed from merge queue: merge conflict with target branch. Please rebase and re-schedule automerge."),
+			"❌ Removed from merge queue: merge conflict with target branch. Please rebase and re-schedule the merge."),
 			"post comment failed", "pr", entry.PrNumber)
 
 		if _, err := svc.Dequeue(ctx, repoID, entry.PrNumber); err != nil {
@@ -61,7 +61,7 @@ func StartTesting(ctx context.Context, f forge.Forge, svc *queue.Service, owner,
 		// user and remove rather than retry silently.
 		slog.Error("merge branch creation failed", "pr", entry.PrNumber, "error", err)
 
-		logutil.WarnIfErr(f.CancelAutoMerge(ctx, owner, repo, entry.PrNumber), "cancel automerge failed", "pr", entry.PrNumber)
+		logutil.WarnIfErr(forge.CancelMergeIntent(ctx, f, owner, repo, entry.PrNumber, mergeLabel), "cancel merge intent failed", "pr", entry.PrNumber)
 		logutil.WarnIfErr(f.SetMQStatus(ctx, owner, repo, entry.PrHeadSha, forge.MQStatus{
 			State: pg.CheckStateError, Description: "Failed to create merge branch", TargetURL: targetURL,
 		}), "set mq status failed", "pr", entry.PrNumber)

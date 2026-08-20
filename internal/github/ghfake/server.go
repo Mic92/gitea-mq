@@ -34,6 +34,7 @@ type PR struct {
 	NodeID    string
 	AutoMerge bool
 	HTMLURL   string
+	Labels    []string
 }
 
 type CheckRun struct {
@@ -92,6 +93,20 @@ type Repo struct {
 	// ProtectionChecks[branch] feeds classic branch protection; absent
 	// branches answer 404 like unprotected ones.
 	ProtectionChecks map[string][]string
+
+	// Stacks feeds GET /stacks; nil answers 404 (feature disabled).
+	Stacks []Stack
+	// AsyncMerges records PUT /pulls/{n}/merge-async calls.
+	AsyncMerges []int64
+	// AsyncMergeStatus is the reported status (default "pending").
+	AsyncMergeStatus string
+	// AsyncMergeConflict makes merge-async return 409.
+	AsyncMergeConflict bool
+}
+
+type Stack struct {
+	BaseRef string
+	PRs     []int64 // bottom→top, resolved against Repo.PRs
 }
 
 // HookConfig mirrors the App-level webhook config (PATCH /app/hook/config).
@@ -255,6 +270,9 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE "+apiV3+"/repos/{o}/{r}/git/refs/{ref...}", s.hDeleteRef)
 	mux.HandleFunc("GET "+apiV3+"/repos/{o}/{r}/branches", s.hListBranches)
 	mux.HandleFunc("POST "+apiV3+"/repos/{o}/{r}/merges", s.hMerge)
+	mux.HandleFunc("GET "+apiV3+"/repos/{o}/{r}/stacks", s.hListStacks)
+	mux.HandleFunc("PUT "+apiV3+"/repos/{o}/{r}/pulls/{n}/merge-async", s.hMergeAsync)
+	mux.HandleFunc("DELETE "+apiV3+"/repos/{o}/{r}/issues/{n}/labels/{l}", s.hRemoveLabel)
 	mux.HandleFunc("GET "+apiV3+"/repos/{o}/{r}/compare/{basehead...}", s.hCompare)
 
 	// Rules / rulesets.
@@ -393,7 +411,16 @@ func prJSON(owner, name string, p *PR) map[string]any {
 		},
 		"base":       map[string]any{"ref": p.BaseRef},
 		"auto_merge": am,
+		"labels":     labelsJSON(p.Labels),
 	}
+}
+
+func labelsJSON(names []string) []map[string]any {
+	out := []map[string]any{}
+	for _, n := range names {
+		out = append(out, map[string]any{"name": n})
+	}
+	return out
 }
 
 func (s *Server) hListPRs(w http.ResponseWriter, r *http.Request) {
@@ -735,6 +762,91 @@ func (s *Server) hMerge(w http.ResponseWriter, r *http.Request) {
 	rp.Parents[mergeSHA] = []string{rp.Refs[body.Base], body.Head}
 	rp.Refs[body.Base] = mergeSHA
 	writeJSON(w, 201, map[string]any{"sha": mergeSHA})
+}
+
+func (s *Server) hListStacks(w http.ResponseWriter, r *http.Request) {
+	rp, ok := s.repoOr404(w, r)
+	if !ok {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if rp.Stacks == nil {
+		writeJSON(w, 404, map[string]any{"message": "Not Found"})
+		return
+	}
+	prFilter, _ := strconv.ParseInt(r.URL.Query().Get("pull_request"), 10, 64)
+	out := []map[string]any{}
+	for _, st := range rp.Stacks {
+		prs := []map[string]any{}
+		matched := prFilter == 0
+		for _, n := range st.PRs {
+			if n == prFilter {
+				matched = true
+			}
+			p := rp.PRs[n]
+			var mergedAt any
+			if p.Merged {
+				mergedAt = "2024-01-01T00:00:00Z"
+			}
+			prs = append(prs, map[string]any{
+				"number":    p.Number,
+				"merged_at": mergedAt,
+				"head":      map[string]any{"ref": p.HeadRef, "sha": p.HeadSHA},
+			})
+		}
+		if matched {
+			out = append(out, map[string]any{
+				"base":          map[string]any{"ref": st.BaseRef},
+				"pull_requests": prs,
+			})
+		}
+	}
+	writeJSON(w, 200, out)
+}
+
+func (s *Server) hMergeAsync(w http.ResponseWriter, r *http.Request) {
+	rp, ok := s.repoOr404(w, r)
+	if !ok {
+		return
+	}
+	n, _ := strconv.ParseInt(r.PathValue("n"), 10, 64)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if rp.AsyncMergeConflict {
+		writeJSON(w, 409, map[string]any{"message": "a merge request already exists"})
+		return
+	}
+	rp.AsyncMerges = append(rp.AsyncMerges, n)
+	status := rp.AsyncMergeStatus
+	if status == "" {
+		status = "pending"
+	}
+	writeJSON(w, 202, map[string]any{"status": status, "details": map[string]any{"message": "boom"}})
+}
+
+func (s *Server) hRemoveLabel(w http.ResponseWriter, r *http.Request) {
+	rp, ok := s.repoOr404(w, r)
+	if !ok {
+		return
+	}
+	n, _ := strconv.ParseInt(r.PathValue("n"), 10, 64)
+	label := r.PathValue("l")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := rp.PRs[n]
+	if p == nil {
+		writeJSON(w, 404, map[string]any{"message": "Not Found"})
+		return
+	}
+	for i, l := range p.Labels {
+		if l == label {
+			p.Labels = append(p.Labels[:i], p.Labels[i+1:]...)
+			writeJSON(w, 200, []any{})
+			return
+		}
+	}
+	writeJSON(w, 404, map[string]any{"message": "Label does not exist"})
 }
 
 func (s *Server) hCompare(w http.ResponseWriter, r *http.Request) {

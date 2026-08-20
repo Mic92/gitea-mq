@@ -34,6 +34,9 @@ type MockForge struct {
 	ListBranchesFn      func(ctx context.Context, owner, name string) ([]string, error)
 	IsUpToDateFn        func(ctx context.Context, owner, name, base, headSHA string) (bool, error)
 	CancelAutoMergeFn   func(ctx context.Context, owner, name string, number int64) error
+	RemoveLabelFn       func(ctx context.Context, owner, name string, number int64, label string) error
+	MergePRFn           func(ctx context.Context, owner, name string, number int64) error
+	ResolveStackFn      func(ctx context.Context, owner, name string, number int64) (*Stack, error)
 	CommentFn           func(ctx context.Context, owner, name string, number int64, body string) error
 	EnsureRepoSetupFn   func(ctx context.Context, owner, name string, cfg SetupConfig) error
 	MergeIntoFn         func(ctx context.Context, owner, name, branch, headSHA string) (string, bool, error)
@@ -41,7 +44,34 @@ type MockForge struct {
 	ClosePRFn           func(ctx context.Context, owner, name string, number int64) error
 }
 
-var _ Forge = (*MockForge)(nil)
+var (
+	_ Forge         = (*MockForge)(nil)
+	_ StackResolver = (*MockForge)(nil)
+)
+
+func (m *MockForge) RemoveLabel(ctx context.Context, owner, name string, number int64, label string) error {
+	m.record("RemoveLabel", owner, name, number, label)
+	if m.RemoveLabelFn != nil {
+		return m.RemoveLabelFn(ctx, owner, name, number, label)
+	}
+	return nil
+}
+
+func (m *MockForge) MergePR(ctx context.Context, owner, name string, number int64) error {
+	m.record("MergePR", owner, name, number)
+	if m.MergePRFn != nil {
+		return m.MergePRFn(ctx, owner, name, number)
+	}
+	return nil
+}
+
+func (m *MockForge) ResolveStack(ctx context.Context, owner, name string, number int64) (*Stack, error) {
+	m.record("ResolveStack", owner, name, number)
+	if m.ResolveStackFn != nil {
+		return m.ResolveStackFn(ctx, owner, name, number)
+	}
+	return nil, nil
+}
 
 func (m *MockForge) record(method string, args ...any) {
 	m.mu.Lock()

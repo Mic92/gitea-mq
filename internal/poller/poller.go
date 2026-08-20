@@ -32,6 +32,8 @@ type Deps struct {
 	ExternalURL string
 	// FallbackChecks gates enqueue when branch protection lists none.
 	FallbackChecks []string
+	// MergeLabel enqueues labeled PRs (stack-aware on GitHub); empty disables.
+	MergeLabel string
 	// SuccessTimeout is how long a PR may sit in "success" without merging
 	// before we assume the forge's auto-merge failed.
 	SuccessTimeout time.Duration
@@ -59,6 +61,9 @@ type Deps struct {
 	// TickDone, when non-nil, is signalled after each trigger/tick has been
 	// fully handled, letting tests sequence polls without sleeping.
 	TickDone chan<- struct{}
+
+	// hintedSHAs dedupes stack-hint statuses per head SHA.
+	hintedSHAs map[string]bool
 }
 
 func (d *Deps) now() time.Time {
@@ -77,11 +82,11 @@ type PollResult struct {
 }
 
 type removeOpts struct {
-	cancelAutomerge bool
-	comment         string
-	advance         bool
-	logMsg          string
-	logAttrs        []any
+	cancelIntent bool
+	comment      string
+	advance      bool
+	logMsg       string
+	logAttrs     []any
 }
 
 func removePR(ctx context.Context, deps *Deps, result *PollResult, entry *pg.QueueEntry, opts removeOpts) error {
@@ -90,8 +95,8 @@ func removePR(ctx context.Context, deps *Deps, result *PollResult, entry *pg.Que
 		return err
 	}
 
-	if opts.cancelAutomerge {
-		logutil.WarnIfErr(deps.Forge.CancelAutoMerge(ctx, deps.Owner, deps.Repo, entry.PrNumber), "cancel automerge failed", "pr", entry.PrNumber)
+	if opts.cancelIntent {
+		logutil.WarnIfErr(forge.CancelMergeIntent(ctx, deps.Forge, deps.Owner, deps.Repo, entry.PrNumber, deps.MergeLabel), "cancel merge intent failed", "pr", entry.PrNumber)
 	}
 	if opts.comment != "" {
 		logutil.WarnIfErr(deps.Forge.Comment(ctx, deps.Owner, deps.Repo, entry.PrNumber, opts.comment), "post comment failed", "pr", entry.PrNumber)
@@ -113,8 +118,8 @@ func removePR(ctx context.Context, deps *Deps, result *PollResult, entry *pg.Que
 
 // prCheckResult evaluates the PR's own head-commit checks against the
 // required checks. Reports CheckSuccess when no CI is configured at all.
-func prCheckResult(ctx context.Context, deps *Deps, pr *forge.PR) (monitor.CheckResult, error) {
-	requiredChecks, err := monitor.ResolveRequiredChecks(ctx, deps.Forge, deps.Owner, deps.Repo, pr.BaseBranch, deps.FallbackChecks)
+func prCheckResult(ctx context.Context, deps *Deps, pr *forge.PR, targetBranch string) (monitor.CheckResult, error) {
+	requiredChecks, err := monitor.ResolveRequiredChecks(ctx, deps.Forge, deps.Owner, deps.Repo, targetBranch, deps.FallbackChecks)
 	if err != nil {
 		return monitor.CheckWaiting, fmt.Errorf("resolve required checks for PR #%d: %w", pr.Number, err)
 	}
@@ -156,6 +161,8 @@ func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 	}
 
 	enqueueAutoMergePRs(ctx, deps, result, openPRs)
+	enqueueLabeledPRs(ctx, deps, result, openPRs)
+	hintStackedPRs(ctx, deps, openPRs)
 	reconcileEntries(ctx, deps, result, openPRMap)
 	startQueuedHeads(ctx, deps, result)
 	pollMergeBranchChecks(ctx, deps, result)
@@ -174,6 +181,7 @@ func monitorDeps(deps *Deps) *monitor.Deps {
 		ExternalURL:    deps.ExternalURL,
 		CheckTimeout:   deps.CheckTimeout,
 		FallbackChecks: deps.FallbackChecks,
+		MergeLabel:     deps.MergeLabel,
 	}
 	if deps.Batch.Enabled() {
 		m.Batch = deps.Batch
@@ -282,33 +290,162 @@ func enqueueAutoMergePRs(ctx context.Context, deps *Deps, result *PollResult, op
 			continue
 		}
 
-		res, err := prCheckResult(ctx, deps, pr)
-		if err != nil {
-			result.Errors = append(result.Errors, fmt.Errorf("check CI status for PR #%d: %w", pr.Number, err))
-			continue
+		enqueuePR(ctx, deps, result, pr, pr.BaseBranch, "automerge detection")
+	}
+}
+
+// enqueuePR adds a PR to the queue for targetBranch once its own CI is green.
+func enqueuePR(ctx context.Context, deps *Deps, result *PollResult, pr *forge.PR, targetBranch, source string) {
+	res, err := prCheckResult(ctx, deps, pr, targetBranch)
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Errorf("check CI status for PR #%d: %w", pr.Number, err))
+		return
+	}
+	if res != monitor.CheckSuccess {
+		return
+	}
+
+	enqResult, err := deps.Queue.Enqueue(ctx, deps.RepoID, pr.Number, pr.HeadSHA, targetBranch)
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Errorf("enqueue PR #%d: %w", pr.Number, err))
+		return
+	}
+
+	if enqResult.IsNew {
+		desc := fmt.Sprintf("Queued (position #%d)", enqResult.Position)
+		targetURL := forge.DashboardPRURL(deps.ExternalURL, deps.Forge.Kind(), deps.Owner, deps.Repo, pr.Number)
+		if err := deps.Forge.SetMQStatus(ctx, deps.Owner, deps.Repo, pr.HeadSHA, forge.MQStatus{
+			State: pg.CheckStatePending, Description: desc, TargetURL: targetURL,
+		}); err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("set pending status for PR #%d: %w", pr.Number, err))
 		}
-		if res != monitor.CheckSuccess {
+
+		result.Enqueued = append(result.Enqueued, pr.Number)
+		slog.Info("enqueued PR from "+source, "pr", pr.Number, "position", enqResult.Position)
+	}
+}
+
+// enqueueLabeledPRs adds open PRs carrying the merge label. For stacked PRs
+// the queue target is the stack's base branch, not the parent PR's branch.
+func enqueueLabeledPRs(ctx context.Context, deps *Deps, result *PollResult, openPRs []forge.PR) {
+	if deps.MergeLabel == "" {
+		return
+	}
+	for i := range openPRs {
+		pr := &openPRs[i]
+		if !pr.HasLabel(deps.MergeLabel) {
 			continue
 		}
 
-		enqResult, err := deps.Queue.Enqueue(ctx, deps.RepoID, pr.Number, pr.HeadSHA, pr.BaseBranch)
+		existing, err := deps.Queue.GetEntry(ctx, deps.RepoID, pr.Number)
 		if err != nil {
-			result.Errors = append(result.Errors, fmt.Errorf("enqueue PR #%d: %w", pr.Number, err))
+			result.Errors = append(result.Errors, fmt.Errorf("check queue for PR #%d: %w", pr.Number, err))
+			continue
+		}
+		if existing != nil {
 			continue
 		}
 
-		if enqResult.IsNew {
-			desc := fmt.Sprintf("Queued (position #%d)", enqResult.Position)
-			targetURL := forge.DashboardPRURL(deps.ExternalURL, deps.Forge.Kind(), deps.Owner, deps.Repo, pr.Number)
-			if err := deps.Forge.SetMQStatus(ctx, deps.Owner, deps.Repo, pr.HeadSHA, forge.MQStatus{
-				State: pg.CheckStatePending, Description: desc, TargetURL: targetURL,
-			}); err != nil {
-				result.Errors = append(result.Errors, fmt.Errorf("set pending status for PR #%d: %w", pr.Number, err))
+		target, err := labeledTargetBranch(ctx, deps, pr)
+		if err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("resolve stack for PR #%d: %w", pr.Number, err))
+			continue
+		}
+		enqueuePR(ctx, deps, result, pr, target, "merge label")
+	}
+}
+
+// labeledTargetBranch is the stack base branch for stacked PRs, else the PR's
+// own base branch.
+func labeledTargetBranch(ctx context.Context, deps *Deps, pr *forge.PR) (string, error) {
+	stack, err := forge.ResolveStack(ctx, deps.Forge, deps.Owner, deps.Repo, pr.Number)
+	if err != nil {
+		return "", err
+	}
+	if stack != nil {
+		if _, ok := stack.MembersUpTo(pr.Number); ok {
+			return stack.BaseBranch, nil
+		}
+	}
+	return pr.BaseBranch, nil
+}
+
+// hintStackedPRs surfaces the label workflow on stacked PRs, whose required
+// gitea-mq check would otherwise sit unset with no explanation: automerge is
+// not offered for stacks, so nothing would ever trigger the queue.
+func hintStackedPRs(ctx context.Context, deps *Deps, openPRs []forge.PR) {
+	if deps.MergeLabel == "" {
+		return
+	}
+	if _, ok := deps.Forge.(forge.StackResolver); !ok {
+		return
+	}
+
+	byHeadBranch := make(map[string]*forge.PR, len(openPRs))
+	for i := range openPRs {
+		byHeadBranch[openPRs[i].HeadBranch] = &openPRs[i]
+	}
+	stacked := make(map[int64]*forge.PR)
+	for i := range openPRs {
+		pr := &openPRs[i]
+		if parent, ok := byHeadBranch[pr.BaseBranch]; ok {
+			stacked[pr.Number] = pr
+			stacked[parent.Number] = parent
+		}
+	}
+
+	for _, pr := range stacked {
+		if pr.HasLabel(deps.MergeLabel) || deps.hintedSHAs[pr.HeadSHA] {
+			continue
+		}
+		entry, err := deps.Queue.GetEntry(ctx, deps.RepoID, pr.Number)
+		if err != nil || entry != nil {
+			continue
+		}
+		targetURL := forge.DashboardPRURL(deps.ExternalURL, deps.Forge.Kind(), deps.Owner, deps.Repo, pr.Number)
+		if err := deps.Forge.SetMQStatus(ctx, deps.Owner, deps.Repo, pr.HeadSHA, forge.MQStatus{
+			State:       pg.CheckStatePending,
+			Description: fmt.Sprintf("Stack detected — add the '%s' label to the topmost PR you want to merge", deps.MergeLabel),
+			TargetURL:   targetURL,
+		}); err != nil {
+			slog.Warn("set stack hint status failed", "pr", pr.Number, "error", err)
+			continue
+		}
+		if deps.hintedSHAs == nil {
+			deps.hintedSHAs = make(map[string]bool)
+		}
+		deps.hintedSHAs[pr.HeadSHA] = true
+	}
+}
+
+// finalizeLabeledMerge completes label-triggered entries that passed the
+// queue: the forge has no automerge armed for them, so gitea-mq flips the
+// remaining stack heads green and performs the (stack-aware) merge itself.
+func finalizeLabeledMerge(ctx context.Context, deps *Deps, result *PollResult, entry *pg.QueueEntry, pr *forge.PR) {
+	if deps.MergeLabel == "" || entry.State != pg.EntryStateSuccess || pr == nil || pr.Merged || !pr.HasLabel(deps.MergeLabel) {
+		return
+	}
+
+	stack, err := forge.ResolveStack(ctx, deps.Forge, deps.Owner, deps.Repo, entry.PrNumber)
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Errorf("resolve stack for PR #%d: %w", entry.PrNumber, err))
+		return
+	}
+	if stack != nil {
+		members, _ := stack.MembersUpTo(entry.PrNumber)
+		targetURL := forge.DashboardPRURL(deps.ExternalURL, deps.Forge.Kind(), deps.Owner, deps.Repo, entry.PrNumber)
+		for _, m := range members {
+			if m.Merged || m.HeadSHA == entry.PrHeadSha {
+				continue
 			}
-
-			result.Enqueued = append(result.Enqueued, pr.Number)
-			slog.Info("enqueued PR from automerge detection", "pr", pr.Number, "position", enqResult.Position)
+			logutil.WarnIfErr(deps.Forge.SetMQStatus(ctx, deps.Owner, deps.Repo, m.HeadSHA, forge.MQStatus{
+				State: pg.CheckStateSuccess, Description: "Merge queue passed (stack)", TargetURL: targetURL,
+			}), "set stack member status failed", "pr", m.Number)
 		}
+	}
+
+	if err := deps.Forge.MergePR(ctx, deps.Owner, deps.Repo, entry.PrNumber); err != nil {
+		result.Errors = append(result.Errors, fmt.Errorf("merge labeled PR #%d: %w", entry.PrNumber, err))
 	}
 }
 
@@ -333,6 +470,14 @@ func reconcileEntries(ctx context.Context, deps *Deps, result *PollResult, openP
 			pr = fullPR
 		}
 
+		labeled := deps.MergeLabel != "" && pr.HasLabel(deps.MergeLabel)
+		retargeted := pr.BaseBranch != "" && pr.BaseBranch != entry.TargetBranch
+		if retargeted && labeled {
+			if target, err := labeledTargetBranch(ctx, deps, pr); err == nil && target == entry.TargetBranch {
+				retargeted = false
+			}
+		}
+
 		checks := []struct {
 			when  bool
 			label string
@@ -349,29 +494,29 @@ func reconcileEntries(ctx context.Context, deps *Deps, result *PollResult, openP
 				opts:  removeOpts{logMsg: "removed closed PR from queue"},
 			},
 			{
-				when:  pr.BaseBranch != "" && pr.BaseBranch != entry.TargetBranch,
+				when:  retargeted,
 				label: "retargeted",
 				opts: removeOpts{
-					cancelAutomerge: true,
-					comment:         fmt.Sprintf("⚠️ Removed from merge queue: target branch changed from `%s` to `%s`. Please re-schedule automerge.", entry.TargetBranch, pr.BaseBranch),
-					logMsg:          "removed retargeted PR from queue",
-					logAttrs:        []any{"old_branch", entry.TargetBranch, "new_branch", pr.BaseBranch},
+					cancelIntent: true,
+					comment:      fmt.Sprintf("⚠️ Removed from merge queue: target branch changed from `%s` to `%s`. Please re-schedule the merge.", entry.TargetBranch, pr.BaseBranch),
+					logMsg:       "removed retargeted PR from queue",
+					logAttrs:     []any{"old_branch", entry.TargetBranch, "new_branch", pr.BaseBranch},
 				},
 			},
 			{
 				when:  pr.HeadSHA != "" && pr.HeadSHA != entry.PrHeadSha,
 				label: "pushed",
 				opts: removeOpts{
-					cancelAutomerge: true,
-					comment:         "⚠️ Removed from merge queue: new commits were pushed. Please re-schedule automerge.",
-					advance:         true,
-					logMsg:          "removed PR due to new push",
+					cancelIntent: true,
+					comment:      "⚠️ Removed from merge queue: new commits were pushed. Please re-schedule the merge.",
+					advance:      true,
+					logMsg:       "removed PR due to new push",
 				},
 			},
 			{
-				when:  !pr.AutoMergeEnabled,
+				when:  !pr.AutoMergeEnabled && !labeled,
 				label: "cancelled",
-				opts:  removeOpts{logMsg: "removed PR due to automerge cancellation"},
+				opts:  removeOpts{logMsg: "removed PR due to merge intent cancellation"},
 			},
 		}
 
@@ -394,6 +539,7 @@ func reconcileEntries(ctx context.Context, deps *Deps, result *PollResult, openP
 			}
 			continue
 		}
+		finalizeLabeledMerge(ctx, deps, result, &entry, pr)
 		handleSuccessTimeout(ctx, deps, result, &entry, pr)
 		handleTestingTimeout(ctx, deps, result, &entry)
 	}
@@ -410,7 +556,7 @@ func handleSuccessTimeout(ctx context.Context, deps *Deps, result *PollResult, e
 	}
 
 	if pr != nil && !timedOut(deps.now(), entry.CompletedAt, deps.CheckTimeout) {
-		res, err := prCheckResult(ctx, deps, pr)
+		res, err := prCheckResult(ctx, deps, pr, pr.BaseBranch)
 		if err != nil {
 			slog.Warn("success timeout: could not evaluate PR checks", "pr", entry.PrNumber, "error", err)
 		} else if res == monitor.CheckWaiting {
@@ -420,9 +566,9 @@ func handleSuccessTimeout(ctx context.Context, deps *Deps, result *PollResult, e
 	}
 
 	removeTimedOut(ctx, deps, result, entry, timedOutRemoval{
-		statusDescription: "Automerge did not complete in time",
-		errorMessage:      "automerge did not complete in time",
-		comment:           "⚠️ Removed from merge queue: PR was marked as ready to merge but Gitea did not merge it in time. This may indicate a branch protection issue.",
+		statusDescription: "Merge did not complete in time",
+		errorMessage:      "merge did not complete in time",
+		comment:           "⚠️ Removed from merge queue: PR was marked as ready to merge but the forge did not merge it in time. This may indicate a branch protection issue.",
 		logMsg:            "removed PR due to success-but-not-merged timeout",
 	})
 }
@@ -474,10 +620,10 @@ func removeTimedOut(ctx context.Context, deps *Deps, result *PollResult, entry *
 	logutil.WarnIfErr(deps.Queue.SetError(ctx, deps.RepoID, entry.PrNumber, opts.errorMessage), "set queue error failed", "pr", entry.PrNumber)
 
 	if err := removePR(ctx, deps, result, entry, removeOpts{
-		cancelAutomerge: true,
-		comment:         opts.comment,
-		advance:         true,
-		logMsg:          opts.logMsg,
+		cancelIntent: true,
+		comment:      opts.comment,
+		advance:      true,
+		logMsg:       opts.logMsg,
 	}); err != nil {
 		result.Errors = append(result.Errors, fmt.Errorf("dequeue timed-out PR #%d: %w", entry.PrNumber, err))
 	}
@@ -519,7 +665,7 @@ func startQueuedHeads(ctx context.Context, deps *Deps, result *PollResult) {
 			continue
 		}
 
-		startResult, err := merge.StartTesting(ctx, deps.Forge, deps.Queue, deps.Owner, deps.Repo, deps.RepoID, head, deps.ExternalURL)
+		startResult, err := merge.StartTesting(ctx, deps.Forge, deps.Queue, deps.Owner, deps.Repo, deps.RepoID, head, deps.ExternalURL, deps.MergeLabel)
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("start testing for PR #%d: %w", head.PrNumber, err))
 			continue

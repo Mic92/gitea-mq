@@ -26,6 +26,7 @@ type Deps struct {
 	ExternalURL    string
 	CheckTimeout   time.Duration
 	FallbackChecks []string // from GITEA_MQ_REQUIRED_CHECKS
+	MergeLabel     string
 
 	// Batch, when non-nil, intercepts check results for entries that belong
 	// to a live batch. The single-PR success/failure handlers are skipped.
@@ -221,8 +222,8 @@ func removeFromQueue(ctx context.Context, deps *Deps, entry *pg.QueueEntry, stat
 		slog.Warn("failed to set status", "pr", entry.PrNumber, "error", err)
 	}
 
-	if err := deps.Forge.CancelAutoMerge(ctx, deps.Owner, deps.Repo, entry.PrNumber); err != nil {
-		slog.Warn("failed to cancel automerge", "pr", entry.PrNumber, "error", err)
+	if err := forge.CancelMergeIntent(ctx, deps.Forge, deps.Owner, deps.Repo, entry.PrNumber, deps.MergeLabel); err != nil {
+		slog.Warn("failed to cancel merge intent", "pr", entry.PrNumber, "error", err)
 	}
 
 	if err := deps.Forge.Comment(ctx, deps.Owner, deps.Repo, entry.PrNumber, comment); err != nil {

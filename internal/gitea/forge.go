@@ -106,6 +106,11 @@ func toForgePR(pr *PR, autoMerge bool) forge.PR {
 	if pr.Base != nil {
 		out.BaseBranch = pr.Base.Ref
 	}
+	for _, l := range pr.Labels {
+		if l != nil {
+			out.Labels = append(out.Labels, l.Name)
+		}
+	}
 	return out
 }
 
@@ -274,6 +279,25 @@ func (f *giteaForge) ListBranches(ctx context.Context, owner, name string) ([]st
 
 func (f *giteaForge) CancelAutoMerge(ctx context.Context, owner, name string, number int64) error {
 	return f.client.CancelAutoMerge(ctx, owner, name, number)
+}
+
+func (f *giteaForge) MergePR(ctx context.Context, owner, name string, number int64) error {
+	return f.client.MergePR(ctx, owner, name, number)
+}
+
+// RemoveLabel resolves the label name to its id (Gitea's delete endpoint is
+// id-based).
+func (f *giteaForge) RemoveLabel(ctx context.Context, owner, name string, number int64, label string) error {
+	pr, err := f.client.GetPR(ctx, owner, name, number)
+	if err != nil {
+		return err
+	}
+	for _, l := range pr.Labels {
+		if l != nil && strings.EqualFold(l.Name, label) {
+			return f.client.RemoveIssueLabel(ctx, owner, name, number, l.ID)
+		}
+	}
+	return nil
 }
 
 func (f *giteaForge) Comment(ctx context.Context, owner, name string, number int64, body string) error {
