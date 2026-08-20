@@ -15,8 +15,8 @@ enqueues the PR. For the PR at the head of the queue it creates a temporary
 branch (`gitea-mq/<pr>`) that merges the PR into the current target branch, and
 CI runs there. If all required checks pass, gitea-mq marks its own status
 `success` and the forge's automerge completes the merge. If a check fails or
-times out, gitea-mq cancels automerge and posts a comment saying what went
-wrong.
+times out, gitea-mq withdraws the merge intent (cancels automerge, removes
+the merge label) and posts a comment saying what went wrong.
 
 Alternatively, adding the merge label (default `merge-queue`, see
 `GITEA_MQ_MERGE_LABEL`) to a PR enqueues it without automerge. On GitHub this
@@ -27,7 +27,8 @@ heads as passed and performs the atomic stack merge itself. Stacked PRs
 without the label get a pending `gitea-mq` status hinting at this workflow.
 Removing the label removes the PR from the queue.
 
-Only one PR is tested at a time per target branch. PRs targeting different
+By default one PR is tested at a time per target branch (see Batching below
+for testing several at once). PRs targeting different
 branches get independent queues. If the head-of-queue PR already contains the
 current target tip, the merge-branch run is skipped and the PR's own green CI
 is accepted, since the merged tree would be identical (disable with
