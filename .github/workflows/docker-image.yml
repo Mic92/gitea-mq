@@ -1,0 +1,53 @@
+name: Build Docker Image
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: ${{ github.repository }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Create Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern=v{{version}}
+            type=semver,pattern=v{{major}}.{{minor}}
+            type=semver,pattern=v{{major}}
+            type=sha,format=short
+      - name: Setup Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            extra-substituters = https://cache.thalheim.io
+            extra-trusted-public-keys = cache.thalheim.io-1:R7msbosLEZKrxk/lKxf9BTjOOH7Ax3H0Qj0/6wiHOgc=
+      - name: Build Docker image
+        run: |
+          nix build .#gitea-mq-docker --print-build-logs
+      - name: Push images
+        env:
+          REGCTL_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -xve
+          PATH="$(nix build --inputs-from . nixpkgs#regctl --print-out-paths --no-link)/bin:$PATH"
+          regctl registry login "$REGISTRY" -u "${{ github.actor }}" --pass-stdin <<< "$REGCTL_PASSWORD"
+          regctl image import "ocidir://local:gitea-mq" ./result
+          for tag in $(echo '${{ steps.meta.outputs.tags }}' | tr ' ' '\n'); do
+            regctl image copy "ocidir://local:gitea-mq" "$tag"
+          done
