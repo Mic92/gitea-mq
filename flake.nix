@@ -44,6 +44,9 @@
           inherit gitea-mq;
           default = gitea-mq;
         }
+        // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          gitea-mq-docker = pkgs.callPackage ./nix/docker.nix { inherit gitea-mq; };
+        }
       );
 
       devShells = eachSystem (
