@@ -291,10 +291,10 @@ func (f *githubForge) FastForward(ctx context.Context, owner, name, branch, sha 
 			return forge.ErrNotFastForward
 		}
 		// Ruleset / branch-protection rejections come back as 422 or 403
-		// with assorted phrasings.
+		// with assorted phrasings, e.g. "Repository rule violations found".
 		if resp != nil && (resp.StatusCode == http.StatusForbidden ||
 			(resp.StatusCode == http.StatusUnprocessableEntity &&
-				(strings.Contains(msg, "protected branch") || strings.Contains(msg, "ruleset")))) {
+				(strings.Contains(msg, "protected branch") || strings.Contains(msg, "rule")))) {
 			return &forge.PushDeniedError{Branch: branch, Message: ghErr.Message}
 		}
 	}

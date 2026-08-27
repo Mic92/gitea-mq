@@ -48,12 +48,20 @@ type CheckRun struct {
 }
 
 type Ruleset struct {
-	ID          int64           `json:"id"`
-	Name        string          `json:"name"`
-	Target      string          `json:"target"`
-	Enforcement string          `json:"enforcement"`
-	Conditions  json.RawMessage `json:"conditions,omitempty"`
-	Rules       []RulesetRule   `json:"rules"`
+	ID           int64           `json:"id"`
+	Name         string          `json:"name"`
+	Target       string          `json:"target"`
+	SourceType   string          `json:"source_type"`
+	Enforcement  string          `json:"enforcement"`
+	BypassActors []BypassActor   `json:"bypass_actors"`
+	Conditions   json.RawMessage `json:"conditions,omitempty"`
+	Rules        []RulesetRule   `json:"rules"`
+}
+
+type BypassActor struct {
+	ActorID    int64  `json:"actor_id"`
+	ActorType  string `json:"actor_type"`
+	BypassMode string `json:"bypass_mode"`
 }
 
 type RulesetRule struct {
@@ -82,7 +90,7 @@ type Repo struct {
 	Settings map[string]any
 
 	// ProtectedRefs[branch]=true makes a non-force PATCH on that ref return
-	// 403, simulating a ruleset/branch-protection rejection.
+	// 422 with GitHub's actual ruleset rejection message.
 	ProtectedRefs map[string]bool
 
 	// RequiredChecks[branch] feeds /rules/branches/{b} as a synthetic
@@ -280,6 +288,8 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+apiV3+"/repos/{o}/{r}/branches/{b}/protection/required_status_checks", s.hProtectionChecks)
 	mux.HandleFunc("GET "+apiV3+"/repos/{o}/{r}/rulesets", s.hListRulesets)
 	mux.HandleFunc("POST "+apiV3+"/repos/{o}/{r}/rulesets", s.hCreateRuleset)
+	mux.HandleFunc("GET "+apiV3+"/repos/{o}/{r}/rulesets/{id}", s.hGetRuleset)
+	mux.HandleFunc("PUT "+apiV3+"/repos/{o}/{r}/rulesets/{id}", s.hUpdateRuleset)
 
 	// GraphQL.
 	mux.HandleFunc("POST /api/graphql", s.hGraphQL)
@@ -681,7 +691,7 @@ func (s *Server) hUpdateRef(w http.ResponseWriter, r *http.Request) {
 	if !body.Force {
 		if rp.ProtectedRefs[branch] {
 			s.mu.Unlock()
-			writeJSON(w, 403, map[string]any{"message": "Changes must be made through a pull request. (protected branch)"})
+			writeJSON(w, 422, map[string]any{"message": "Repository rule violations found\n\nChanges must be made through a pull request.\n\n"})
 			return
 		}
 		if !rp.isAncestor(old, body.SHA) {
@@ -923,10 +933,57 @@ func (s *Server) hCreateRuleset(w http.ResponseWriter, r *http.Request) {
 	var rs Ruleset
 	_ = json.NewDecoder(r.Body).Decode(&rs)
 	rs.ID = s.nextID()
+	if rs.SourceType == "" {
+		rs.SourceType = "Repository"
+	}
 	s.mu.Lock()
 	rp.Rulesets = append(rp.Rulesets, &rs)
 	s.mu.Unlock()
 	writeJSON(w, 201, rs)
+}
+
+func (s *Server) ruleset(rp *Repo, r *http.Request) *Ruleset {
+	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	for _, rs := range rp.Rulesets {
+		if rs.ID == id {
+			return rs
+		}
+	}
+	return nil
+}
+
+func (s *Server) hGetRuleset(w http.ResponseWriter, r *http.Request) {
+	rp, ok := s.repoOr404(w, r)
+	if !ok {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rs := s.ruleset(rp, r)
+	if rs == nil {
+		http.NotFound(w, r)
+		return
+	}
+	writeJSON(w, 200, rs)
+}
+
+// Org-sourced rulesets are visible on the repo but only editable at org level.
+func (s *Server) hUpdateRuleset(w http.ResponseWriter, r *http.Request) {
+	rp, ok := s.repoOr404(w, r)
+	if !ok {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rs := s.ruleset(rp, r)
+	if rs == nil || rs.SourceType != "Repository" {
+		http.NotFound(w, r)
+		return
+	}
+	id := rs.ID
+	_ = json.NewDecoder(r.Body).Decode(rs)
+	rs.ID = id
+	writeJSON(w, 200, rs)
 }
 
 // --- GraphQL: only disablePullRequestAutoMerge ---
