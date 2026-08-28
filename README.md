@@ -234,6 +234,41 @@ Repo and PR pages live under `/repo/{forge}/{owner}/{name}` (e.g.
 `/repo/github/org/app/pr/42`). Paths without the forge segment resolve as Gitea
 for compatibility with links posted by older versions.
 
+## Container
+
+A multi-arch (amd64/arm64) image is published to
+`ghcr.io/mic92/gitea-mq` (`:main`, `:vX.Y.Z`). It contains gitea-mq, git and
+CA certificates; configuration is via the environment variables above. It needs
+a PostgreSQL database; the bare-clone cache lives in `/var/cache/gitea-mq`.
+
+```yaml
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: gitea-mq
+      POSTGRES_PASSWORD: changeme
+      POSTGRES_DB: gitea-mq
+    volumes: [db:/var/lib/postgresql/data]
+  gitea-mq:
+    image: ghcr.io/mic92/gitea-mq:main
+    ports: ["8080:8080"]
+    environment:
+      GITEA_MQ_DATABASE_URL: postgres://gitea-mq:changeme@db/gitea-mq?sslmode=disable
+      GITEA_MQ_EXTERNAL_URL: https://mq.example.com
+      GITEA_MQ_GITEA_URL: https://gitea.example.com
+      GITEA_MQ_GITEA_TOKEN: ...
+      GITEA_MQ_WEBHOOK_SECRET: ...
+      GITEA_MQ_TOPIC: merge-queue
+    volumes: [cache:/var/cache/gitea-mq]
+volumes:
+  db:
+  cache:
+```
+
+Build it yourself with `nix build .#gitea-mq-docker` (produces an OCI archive;
+load with `regctl image import` or `skopeo copy oci-archive:result docker-daemon:gitea-mq:latest`).
+
 ## NixOS module
 
 ```nix
