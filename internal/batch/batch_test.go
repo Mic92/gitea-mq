@@ -300,6 +300,46 @@ func TestHandlePass_ContextCanceledAfterFastForward(t *testing.T) {
 	}
 }
 
+// A single up-to-date PR is landed by fast-forwarding to its head; no batch
+// branch is built.
+func TestBuild_UpToDateSingletonLandsHead(t *testing.T) {
+	e, f, svc, ctx := setup(t, 10)
+	e.SkipIfUpToDate = true
+	f.merged[10] = true
+	f.FastForwardFn = func(_ context.Context, _, _, _, sha string) error {
+		f.target = sha
+		return nil
+	}
+	f.IsUpToDateFn = func(_ context.Context, _, _, base, head string) (bool, error) {
+		return base == "main" && head == "sha10", nil
+	}
+	f.GetRequiredChecksFn = func(context.Context, string, string, string) ([]string, error) {
+		return []string{"ci"}, nil
+	}
+
+	b, err := e.FormAndBuild(ctx, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.BranchSha.String != "sha10" {
+		t.Fatalf("branch sha = %q, want PR head", b.BranchSha.String)
+	}
+	if n := len(f.CallsTo("CreateMergeBranch")); n != 0 {
+		t.Fatalf("CreateMergeBranch called %d times", n)
+	}
+
+	rep, _ := svc.GetEntry(ctx, e.RepoID, 10)
+	if err := e.HandleCheck(ctx, rep, "ci", pg.CheckStateSuccess, ""); err != nil {
+		t.Fatal(err)
+	}
+	if f.target != "sha10" {
+		t.Fatalf("target = %q, want sha10", f.target)
+	}
+	if b, _ := svc.GetLiveBatch(ctx, e.RepoID, "main"); b != nil {
+		t.Fatalf("batch still live: %+v", b)
+	}
+}
+
 func TestHandleCheck_EvaluatesAndDispatches(t *testing.T) {
 	e, f, svc, ctx := setup(t, 10, 20)
 	f.merged[10], f.merged[20] = true, true

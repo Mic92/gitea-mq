@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Mic92/gitea-mq/internal/batch"
 	"github.com/Mic92/gitea-mq/internal/forge"
 	"github.com/Mic92/gitea-mq/internal/poller"
 	"github.com/Mic92/gitea-mq/internal/queue"
@@ -133,6 +134,60 @@ func TestFinalizeLabeledStackMerge(t *testing.T) {
 	merges := mock.CallsTo("MergePR")
 	if len(merges) != 1 || merges[0].Args[2].(int64) != 2 {
 		t.Fatalf("MergePR calls = %+v", merges)
+	}
+}
+
+// Regression: an up-to-date labeled stack head must be landed by gitea-mq
+// (fast-forward), not handed to the forge's merge API which re-checks every
+// stack member's own rules.
+func TestLabeledStackUpToDateLandsViaFastForward(t *testing.T) {
+	deps, mock, svc, ctx, repoID := setupLabelTest(t)
+	deps.SkipQueueIfUpToDate = true
+	deps.Batch = &batch.Engine{
+		Forge: mock, Queue: svc, Owner: "org", Repo: "app", RepoID: repoID,
+		SkipIfUpToDate: true, MergedPollInterval: 1, MergedPollAttempts: 1,
+	}
+	mock.ListOpenPRsFn = func(context.Context, string, string) ([]forge.PR, error) {
+		return []forge.PR{
+			{Number: 1, State: "open", HeadBranch: "b1", HeadSHA: "sha1", BaseBranch: "main"},
+			{Number: 2, State: "open", HeadBranch: "b2", HeadSHA: "sha2", BaseBranch: "b1", Labels: []string{"merge-queue"}},
+		}, nil
+	}
+	mock.ResolveStackFn = func(context.Context, string, string, int64) (*forge.Stack, error) {
+		return &forge.Stack{BaseBranch: "main", PRs: []forge.StackPR{
+			{Number: 1, HeadSHA: "sha1"}, {Number: 2, HeadSHA: "sha2"},
+		}}, nil
+	}
+	mock.IsUpToDateFn = func(_ context.Context, _, _, base, head string) (bool, error) {
+		return base == "main" && head == "sha2", nil
+	}
+	mock.GetRequiredChecksFn = func(context.Context, string, string, string) ([]string, error) {
+		return []string{"ci"}, nil
+	}
+	mock.GetCheckStatesFn = func(_ context.Context, _, _, sha string) (map[string]forge.Check, error) {
+		return map[string]forge.Check{"ci": {State: pg.CheckStateSuccess}}, nil
+	}
+	var ffTo string
+	mock.FastForwardFn = func(_ context.Context, _, _, branch, sha string) error {
+		if branch != "main" {
+			t.Errorf("fast-forward branch = %q", branch)
+		}
+		ffTo = sha
+		return nil
+	}
+
+	if res, err := poller.PollOnce(ctx, deps); err != nil || len(res.Errors) > 0 {
+		t.Fatalf("PollOnce: %v %v", err, res)
+	}
+
+	if ffTo != "sha2" {
+		t.Fatalf("main fast-forwarded to %q, want sha2", ffTo)
+	}
+	if n := len(mock.CallsTo("MergePR")); n != 0 {
+		t.Fatalf("MergePR called %d times; forge must not be asked to merge", n)
+	}
+	if e, _ := svc.GetEntry(ctx, repoID, 2); e != nil {
+		t.Fatalf("entry should be landed and removed: %+v", e)
 	}
 }
 
