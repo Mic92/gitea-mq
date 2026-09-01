@@ -120,6 +120,7 @@ func (r *RepoRegistry) Add(ctx context.Context, ref forge.RepoRef) error {
 			CheckTimeout:   r.deps.CheckTimeout,
 			FallbackChecks: r.deps.FallbackChecks,
 			MergeLabel:     r.deps.MergeLabel,
+			SkipIfUpToDate: r.deps.SkipQueueIfUpToDate,
 			Advance:        triggerPoll,
 		}
 	}

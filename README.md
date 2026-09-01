@@ -98,7 +98,8 @@ Trade-offs and prerequisites:
     whitelist*. If you forget, every PR in the batch is removed with a comment
     naming the branch and the user to add.
 - Batched PRs land as **merge commits** regardless of the repo's configured
-  merge style. Repos that mandate squash/rebase should leave `BATCH_MAX=1`.
+  merge style. A single PR that already contains the target tip is landed
+  by fast-forwarding to its head (no merge commit, no extra CI run). Repos that mandate squash/rebase should leave `BATCH_MAX=1`.
 - A semantic conflict between two PRs that bisection puts in different halves
   can land both (each half passes alone). This matches bors-ng; keep
   `BATCH_MAX` modest if it bothers you.

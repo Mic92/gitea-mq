@@ -418,9 +418,9 @@ func hintStackedPRs(ctx context.Context, deps *Deps, openPRs []forge.PR) {
 	}
 }
 
-// finalizeLabeledMerge completes label-triggered entries that passed the
-// queue: the forge has no automerge armed for them, so gitea-mq flips the
-// remaining stack heads green and performs the (stack-aware) merge itself.
+// finalizeLabeledMerge merges label-triggered entries in "success" via the
+// forge, since no automerge is armed for them. Legacy (non-batch) path only;
+// the batch engine lands entries itself.
 func finalizeLabeledMerge(ctx context.Context, deps *Deps, result *PollResult, entry *pg.QueueEntry, pr *forge.PR) {
 	if deps.MergeLabel == "" || entry.State != pg.EntryStateSuccess || pr == nil || pr.Merged || !pr.HasLabel(deps.MergeLabel) {
 		return
@@ -654,14 +654,15 @@ func startQueuedHeads(ctx context.Context, deps *Deps, result *PollResult) {
 			continue
 		}
 
-		if deps.SkipQueueIfUpToDate && tryFastForwardSuccess(ctx, deps, result, head) {
-			continue
-		}
-
+		// The batch engine handles up-to-date heads itself (SkipIfUpToDate).
 		if deps.Batch.Enabled() {
 			if _, err := deps.Batch.FormAndBuild(ctx, entry.TargetBranch); err != nil {
 				result.Errors = append(result.Errors, fmt.Errorf("form batch for %s: %w", entry.TargetBranch, err))
 			}
+			continue
+		}
+
+		if deps.SkipQueueIfUpToDate && tryFastForwardSuccess(ctx, deps, result, head) {
 			continue
 		}
 

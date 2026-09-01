@@ -50,6 +50,9 @@ type Engine struct {
 	CheckTimeout   time.Duration
 	FallbackChecks []string
 	MergeLabel     string
+	// SkipIfUpToDate lands a single up-to-date PR by fast-forwarding to its
+	// head instead of building a batch branch.
+	SkipIfUpToDate bool
 
 	// MergedPoll controls ensureMergedOrClose. Defaults: 200ms × 50 = 10s.
 	MergedPollInterval time.Duration
@@ -161,7 +164,10 @@ func (e *Engine) Build(ctx context.Context, b *pg.Batch) error {
 	for i := range entries {
 		heads[i] = entries[i].PrHeadSha
 	}
-	tip, steps, err := e.stack(ctx, b.TargetBranch, heads, branch)
+	tip, steps := e.headIfUpToDate(ctx, b.TargetBranch, heads)
+	if tip == "" {
+		tip, steps, err = e.stack(ctx, b.TargetBranch, heads, branch)
+	}
 	if err != nil {
 		// Whole-operation failure (clone/push). Row stays forming;
 		// FormAndBuild retries on the next tick.
@@ -421,6 +427,23 @@ func (e *Engine) ReconcileLive(ctx context.Context) error {
 		unlock()
 	}
 	return nil
+}
+
+// headIfUpToDate returns the lone head as tip when it already contains base;
+// empty tip means a batch branch must be built.
+func (e *Engine) headIfUpToDate(ctx context.Context, base string, heads []string) (string, []forge.MergeStep) {
+	if !e.SkipIfUpToDate || len(heads) != 1 {
+		return "", nil
+	}
+	up, err := e.Forge.IsUpToDate(ctx, e.Owner, e.Repo, base, heads[0])
+	if err != nil {
+		slog.Warn("up-to-date check failed, building batch branch", "sha", heads[0], "error", err)
+		return "", nil
+	}
+	if !up {
+		return "", nil
+	}
+	return heads[0], []forge.MergeStep{{}}
 }
 
 // stack builds the batch branch, preferring a forge-native MergeStacker when
