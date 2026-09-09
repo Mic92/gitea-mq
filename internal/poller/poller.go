@@ -94,6 +94,7 @@ func removePR(ctx context.Context, deps *Deps, result *PollResult, entry *pg.Que
 	if err != nil {
 		return err
 	}
+	merge.SkipPendingMirroredChecks(ctx, deps.Forge, deps.Owner, deps.Repo, entry.PrHeadSha)
 
 	if opts.cancelIntent {
 		logutil.WarnIfErr(forge.CancelMergeIntent(ctx, deps.Forge, deps.Owner, deps.Repo, entry.PrNumber, deps.MergeLabel), "cancel merge intent failed", "pr", entry.PrNumber)
@@ -703,6 +704,7 @@ func tryFastForwardSuccess(ctx context.Context, deps *Deps, result *PollResult, 
 		result.Errors = append(result.Errors, fmt.Errorf("update state to success for PR #%d: %w", head.PrNumber, err))
 		return true
 	}
+	merge.SkipPendingMirroredChecks(ctx, deps.Forge, deps.Owner, deps.Repo, head.PrHeadSha)
 	slog.Info("skipped merge-branch testing: PR already up to date with target", "pr", head.PrNumber)
 	return true
 }

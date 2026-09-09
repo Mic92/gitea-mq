@@ -234,6 +234,10 @@ func (r *RepoRegistry) Remove(ref forge.RepoRef) {
 	}
 	if err := r.deps.Queue.DequeueAll(ctx, managed.RepoID); err != nil {
 		slog.Warn("failed to dequeue entries on removal", "repo", key, "error", err)
+	} else {
+		for _, entry := range entries {
+			merge.SkipPendingMirroredChecks(ctx, f, ref.Owner, ref.Name, entry.PrHeadSha)
+		}
 	}
 
 	slog.Info("removed repo from registry", "repo", key)

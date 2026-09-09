@@ -85,17 +85,29 @@ func TestGithub_BatchFlow_Green(t *testing.T) {
 		t.Fatalf("batch branch not on server: %v", repo.Refs)
 	}
 
-	// --- CI reports success on the batch branch via check_run webhook ---
-	body := fmt.Sprintf(`{"action":"completed","check_run":{"name":"ci","status":"completed","conclusion":"success","head_sha":%q},"repository":{"name":"app","owner":{"login":"org"}}}`, branchSHA)
-	req := httptest.NewRequest(http.MethodPost, "/webhook/github", bytes.NewReader([]byte(body)))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-GitHub-Event", "check_run")
-	req.Header.Set("X-Hub-Signature-256", "sha256="+webhook.ComputeSignature([]byte(body), secret))
-	w := httptest.NewRecorder()
-	hooks.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("webhook: %d %s", w.Code, w.Body.String())
+	postCheckRun := func(body string) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/webhook/github", bytes.NewReader([]byte(body)))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-GitHub-Event", "check_run")
+		req.Header.Set("X-Hub-Signature-256", "sha256="+webhook.ComputeSignature([]byte(body), secret))
+		w := httptest.NewRecorder()
+		hooks.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("webhook: %d %s", w.Code, w.Body.String())
+		}
 	}
+
+	// Polling can mirror optional effects that are still running when all
+	// required checks pass.
+	if err := f.MirrorCheck(ctx, "org", "app", "sha1", forge.MirrorContextPrefix+"effects", forge.Check{
+		State: pg.CheckStatePending, Description: "running effects", TargetURL: "https://ci/effects",
+	}); err != nil {
+		t.Fatalf("seed effects mirror: %v", err)
+	}
+
+	// --- Required CI reports success on the batch branch ---
+	postCheckRun(fmt.Sprintf(`{"action":"completed","check_run":{"name":"ci","status":"completed","conclusion":"success","head_sha":%q},"repository":{"name":"app","owner":{"login":"org"}}}`, branchSHA))
 
 	// --- Engine fast-forwarded main to the tested SHA, batch done ---
 	if repo.Refs["main"] != branchSHA {
@@ -119,6 +131,21 @@ func TestGithub_BatchFlow_Green(t *testing.T) {
 			t.Fatalf("PR #%d missing gitea-mq success", n)
 		}
 	}
+	// Optional check finishes after landing. Its webhook no longer has an
+	// active entry to route through, so terminal cleanup must already have
+	// closed the mirror.
+	postCheckRun(fmt.Sprintf(`{"action":"completed","check_run":{"name":"effects","status":"completed","conclusion":"success","head_sha":%q},"repository":{"name":"app","owner":{"login":"org"}}}`, branchSHA))
+
+	var effects *ghfake.CheckRun
+	for _, cr := range repo.CheckRuns["sha1"] {
+		if cr.Name == forge.MirrorContextPrefix+"effects" {
+			effects = cr
+		}
+	}
+	if effects == nil || effects.Status != "completed" || effects.Conclusion != "skipped" {
+		t.Fatalf("pending effects mirror not closed: %+v", effects)
+	}
+
 	if b, _ := svc.GetLiveBatch(ctx, dbRepo.ID, "main"); b != nil {
 		t.Fatalf("batch still live: %+v", b)
 	}
