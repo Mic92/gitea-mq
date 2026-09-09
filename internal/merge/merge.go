@@ -54,6 +54,7 @@ func StartTesting(ctx context.Context, f forge.Forge, svc *queue.Service, owner,
 		if _, err := svc.Dequeue(ctx, repoID, entry.PrNumber); err != nil {
 			return nil, fmt.Errorf("dequeue conflicting PR #%d: %w", entry.PrNumber, err)
 		}
+		SkipPendingMirroredChecks(ctx, f, owner, repo, entry.PrHeadSha)
 		return &StartTestingResult{Removed: true}, nil
 	}
 	if err != nil {
@@ -72,6 +73,7 @@ func StartTesting(ctx context.Context, f forge.Forge, svc *queue.Service, owner,
 		if _, err := svc.Dequeue(ctx, repoID, entry.PrNumber); err != nil {
 			return nil, fmt.Errorf("dequeue PR #%d after merge error: %w", entry.PrNumber, err)
 		}
+		SkipPendingMirroredChecks(ctx, f, owner, repo, entry.PrHeadSha)
 		return &StartTestingResult{Removed: true}, nil
 	}
 
@@ -93,6 +95,26 @@ func StartTesting(ctx context.Context, f forge.Forge, svc *queue.Service, owner,
 	slog.Info("started testing", "pr", entry.PrNumber, "branch", branchName, "sha", mergeSHA)
 
 	return &StartTestingResult{MergeBranchName: branchName, MergeBranchSHA: mergeSHA}, nil
+}
+
+// SkipPendingMirroredChecks closes mirrored checks after the queue stops
+// waiting for their merge-branch results.
+func SkipPendingMirroredChecks(ctx context.Context, f forge.Forge, owner, repo, sha string) {
+	checks, err := f.GetCheckStates(ctx, owner, repo, sha)
+	if err != nil {
+		slog.Warn("failed to fetch commit statuses for skip cleanup", "sha", sha, "error", err)
+		return
+	}
+	for ctxName, check := range checks {
+		if !strings.HasPrefix(ctxName, forge.MirrorContextPrefix) || check.State != pg.CheckStatePending {
+			continue
+		}
+		logutil.WarnIfErr(f.MirrorCheck(ctx, owner, repo, sha, ctxName, forge.Check{
+			State:       forge.CheckState("skipped"),
+			Description: "Merge queue stopped waiting for this check",
+			TargetURL:   check.TargetURL,
+		}), "mirror check skip failed", "sha", sha, "context", ctxName)
+	}
 }
 
 func clearStaleMirroredStatuses(ctx context.Context, f forge.Forge, owner, repo, sha string) {
