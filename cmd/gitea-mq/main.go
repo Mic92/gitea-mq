@@ -184,6 +184,7 @@ func run() error {
 		Forges:          forges,
 		FallbackChecks:  cfg.RequiredChecks,
 		RefreshInterval: int(cfg.RefreshInterval.Seconds()),
+		BasePath:        cfg.BasePath,
 	}
 	dashMux := web.NewMux(webDeps)
 	// Mount dashboard routes — the web mux handles /, /repo/, /static/.

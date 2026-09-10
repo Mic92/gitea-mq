@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="refresh" content="{{.RefreshInterval}}">
     <title>gitea-mq – Merge Queue</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="{{.BasePath}}/static/style.css">
 </head>
 <body>
     <nav class="breadcrumb">gitea-mq</nav>
@@ -16,7 +16,7 @@
     <div class="repo-list">
         {{range .Repos}}
         <div class="repo-item">
-            <a href="/repo/{{.Forge}}/{{.Owner}}/{{.Name}}"><span class="forge-badge forge-{{.Forge}}">{{.Forge}}</span> {{.Owner}}/{{.Name}}</a>
+            <a href="{{$.BasePath}}/repo/{{.Forge}}/{{.Owner}}/{{.Name}}"><span class="forge-badge forge-{{.Forge}}">{{.Forge}}</span> {{.Owner}}/{{.Name}}</a>
             <span class="badge {{if eq .QueueSize 0}}badge-empty{{else}}badge-active{{end}}">{{.QueueSize}}</span>
         </div>
         {{end}}

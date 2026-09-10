@@ -103,6 +103,7 @@ type RepoOverview struct {
 
 // OverviewData is the template data for the overview page.
 type OverviewData struct {
+	BasePath        string
 	Repos           []RepoOverview
 	RefreshInterval int // seconds
 }
@@ -129,6 +130,7 @@ type RepoDetailBatch struct {
 // RepoDetailData is the template data for the repo detail page.
 type RepoDetailData struct {
 	Forge           forge.Kind
+	BasePath        string
 	Owner           string
 	Name            string
 	RepoURL         string // link to the repo on the forge
@@ -140,6 +142,7 @@ type RepoDetailData struct {
 // PRDetailData is the template data for the PR detail page.
 type PRDetailData struct {
 	Forge           forge.Kind
+	BasePath        string
 	Owner           string
 	Name            string
 	PrNumber        int64
@@ -172,6 +175,7 @@ type Deps struct {
 	Forges          *forge.Set
 	FallbackChecks  []string // from GITEA_MQ_REQUIRED_CHECKS
 	RefreshInterval int      // seconds
+	BasePath        string
 }
 
 // NewMux creates an http.ServeMux with the dashboard routes registered.
@@ -206,6 +210,7 @@ func overviewHandler(deps *Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		data := OverviewData{
+			BasePath:        deps.BasePath,
 			RefreshInterval: deps.RefreshInterval,
 		}
 
@@ -307,6 +312,7 @@ func serveRepoDetail(w http.ResponseWriter, r *http.Request, deps *Deps, ref for
 
 	data := RepoDetailData{
 		Forge:           ref.Forge,
+		BasePath:        deps.BasePath,
 		Owner:           owner,
 		Name:            name,
 		RefreshInterval: deps.RefreshInterval,
@@ -379,6 +385,7 @@ func servePRDetail(w http.ResponseWriter, r *http.Request, deps *Deps, ref forge
 
 	data := PRDetailData{
 		Forge:           ref.Forge,
+		BasePath:        deps.BasePath,
 		Owner:           owner,
 		Name:            name,
 		PrNumber:        prNumber,

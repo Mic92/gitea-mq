@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="refresh" content="{{.RefreshInterval}}">
     <title>PR #{{.PrNumber}} – {{.Owner}}/{{.Name}} – gitea-mq</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="{{.BasePath}}/static/style.css">
 </head>
 <body>
-    <nav class="breadcrumb"><a href="/">gitea-mq</a> › <a href="/repo/{{.Forge}}/{{.Owner}}/{{.Name}}">{{.Forge}}:{{.Owner}}/{{.Name}}</a> › PR #{{.PrNumber}}</nav>
+    <nav class="breadcrumb"><a href="{{.BasePath}}/">gitea-mq</a> › <a href="{{.BasePath}}/repo/{{.Forge}}/{{.Owner}}/{{.Name}}">{{.Forge}}:{{.Owner}}/{{.Name}}</a> › PR #{{.PrNumber}}</nav>
 
     {{if not .InQueue}}
     <h1>PR #{{.PrNumber}}</h1>
@@ -25,7 +25,7 @@
                 {{if .MergeBranchURL}}<tr><th>Merge Branch</th><td><a href="{{.MergeBranchURL}}">view on {{forgeName .Forge}} ↗</a></td></tr>{{end}}
                 {{if .BatchID}}
                 <tr><th>Batch</th><td>#{{.BatchID}} · <span class="bucket bucket-{{.BatchBucket}}">{{.BatchBucket}}</span>
-                    {{if .BatchPRs}}· with {{range $i, $n := .BatchPRs}}{{if $i}}, {{end}}<a href="/repo/{{$.Forge}}/{{$.Owner}}/{{$.Name}}/pr/{{$n}}">#{{$n}}</a>{{end}}{{end}}
+                    {{if .BatchPRs}}· with {{range $i, $n := .BatchPRs}}{{if $i}}, {{end}}<a href="{{$.BasePath}}/repo/{{$.Forge}}/{{$.Owner}}/{{$.Name}}/pr/{{$n}}">#{{$n}}</a>{{end}}{{end}}
                 </td></tr>
                 {{end}}
             </tbody>

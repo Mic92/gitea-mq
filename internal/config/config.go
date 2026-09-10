@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -20,6 +21,7 @@ type Config struct {
 	ListenAddr          string
 	WebhookPath         string
 	ExternalURL         string
+	BasePath            string
 	PollInterval        time.Duration
 	IdlePollInterval    time.Duration
 	CheckTimeout        time.Duration
@@ -93,6 +95,12 @@ func Load() (*Config, error) {
 	cfg.Github, err = loadGithub(&missing)
 	if err != nil {
 		return nil, err
+	}
+
+	if cfg.ExternalURL != "" {
+		if u, err := url.Parse(cfg.ExternalURL); err == nil {
+			cfg.BasePath = strings.TrimRight(u.Path, "/")
+		}
 	}
 
 	if len(missing) > 0 {
