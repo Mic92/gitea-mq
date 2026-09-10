@@ -2,6 +2,7 @@ package monitor_test
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -130,22 +131,22 @@ func TestProcessCheckStatus_Partial_StaysWaiting(t *testing.T) {
 	}
 }
 
-// On success, stale gitea-mq/* statuses (pending with the StaleMirrorDescription)
-// are set to skipped, while other pending statuses and non-pending statuses are
-// left alone.
-func TestProcessCheckStatus_Success_SkipsStaleMirroredStatuses(t *testing.T) {
+// On success, all pending gitea-mq/* statuses are set to skipped because
+// terminal queue entries no longer receive updates from the merge branch.
+func TestProcessCheckStatus_Success_SkipsPendingMirroredStatuses(t *testing.T) {
 	deps, mock, svc, ctx, repoID := setupMonitorTest(t)
 	withBranchProtection(mock, "gitea-mq", "ci/build")
 	entry := testutil.EnqueueTesting(t, svc, repoID, 42, "sha42", "mergesha")
 
-	// Simulate stale gitea-mq/* statuses on the PR head from a previous attempt.
+	// Simulate pending mirrors on the PR head when required checks finish.
 	mock.GetCombinedCommitStatusFn = func(_ context.Context, _, _, _ string) (*gitea.CombinedStatus, error) {
 		return &gitea.CombinedStatus{
 			Statuses: []gitea.CommitStatusResult{
 				{Context: "gitea-mq/ci/old-check", Status: "pending", Description: "From a previous merge queue attempt"},
 				{Context: "gitea-mq/ci/build", Status: "success", Description: "build passed"},               // not pending — leave alone
-				{Context: "gitea-mq/ci/other", Status: "pending", Description: "some other description"},     // wrong description — leave alone
-				{Context: "ci/build", Status: "pending", Description: "From a previous merge queue attempt"}, // not gitea-mq/* — leave alone
+				{Context: "gitea-mq/ci/other", Status: "pending", Description: "some other description"},     // current pending mirror — skip
+				{Context: "gitea-mq", Status: "pending", Description: "Testing merge result"},                // root queue check — leave alone
+				{Context: "ci/build", Status: "pending", Description: "From a previous merge queue attempt"}, // external check — leave alone
 			},
 		}, nil
 	}
@@ -156,7 +157,7 @@ func TestProcessCheckStatus_Success_SkipsStaleMirroredStatuses(t *testing.T) {
 
 	statusCalls := mock.CallsTo("CreateCommitStatus")
 
-	// Find the skipped call — should only be gitea-mq/ci/old-check.
+	// Only pending mirror contexts get skipped.
 	var skippedContexts []string
 	for _, call := range statusCalls {
 		status := call.Args[3].(gitea.CommitStatus)
@@ -165,16 +166,9 @@ func TestProcessCheckStatus_Success_SkipsStaleMirroredStatuses(t *testing.T) {
 		}
 	}
 
-	if len(skippedContexts) != 1 || skippedContexts[0] != "gitea-mq/ci/old-check" {
-		t.Fatalf("expected only gitea-mq/ci/old-check to be skipped, got %v", skippedContexts)
-	}
-
-	// Verify the skipped status has the right description.
-	for _, call := range statusCalls {
-		status := call.Args[3].(gitea.CommitStatus)
-		if status.State == "skipped" && status.Description != "From a previous merge queue attempt" {
-			t.Fatalf("expected skipped status description 'From a previous merge queue attempt', got %q", status.Description)
-		}
+	slices.Sort(skippedContexts)
+	if !slices.Equal(skippedContexts, []string{"gitea-mq/ci/old-check", "gitea-mq/ci/other"}) {
+		t.Fatalf("expected both pending mirrors to be skipped, got %v", skippedContexts)
 	}
 }
 

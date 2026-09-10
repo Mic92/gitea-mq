@@ -11,7 +11,6 @@ import (
 	"github.com/gobwas/glob"
 
 	"github.com/Mic92/gitea-mq/internal/forge"
-	"github.com/Mic92/gitea-mq/internal/logutil"
 	"github.com/Mic92/gitea-mq/internal/merge"
 	"github.com/Mic92/gitea-mq/internal/queue"
 	"github.com/Mic92/gitea-mq/internal/store/pg"
@@ -159,39 +158,15 @@ func HandleSuccess(ctx context.Context, deps *Deps, entry *pg.QueueEntry) error 
 		return fmt.Errorf("set success status for PR #%d: %w", entry.PrNumber, err)
 	}
 
-	// Flip leftover stale-pending mirrors so the overall PR status is green.
-	skipPendingMirroredStatuses(ctx, deps.Forge, deps.Owner, deps.Repo, entry.PrHeadSha)
-
 	merge.CleanupMergeBranch(ctx, deps.Forge, deps.Owner, deps.Repo, entry)
 
 	if err := deps.Queue.UpdateState(ctx, deps.RepoID, entry.PrNumber, pg.EntryStateSuccess); err != nil {
 		return fmt.Errorf("update state to success for PR #%d: %w", entry.PrNumber, err)
 	}
 
+	// The queue no longer waits for pending merge-branch checks.
+	merge.SkipPendingMirroredChecks(ctx, deps.Forge, deps.Owner, deps.Repo, entry.PrHeadSha)
 	return nil
-}
-
-// skipPendingMirroredStatuses sets gitea-mq/* mirrors that are still pending
-// with the StaleMirrorDescription to skipped, so cleared mirrors from a
-// previous attempt don't block the green result.
-func skipPendingMirroredStatuses(ctx context.Context, f forge.Forge, owner, repo, sha string) {
-	checks, err := f.GetCheckStates(ctx, owner, repo, sha)
-	if err != nil {
-		slog.Warn("failed to fetch commit statuses for skip cleanup", "sha", sha, "error", err)
-		return
-	}
-	for ctxName, c := range checks {
-		if !forge.IsOwnContext(ctxName) {
-			continue
-		}
-		if c.State != pg.CheckStatePending || c.Description != merge.StaleMirrorDescription {
-			continue
-		}
-		logutil.WarnIfErr(f.MirrorCheck(ctx, owner, repo, sha, ctxName, forge.Check{
-			State:       forge.CheckState("skipped"),
-			Description: merge.StaleMirrorDescription,
-		}), "mirror check skip failed", "sha", sha, "context", ctxName)
-	}
 }
 
 func HandleFailure(ctx context.Context, deps *Deps, entry *pg.QueueEntry, failedCheck, targetURL string) error {
@@ -234,6 +209,8 @@ func removeFromQueue(ctx context.Context, deps *Deps, entry *pg.QueueEntry, stat
 
 	if err := deps.Queue.UpdateState(ctx, deps.RepoID, entry.PrNumber, pg.EntryStateFailed); err != nil {
 		slog.Warn("failed to update state to failed", "pr", entry.PrNumber, "error", err)
+	} else {
+		merge.SkipPendingMirroredChecks(ctx, deps.Forge, deps.Owner, deps.Repo, entry.PrHeadSha)
 	}
 
 	if _, err := deps.Queue.Advance(ctx, deps.RepoID, entry.TargetBranch); err != nil {
