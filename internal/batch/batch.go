@@ -230,12 +230,57 @@ func (e *Engine) Build(ctx context.Context, b *pg.Batch) error {
 	return nil
 }
 
+type landedStatusHead struct {
+	sha      string
+	prNumber int64
+}
+
+// landedStatusHeads expands queued stack tips before the target branch moves.
+// GitHub no longer reliably resolves the stack after its members are merged.
+func (e *Engine) landedStatusHeads(ctx context.Context, entries []pg.QueueEntry) ([]landedStatusHead, error) {
+	var heads []landedStatusHead
+	seen := make(map[string]bool)
+	add := func(sha string, prNumber int64) {
+		if sha == "" || seen[sha] {
+			return
+		}
+		seen[sha] = true
+		heads = append(heads, landedStatusHead{sha: sha, prNumber: prNumber})
+	}
+
+	for i := range entries {
+		ent := &entries[i]
+		stack, err := forge.ResolveStack(ctx, e.Forge, e.Owner, e.Repo, ent.PrNumber)
+		if err != nil {
+			return nil, fmt.Errorf("resolve landed stack for PR #%d: %w", ent.PrNumber, err)
+		}
+		if stack != nil {
+			if members, ok := stack.MembersUpTo(ent.PrNumber); ok {
+				for _, member := range members {
+					add(member.HeadSHA, ent.PrNumber)
+				}
+			}
+		}
+		add(ent.PrHeadSha, ent.PrNumber)
+	}
+	return heads, nil
+}
+
 // HandlePass lands current_ids by fast-forwarding the target branch to the
 // tested SHA, then pops the next pending slice.
 func (e *Engine) HandlePass(ctx context.Context, b *pg.Batch) error {
 	if b.State != pg.BatchStateTesting {
 		return nil
 	}
+	entries, err := e.Queue.GetEntriesByIDs(ctx, b.CurrentIds)
+	if err != nil {
+		return err
+	}
+	statusHeads, err := e.landedStatusHeads(ctx, entries)
+	if err != nil {
+		return err
+	}
+
 	sha := b.BranchSha.String
 	if err := e.Forge.FastForward(ctx, e.Owner, e.Repo, b.TargetBranch, sha); err != nil {
 		var denied *forge.PushDeniedError
@@ -261,11 +306,6 @@ func (e *Engine) HandlePass(ctx context.Context, b *pg.Batch) error {
 	}
 	b.FfRetries = 0
 
-	entries, err := e.Queue.GetEntriesByIDs(ctx, b.CurrentIds)
-	if err != nil {
-		return err
-	}
-
 	// Persist before the best-effort forge work: the target already moved.
 	landed := b.CurrentIds
 	b.LandedIds = append(b.LandedIds, landed...)
@@ -277,13 +317,16 @@ func (e *Engine) HandlePass(ctx context.Context, b *pg.Batch) error {
 	slog.Info("batch landed", "batch", b.ID, "sha", sha, "prs", len(entries))
 
 	desc := fmt.Sprintf("Merged via batch #%d", b.ID)
+	for _, head := range statusHeads {
+		logutil.WarnIfErr(e.Forge.SetMQStatus(ctx, e.Owner, e.Repo, head.sha, forge.MQStatus{
+			State: pg.CheckStateSuccess, Description: desc, TargetURL: e.prURL(head.prNumber),
+		}), "set mq status failed", "pr", head.prNumber)
+		merge.SkipPendingMirroredChecks(ctx, e.Forge, e.Owner, e.Repo, head.sha)
+	}
+
 	var wg sync.WaitGroup
 	for i := range entries {
 		ent := &entries[i]
-		logutil.WarnIfErr(e.Forge.SetMQStatus(ctx, e.Owner, e.Repo, ent.PrHeadSha, forge.MQStatus{
-			State: pg.CheckStateSuccess, Description: desc, TargetURL: e.prURL(ent.PrNumber),
-		}), "set mq status failed", "pr", ent.PrNumber)
-		merge.SkipPendingMirroredChecks(ctx, e.Forge, e.Owner, e.Repo, ent.PrHeadSha)
 		wg.Go(func() { e.ensureMergedOrClose(ctx, ent, sha, b.ID) })
 	}
 	wg.Wait()
