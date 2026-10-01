@@ -189,6 +189,16 @@ func TestLabeledStackUpToDateLandsViaFastForward(t *testing.T) {
 	if e, _ := svc.GetEntry(ctx, repoID, 2); e != nil {
 		t.Fatalf("entry should be landed and removed: %+v", e)
 	}
+
+	var parentGreen bool
+	for _, c := range mock.CallsTo("SetMQStatus") {
+		if c.Args[2] == "sha1" && c.Args[3].(forge.MQStatus).State == pg.CheckStateSuccess {
+			parentGreen = true
+		}
+	}
+	if !parentGreen {
+		t.Error("expected success status on stack parent head sha1")
+	}
 }
 
 func TestStackHint(t *testing.T) {
