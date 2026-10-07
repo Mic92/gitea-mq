@@ -267,6 +267,14 @@ func (c *HTTPClient) GetPRTimeline(ctx context.Context, owner, repo string, inde
 		fmt.Sprintf("get PR #%d timeline in %s/%s", index, owner, repo))
 }
 
+// ListIssueDependencies returns the issues and PRs the given one depends on.
+// Gitea filters unreadable ones after paging, so a short page is not the last.
+func (c *HTTPClient) ListIssueDependencies(ctx context.Context, owner, repo string, index int64) ([]Issue, error) {
+	return paginateUntilEmpty[Issue](ctx, c,
+		fmt.Sprintf("/repos/%s/%s/issues/%d/dependencies?page=%%d&limit=50", owner, repo, index),
+		fmt.Sprintf("list dependencies of #%d in %s/%s", index, owner, repo))
+}
+
 // GetCombinedCommitStatus returns the latest status per context for a commit
 // ref by paginating GET /repos/{owner}/{repo}/commits/{ref}/status.
 func (c *HTTPClient) GetCombinedCommitStatus(ctx context.Context, owner, repo, ref string) (*CombinedStatus, error) {

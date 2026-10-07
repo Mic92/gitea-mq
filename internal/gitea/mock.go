@@ -46,6 +46,7 @@ type MockClient struct {
 	CreateWebhookFn           func(ctx context.Context, owner, repo string, opts CreateWebhookOpts) error
 	ServerVersionFn           func(ctx context.Context) (string, error)
 	IsForgejoFn               func(ctx context.Context) (bool, error)
+	ListIssueDependenciesFn   func(ctx context.Context, owner, repo string, index int64) ([]Issue, error)
 }
 
 // Ensure MockClient implements Client at compile time.
@@ -327,4 +328,14 @@ func (m *MockClient) IsForgejo(ctx context.Context) (bool, error) {
 	}
 
 	return false, nil
+}
+
+func (m *MockClient) ListIssueDependencies(ctx context.Context, owner, repo string, index int64) ([]Issue, error) {
+	m.record("ListIssueDependencies", owner, repo, index)
+
+	if m.ListIssueDependenciesFn != nil {
+		return m.ListIssueDependenciesFn(ctx, owner, repo, index)
+	}
+
+	return nil, nil
 }

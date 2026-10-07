@@ -276,6 +276,17 @@ func (e *Engine) HandlePass(ctx context.Context, b *pg.Batch) error {
 	if err != nil {
 		return err
 	}
+	// The fast-forward below skips the forge's dependency check.
+	held, err := e.holdBlocked(ctx, b, entries)
+	if err != nil {
+		return err
+	}
+	if held {
+		if len(b.CurrentIds) == 0 {
+			return e.next(ctx, b)
+		}
+		return e.rebuild(ctx, b)
+	}
 	statusHeads, err := e.landedStatusHeads(ctx, entries)
 	if err != nil {
 		return err
@@ -652,4 +663,45 @@ func ids(entries []pg.QueueEntry) []int64 {
 		out[i] = e.ID
 	}
 	return out
+}
+
+// holdBlocked drops members with an open dependency but keeps their merge
+// intent; the poller re-enqueues them once it closes. All lookups happen before
+// any change, so a forge error leaves the batch untouched.
+func (e *Engine) holdBlocked(ctx context.Context, b *pg.Batch, entries []pg.QueueEntry) (bool, error) {
+	blocked := make(map[int64][]forge.Dependency)
+	for i := range entries {
+		deps, err := forge.OpenDependencies(ctx, e.Forge, e.Owner, e.Repo, entries[i].PrNumber)
+		if err != nil {
+			return false, fmt.Errorf("check dependencies of PR #%d: %w", entries[i].PrNumber, err)
+		}
+		if len(deps) > 0 {
+			blocked[entries[i].ID] = deps
+		}
+	}
+	if len(blocked) == 0 {
+		return false, nil
+	}
+
+	for i := range entries {
+		ent := &entries[i]
+		deps, ok := blocked[ent.ID]
+		if !ok {
+			continue
+		}
+		logutil.WarnIfErr(e.Forge.SetMQStatus(ctx, e.Owner, e.Repo, ent.PrHeadSha, forge.MQStatus{
+			State: pg.CheckStatePending, Description: forge.BlockedStatus(deps, e.Owner, e.Repo), TargetURL: e.prURL(ent.PrNumber),
+		}), "set mq status failed", "pr", ent.PrNumber)
+		merge.SkipPendingMirroredChecks(ctx, e.Forge, e.Owner, e.Repo, ent.PrHeadSha)
+		logutil.WarnIfErr(e.Forge.Comment(ctx, e.Owner, e.Repo, ent.PrNumber, forge.BlockedComment(deps, e.Owner, e.Repo)),
+			"post comment failed", "pr", ent.PrNumber)
+		// The next SaveBatch deletes EjectedIds from the queue.
+		b.EjectedIds = append(b.EjectedIds, ent.ID)
+	}
+	b.CurrentIds = slices.DeleteFunc(b.CurrentIds, func(id int64) bool {
+		_, ok := blocked[id]
+		return ok
+	})
+	slog.Info("batch members held back by open dependencies", "batch", b.ID, "held", len(blocked), "current", len(b.CurrentIds))
+	return true, nil
 }

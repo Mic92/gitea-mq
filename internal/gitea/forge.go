@@ -33,8 +33,9 @@ func NewForge(client Client, baseURL string) forge.Forge {
 }
 
 var (
-	_ forge.Forge        = (*giteaForge)(nil)
-	_ forge.MergeStacker = (*giteaForge)(nil)
+	_ forge.Forge              = (*giteaForge)(nil)
+	_ forge.MergeStacker       = (*giteaForge)(nil)
+	_ forge.DependencyResolver = (*giteaForge)(nil)
 )
 
 // StackMerges builds the batch branch in one clone instead of one per member.
@@ -315,4 +316,28 @@ func (f *giteaForge) EnsureRepoSetup(ctx context.Context, owner, name string, cf
 	}
 	webhookURL := strings.TrimRight(cfg.ExternalURL, "/") + "/webhook/gitea"
 	return EnsureWebhook(ctx, f.client, owner, name, webhookURL, cfg.WebhookSecret)
+}
+
+// OpenDependencies returns the PR's open dependencies. 404 means the repository
+// has dependencies disabled, i.e. none.
+func (f *giteaForge) OpenDependencies(ctx context.Context, owner, name string, number int64) ([]forge.Dependency, error) {
+	issues, err := f.client.ListIssueDependencies(ctx, owner, name, number)
+	if err != nil {
+		if IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var open []forge.Dependency
+	for _, is := range issues {
+		if is.State != "open" {
+			continue
+		}
+		d := forge.Dependency{Number: is.Index}
+		if is.Repository != nil {
+			d.Repo = is.Repository.FullName
+		}
+		open = append(open, d)
+	}
+	return open, nil
 }

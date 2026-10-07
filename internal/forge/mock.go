@@ -42,11 +42,13 @@ type MockForge struct {
 	MergeIntoFn         func(ctx context.Context, owner, name, branch, headSHA string) (string, bool, error)
 	FastForwardFn       func(ctx context.Context, owner, name, branch, sha string) error
 	ClosePRFn           func(ctx context.Context, owner, name string, number int64) error
+	OpenDependenciesFn  func(ctx context.Context, owner, name string, number int64) ([]Dependency, error)
 }
 
 var (
-	_ Forge         = (*MockForge)(nil)
-	_ StackResolver = (*MockForge)(nil)
+	_ Forge              = (*MockForge)(nil)
+	_ StackResolver      = (*MockForge)(nil)
+	_ DependencyResolver = (*MockForge)(nil)
 )
 
 func (m *MockForge) RemoveLabel(ctx context.Context, owner, name string, number int64, label string) error {
@@ -242,4 +244,12 @@ func (m *MockForge) ClosePR(ctx context.Context, owner, name string, number int6
 		return m.ClosePRFn(ctx, owner, name, number)
 	}
 	return nil
+}
+
+func (m *MockForge) OpenDependencies(ctx context.Context, owner, name string, number int64) ([]Dependency, error) {
+	m.record("OpenDependencies", owner, name, number)
+	if m.OpenDependenciesFn != nil {
+		return m.OpenDependenciesFn(ctx, owner, name, number)
+	}
+	return nil, nil
 }
