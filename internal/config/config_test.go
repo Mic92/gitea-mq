@@ -98,6 +98,24 @@ func TestLoad_BatchMax(t *testing.T) {
 	}
 }
 
+func TestLoad_LabelPrefix(t *testing.T) {
+	setEnv(t, giteaEnv)
+	for _, tc := range []struct{ env, want string }{
+		{"", "mq/"},
+		{"queue/", "queue/"},
+		{"none", ""},
+	} {
+		t.Setenv("GITEA_MQ_LABEL_PREFIX", tc.env)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.LabelPrefix != tc.want {
+			t.Errorf("GITEA_MQ_LABEL_PREFIX=%q: LabelPrefix = %q, want %q", tc.env, cfg.LabelPrefix, tc.want)
+		}
+	}
+}
+
 func TestLoad_NoForgeFails(t *testing.T) {
 	setEnv(t, baseEnv)
 	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "no forge configured") {

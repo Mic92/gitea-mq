@@ -31,6 +31,10 @@ type MockClient struct {
 	CancelAutoMergeFn         func(ctx context.Context, owner, repo string, index int64) error
 	MergePRFn                 func(ctx context.Context, owner, repo string, index int64) error
 	RemoveIssueLabelFn        func(ctx context.Context, owner, repo string, index, labelID int64) error
+	ListRepoLabelsFn          func(ctx context.Context, owner, repo string) ([]Label, error)
+	CreateRepoLabelFn         func(ctx context.Context, owner, repo, name, color string, exclusive bool) (*Label, error)
+	DeleteRepoLabelFn         func(ctx context.Context, owner, repo string, labelID int64) error
+	AddIssueLabelsFn          func(ctx context.Context, owner, repo string, index int64, labelIDs []int64) ([]Label, error)
 	GetBranchProtectionFn     func(ctx context.Context, owner, repo, branch string) (*BranchProtection, error)
 	ListBranchesFn            func(ctx context.Context, owner, repo string) ([]Branch, error)
 	CreateBranchFn            func(ctx context.Context, owner, repo, name, target string) error
@@ -92,6 +96,46 @@ func (m *MockClient) RemoveIssueLabel(ctx context.Context, owner, repo string, i
 	}
 
 	return nil
+}
+
+func (m *MockClient) ListRepoLabels(ctx context.Context, owner, repo string) ([]Label, error) {
+	m.record("ListRepoLabels", owner, repo)
+
+	if m.ListRepoLabelsFn != nil {
+		return m.ListRepoLabelsFn(ctx, owner, repo)
+	}
+
+	return nil, nil
+}
+
+func (m *MockClient) CreateRepoLabel(ctx context.Context, owner, repo, name, color string, exclusive bool) (*Label, error) {
+	m.record("CreateRepoLabel", owner, repo, name, color, exclusive)
+
+	if m.CreateRepoLabelFn != nil {
+		return m.CreateRepoLabelFn(ctx, owner, repo, name, color, exclusive)
+	}
+
+	return &Label{Name: name, Exclusive: exclusive}, nil
+}
+
+func (m *MockClient) DeleteRepoLabel(ctx context.Context, owner, repo string, labelID int64) error {
+	m.record("DeleteRepoLabel", owner, repo, labelID)
+
+	if m.DeleteRepoLabelFn != nil {
+		return m.DeleteRepoLabelFn(ctx, owner, repo, labelID)
+	}
+
+	return nil
+}
+
+func (m *MockClient) AddIssueLabels(ctx context.Context, owner, repo string, index int64, labelIDs []int64) ([]Label, error) {
+	m.record("AddIssueLabels", owner, repo, index, labelIDs)
+
+	if m.AddIssueLabelsFn != nil {
+		return m.AddIssueLabelsFn(ctx, owner, repo, index, labelIDs)
+	}
+
+	return nil, nil
 }
 
 // Reset clears all recorded calls.

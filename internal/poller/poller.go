@@ -62,6 +62,13 @@ type Deps struct {
 	// fully handled, letting tests sequence polls without sleeping.
 	TickDone chan<- struct{}
 
+	// LabelPrefix enables queue state labels (e.g. "mq/"); empty disables.
+	LabelPrefix string
+
+	// labelsDisabled is set once the forge refuses label writes.
+	labelsDisabled bool
+	// stateLabels maps PR number to the label we set, for cleanup after it leaves the open list.
+	stateLabels map[int64]string
 	// hintedSHAs dedupes stack-hint statuses per head SHA.
 	hintedSHAs map[string]bool
 	// blockedStatus: head SHA -> last "blocked" description posted.
@@ -169,6 +176,7 @@ func PollOnce(ctx context.Context, deps *Deps) (*PollResult, error) {
 	reconcileEntries(ctx, deps, result, openPRMap)
 	startQueuedHeads(ctx, deps, result)
 	pollMergeBranchChecks(ctx, deps, result)
+	syncStateLabels(ctx, deps, result, openPRs)
 
 	return result, nil
 }
