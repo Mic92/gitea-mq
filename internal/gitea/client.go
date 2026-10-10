@@ -263,6 +263,12 @@ type Client interface {
 	// POST /repos/{owner}/{repo}/hooks
 	CreateWebhook(ctx context.Context, owner, repo string, opts CreateWebhookOpts) error
 
+	// ListIssueDependencies returns the issues and pull requests the given one
+	// depends on ("blocked by"), open and closed. 404 when dependencies are
+	// disabled for the repository.
+	// GET /repos/{owner}/{repo}/issues/{index}/dependencies
+	ListIssueDependencies(ctx context.Context, owner, repo string, index int64) ([]Issue, error)
+
 	// ServerVersion returns the Gitea/Forgejo server version string.
 	// GET /version
 	ServerVersion(ctx context.Context) (string, error)
@@ -270,4 +276,16 @@ type Client interface {
 	// IsForgejo reports whether the server is a Forgejo instance.
 	// GET /api/forgejo/v1/version (200 on Forgejo, 404 on Gitea)
 	IsForgejo(ctx context.Context) (bool, error)
+}
+
+// Issue is the subset of an issue or PR returned by the dependencies endpoint.
+type Issue struct {
+	Index      int64      `json:"number"`
+	State      string     `json:"state"` // "open", "closed"
+	Repository *IssueRepo `json:"repository"`
+}
+
+// IssueRepo identifies the repository an Issue belongs to.
+type IssueRepo struct {
+	FullName string `json:"full_name"`
 }

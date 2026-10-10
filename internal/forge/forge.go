@@ -305,3 +305,55 @@ type UnknownForgeError struct {
 func (e *UnknownForgeError) Error() string {
 	return fmt.Sprintf("forge: no adapter registered for kind %q", e.Kind)
 }
+
+// Dependency is an open issue or PR that another PR is blocked by.
+type Dependency struct {
+	Repo   string // "owner/name"; empty means the PR's own repository
+	Number int64
+}
+
+// Ref renders "#N" in the PR's own repository, "owner/name#N" elsewhere.
+func (d Dependency) Ref(owner, name string) string {
+	if d.Repo == "" || strings.EqualFold(d.Repo, owner+"/"+name) {
+		return fmt.Sprintf("#%d", d.Number)
+	}
+	return fmt.Sprintf("%s#%d", d.Repo, d.Number)
+}
+
+// DependencyRefs joins the refs of deps, e.g. "#12, #15".
+func DependencyRefs(deps []Dependency, owner, name string) string {
+	refs := make([]string, len(deps))
+	for i, d := range deps {
+		refs[i] = d.Ref(owner, name)
+	}
+	return strings.Join(refs, ", ")
+}
+
+// DependencyResolver is optionally implemented by forges with native issue
+// dependencies (Gitea). Closed dependencies no longer block.
+type DependencyResolver interface {
+	OpenDependencies(ctx context.Context, owner, name string, number int64) ([]Dependency, error)
+}
+
+// OpenDependencies returns none for forges without dependency support.
+func OpenDependencies(ctx context.Context, f Forge, owner, name string, number int64) ([]Dependency, error) {
+	dr, ok := f.(DependencyResolver)
+	if !ok {
+		return nil, nil
+	}
+	return dr.OpenDependencies(ctx, owner, name, number)
+}
+
+// BlockedStatus is the MQ status description of a PR held back by open
+// dependencies.
+func BlockedStatus(deps []Dependency, owner, name string) string {
+	return "Blocked by open dependency " + DependencyRefs(deps, owner, name)
+}
+
+// BlockedComment explains why a queued PR left the queue with its merge intent
+// intact.
+func BlockedComment(deps []Dependency, owner, name string) string {
+	return fmt.Sprintf("⏸️ Removed from merge queue: this PR depends on %s, which is still open. "+
+		"The merge stays scheduled: the PR re-enters the queue on its own once that is closed.",
+		DependencyRefs(deps, owner, name))
+}
