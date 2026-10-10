@@ -43,18 +43,37 @@ type MockForge struct {
 	FastForwardFn       func(ctx context.Context, owner, name, branch, sha string) error
 	ClosePRFn           func(ctx context.Context, owner, name string, number int64) error
 	OpenDependenciesFn  func(ctx context.Context, owner, name string, number int64) ([]Dependency, error)
+	ApplyLabelsFn       func(ctx context.Context, owner, name string, number int64, add, remove []string) error
+	DeleteLabelFn       func(ctx context.Context, owner, name, label string) error
 }
 
 var (
 	_ Forge              = (*MockForge)(nil)
 	_ StackResolver      = (*MockForge)(nil)
 	_ DependencyResolver = (*MockForge)(nil)
+	_ Labeler            = (*MockForge)(nil)
 )
 
 func (m *MockForge) RemoveLabel(ctx context.Context, owner, name string, number int64, label string) error {
 	m.record("RemoveLabel", owner, name, number, label)
 	if m.RemoveLabelFn != nil {
 		return m.RemoveLabelFn(ctx, owner, name, number, label)
+	}
+	return nil
+}
+
+func (m *MockForge) ApplyLabels(ctx context.Context, owner, name string, number int64, add, remove []string) error {
+	m.record("ApplyLabels", owner, name, number, add, remove)
+	if m.ApplyLabelsFn != nil {
+		return m.ApplyLabelsFn(ctx, owner, name, number, add, remove)
+	}
+	return nil
+}
+
+func (m *MockForge) DeleteLabel(ctx context.Context, owner, name, label string) error {
+	m.record("DeleteLabel", owner, name, label)
+	if m.DeleteLabelFn != nil {
+		return m.DeleteLabelFn(ctx, owner, name, label)
 	}
 	return nil
 }

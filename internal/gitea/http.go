@@ -607,6 +607,52 @@ func (c *HTTPClient) RemoveIssueLabel(ctx context.Context, owner, repo string, i
 	return err
 }
 
+// GET /repos/{owner}/{repo}/labels
+func (c *HTTPClient) ListRepoLabels(ctx context.Context, owner, repo string) ([]Label, error) {
+	return paginate[Label](ctx, c,
+		fmt.Sprintf("/repos/%s/%s/labels?page=%%d&limit=50", owner, repo),
+		fmt.Sprintf("list labels of %s/%s", owner, repo))
+}
+
+// POST /repos/{owner}/{repo}/labels
+func (c *HTTPClient) CreateRepoLabel(ctx context.Context, owner, repo, name, color string, exclusive bool) (*Label, error) {
+	path := fmt.Sprintf("/repos/%s/%s/labels", owner, repo)
+	resp, err := c.do(ctx, http.MethodPost, path, map[string]any{"name": name, "color": color, "exclusive": exclusive})
+	if err != nil {
+		return nil, err
+	}
+	var l Label
+	if err := c.decodeJSON(resp, &l); err != nil {
+		return nil, fmt.Errorf("create label %q in %s/%s: %w", name, owner, repo, err)
+	}
+	return &l, nil
+}
+
+// DELETE /repos/{owner}/{repo}/labels/{id}; 404 is success.
+func (c *HTTPClient) DeleteRepoLabel(ctx context.Context, owner, repo string, labelID int64) error {
+	path := fmt.Sprintf("/repos/%s/%s/labels/%d", owner, repo, labelID)
+	err := c.doDiscard(ctx, http.MethodDelete, path, nil,
+		fmt.Sprintf("delete label %d in %s/%s", labelID, owner, repo))
+	if err != nil && IsNotFound(err) {
+		return nil
+	}
+	return err
+}
+
+// POST /repos/{owner}/{repo}/issues/{index}/labels
+func (c *HTTPClient) AddIssueLabels(ctx context.Context, owner, repo string, index int64, labelIDs []int64) ([]Label, error) {
+	path := fmt.Sprintf("/repos/%s/%s/issues/%d/labels", owner, repo, index)
+	resp, err := c.do(ctx, http.MethodPost, path, map[string]any{"labels": labelIDs})
+	if err != nil {
+		return nil, err
+	}
+	var out []Label
+	if err := c.decodeJSON(resp, &out); err != nil {
+		return nil, fmt.Errorf("add labels to PR #%d in %s/%s: %w", index, owner, repo, err)
+	}
+	return out, nil
+}
+
 // NotFastForwardError indicates a rejected non-fast-forward push.
 type NotFastForwardError struct {
 	Branch, SHA string

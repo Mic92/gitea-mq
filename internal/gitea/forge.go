@@ -21,6 +21,8 @@ type giteaForge struct {
 
 	capsOnce sync.Once
 	caps     forge.Capabilities
+
+	labels sync.Map
 }
 
 // NewForge wraps a Gitea Client as a forge.Forge. baseURL is the Gitea
