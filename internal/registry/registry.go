@@ -38,6 +38,7 @@ type Deps struct {
 	CheckTimeout        time.Duration
 	FallbackChecks      []string
 	MergeLabel          string
+	LabelPrefix         string
 	SuccessTimeout      time.Duration
 	SkipQueueIfUpToDate bool
 	BatchMax            int
@@ -173,6 +174,7 @@ func (r *RepoRegistry) Add(ctx context.Context, ref forge.RepoRef) error {
 		ExternalURL:         r.deps.ExternalURL,
 		FallbackChecks:      r.deps.FallbackChecks,
 		MergeLabel:          r.deps.MergeLabel,
+		LabelPrefix:         r.deps.LabelPrefix,
 		SuccessTimeout:      r.deps.SuccessTimeout,
 		CheckTimeout:        r.deps.CheckTimeout,
 		SkipQueueIfUpToDate: r.deps.SkipQueueIfUpToDate,

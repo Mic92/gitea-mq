@@ -27,8 +27,9 @@ type PR struct {
 
 // Label represents an issue/PR label from the Gitea API (subset of fields).
 type Label struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	Exclusive bool   `json:"exclusive"`
 }
 
 // PRRef holds a branch ref and its current SHA.
@@ -206,6 +207,18 @@ type Client interface {
 	// RemoveIssueLabel removes a label (by id) from an issue or PR.
 	// DELETE /repos/{owner}/{repo}/issues/{index}/labels/{id}
 	RemoveIssueLabel(ctx context.Context, owner, repo string, index, labelID int64) error
+
+	// GET /repos/{owner}/{repo}/labels (repo labels only, not org labels)
+	ListRepoLabels(ctx context.Context, owner, repo string) ([]Label, error)
+
+	// POST /repos/{owner}/{repo}/labels
+	CreateRepoLabel(ctx context.Context, owner, repo, name, color string, exclusive bool) (*Label, error)
+
+	// DELETE /repos/{owner}/{repo}/labels/{id}; detaches from every issue, 404 is success
+	DeleteRepoLabel(ctx context.Context, owner, repo string, labelID int64) error
+
+	// POST /repos/{owner}/{repo}/issues/{index}/labels; unknown ids are silently ignored
+	AddIssueLabels(ctx context.Context, owner, repo string, index int64, labelIDs []int64) ([]Label, error)
 
 	// GetBranchProtection returns the branch protection rule for a branch.
 	// GET /repos/{owner}/{repo}/branch_protections/{name}
