@@ -6,8 +6,10 @@ package ghfake
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -85,7 +87,10 @@ type Repo struct {
 	// Missing entries default to 0 (head up to date with base).
 	BehindBy map[string]int
 	// ConflictOn[head] makes POST /merges with that head return 409.
-	ConflictOn map[string]bool
+	ConflictOn      map[string]bool
+	Labels          map[string]bool
+	LabelCreates    int
+	LabelsForbidden bool
 	// Settings tracks PATCH /repos/{o}/{r} keys.
 	Settings map[string]any
 
@@ -201,6 +206,7 @@ func (s *Server) AddRepo(owner, name string) *Repo {
 		ConflictOn:       map[string]bool{},
 		ProtectedRefs:    map[string]bool{},
 		Settings:         map[string]any{},
+		Labels:           map[string]bool{},
 		RequiredChecks:   map[string][]string{},
 		ProtectionChecks: map[string][]string{},
 	}
@@ -281,6 +287,9 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET "+apiV3+"/repos/{o}/{r}/stacks", s.hListStacks)
 	mux.HandleFunc("PUT "+apiV3+"/repos/{o}/{r}/pulls/{n}/merge-async", s.hMergeAsync)
 	mux.HandleFunc("DELETE "+apiV3+"/repos/{o}/{r}/issues/{n}/labels/{l}", s.hRemoveLabel)
+	mux.HandleFunc("POST "+apiV3+"/repos/{o}/{r}/issues/{n}/labels", s.hAddLabels)
+	mux.HandleFunc("POST "+apiV3+"/repos/{o}/{r}/labels", s.hCreateLabel)
+	mux.HandleFunc("DELETE "+apiV3+"/repos/{o}/{r}/labels/{l...}", s.hDeleteLabel)
 	mux.HandleFunc("GET "+apiV3+"/repos/{o}/{r}/compare/{basehead...}", s.hCompare)
 
 	// Rules / rulesets.
@@ -857,6 +866,92 @@ func (s *Server) hRemoveLabel(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, 404, map[string]any{"message": "Label does not exist"})
+}
+
+func (s *Server) hCreateLabel(w http.ResponseWriter, r *http.Request) {
+	rp, ok := s.repoOr404(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if rp.LabelsForbidden {
+		writeJSON(w, 403, map[string]any{"message": "Resource not accessible by integration"})
+		return
+	}
+	if rp.Labels[body.Name] {
+		writeJSON(w, 422, map[string]any{
+			"message": "Validation Failed",
+			"errors":  []map[string]any{{"resource": "Label", "code": "already_exists", "field": "name"}},
+		})
+		return
+	}
+	rp.Labels[body.Name] = true
+	rp.LabelCreates++
+	writeJSON(w, 201, map[string]any{"name": body.Name})
+}
+
+func (s *Server) hAddLabels(w http.ResponseWriter, r *http.Request) {
+	rp, ok := s.repoOr404(w, r)
+	if !ok {
+		return
+	}
+	n, _ := strconv.ParseInt(r.PathValue("n"), 10, 64)
+	// go-github sends a bare array; GitHub also accepts {"labels": [...]}.
+	raw, _ := io.ReadAll(r.Body)
+	var names []string
+	if json.Unmarshal(raw, &names) != nil {
+		var obj struct {
+			Labels []string `json:"labels"`
+		}
+		_ = json.Unmarshal(raw, &obj)
+		names = obj.Labels
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if rp.LabelsForbidden {
+		writeJSON(w, 403, map[string]any{"message": "Resource not accessible by integration"})
+		return
+	}
+	p := rp.PRs[n]
+	if p == nil {
+		writeJSON(w, 404, map[string]any{"message": "Not Found"})
+		return
+	}
+	for _, l := range names {
+		rp.Labels[l] = true
+		if !slices.Contains(p.Labels, l) {
+			p.Labels = append(p.Labels, l)
+		}
+	}
+	writeJSON(w, 200, labelsJSON(p.Labels))
+}
+
+func (s *Server) hDeleteLabel(w http.ResponseWriter, r *http.Request) {
+	rp, ok := s.repoOr404(w, r)
+	if !ok {
+		return
+	}
+	label := r.PathValue("l")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if rp.LabelsForbidden {
+		writeJSON(w, 403, map[string]any{"message": "Resource not accessible by integration"})
+		return
+	}
+	if !rp.Labels[label] {
+		writeJSON(w, 404, map[string]any{"message": "Not Found"})
+		return
+	}
+	delete(rp.Labels, label)
+	for _, p := range rp.PRs {
+		p.Labels = slices.DeleteFunc(p.Labels, func(l string) bool { return l == label })
+	}
+	w.WriteHeader(204)
 }
 
 func (s *Server) hCompare(w http.ResponseWriter, r *http.Request) {

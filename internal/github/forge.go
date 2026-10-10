@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
+	"sync"
 
 	gh "github.com/google/go-github/v84/github"
 
@@ -24,6 +26,8 @@ type githubForge struct {
 	app       *App
 	htmlURL   string // https://github.com or GHES web root
 	checkRuns checkRunCache
+
+	labels sync.Map
 }
 
 // NewForge wraps a GitHub App as a forge. htmlURL is the user-facing web root
@@ -412,7 +416,7 @@ func (f *githubForge) RemoveLabel(ctx context.Context, owner, name string, numbe
 	if err != nil {
 		return err
 	}
-	resp, err := c.Issues.RemoveLabelForIssue(ctx, owner, name, int(number), label)
+	resp, err := c.Issues.RemoveLabelForIssue(ctx, owner, name, int(number), url.PathEscape(label))
 	// Idempotent: the label may already be gone.
 	if resp != nil && resp.StatusCode == http.StatusNotFound {
 		return nil

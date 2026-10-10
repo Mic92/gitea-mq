@@ -73,6 +73,7 @@ variables.
 | `GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE` | no | `true` | Skip the merge-branch CI run when a PR is already rebased onto the target branch tip (its own green CI already covers the merged tree) |
 | `GITEA_MQ_REQUIRED_CHECKS` | no | - | Fallback required CI contexts when branch protection has none (comma-separated) |
 | `GITEA_MQ_MERGE_LABEL` | no | `merge-queue` | Label that enqueues a PR (stack-aware on GitHub); set to `none` to disable |
+| `GITEA_MQ_LABEL_PREFIX` | no | `mq/` | Prefix of the queue state labels set on PRs (see [Queue labels](#queue-labels)); set to `none` to disable |
 | `GITEA_MQ_BATCH_MAX` | no | `1` | Max PRs tested together as one batch. `1` = batching off (legacy behaviour). `0` = everything currently queued |
 | `GITEA_MQ_BISECT_MAX_STEPS` | no | `0` | Cap on CI builds spent bisecting one batch. `0` = unlimited |
 | `GITEA_MQ_REFRESH_INTERVAL` | no | `10s` | Dashboard auto-refresh interval |
@@ -169,6 +170,26 @@ registering the App. Install the App on the orgs/repos you want managed;
 gitea-mq picks up every installation automatically. `GITEA_MQ_GITHUB_REPOS` is
 optional and additive: listed repos stay managed even if the installation is
 later removed.
+
+## Queue labels
+
+gitea-mq keeps one state label on each PR that has merge intent (auto-merge or
+the merge label), so queue state is visible and filterable in the PR list:
+
+| Label | Meaning |
+|---|---|
+| `mq/waiting` | Merge intent, but not queued yet: own CI not green or blocked by an open dependency |
+| `mq/queued` | In the queue, waiting for its turn |
+| `mq/testing` | Being tested on a merge branch (`GITEA_MQ_BATCH_MAX=1`) |
+| `mq/batch-N` | Member of batch N; the label is deleted when the batch ends |
+| `mq/merging` | Queue passed, waiting for the forge to merge |
+
+Labels are created on first use. This needs write access to issues/PRs: the
+Gitea token's `issue` scope, or on GitHub an App permission that allows
+managing labels (Pull requests or Issues write). If
+the forge answers 403, labelling is switched off for that repo and the queue
+keeps working. On Gitea/Forgejo the labels are created as exclusive scoped
+labels, so each transition is a single API call.
 
 ## Auto-setup
 
