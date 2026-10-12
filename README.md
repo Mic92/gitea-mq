@@ -353,6 +353,7 @@ Real-world deployments:
 | `webhookPath` | string | `/webhook` | Webhook endpoint path |
 | `externalUrl` | string | - | URL where Gitea can reach this service (for webhook auto-setup and commit status links) |
 | `pollInterval` | string | `30s` | Poll interval |
+| `idlePollInterval` | string | `15m` | Poll interval for idle repos (see `GITEA_MQ_IDLE_POLL_INTERVAL`) |
 | `checkTimeout` | string | `1h` | Check timeout |
 | `skipQueueIfUpToDate` | bool | `true` | Skip merge-branch CI for PRs already rebased onto the target tip |
 | `requiredChecks` | list of strings | `[]` | Fallback required CI contexts when branch protection has none |
