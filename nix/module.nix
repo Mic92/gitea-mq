@@ -132,6 +132,18 @@ in
       description = "Automerge discovery poll interval.";
     };
 
+    idlePollInterval = lib.mkOption {
+      type = lib.types.str;
+      default = "15m";
+      description = ''
+        Reconcile poll interval for idle repos (no active queue entries). Only
+        used on forges that deliver CI status via webhooks (GitHub, Gitea >=
+        1.24). Gitea sends no webhook when auto-merge is scheduled, so a PR
+        scheduled after its checks are already green is only picked up on this
+        poll; lower it if that wait matters more than forge API usage.
+      '';
+    };
+
     checkTimeout = lib.mkOption {
       type = lib.types.str;
       default = "1h";
@@ -273,6 +285,7 @@ in
         GITEA_MQ_WEBHOOK_PATH = cfg.webhookPath;
         GITEA_MQ_EXTERNAL_URL = cfg.externalUrl;
         GITEA_MQ_POLL_INTERVAL = cfg.pollInterval;
+        GITEA_MQ_IDLE_POLL_INTERVAL = cfg.idlePollInterval;
         GITEA_MQ_CHECK_TIMEOUT = cfg.checkTimeout;
         GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE = lib.boolToString cfg.skipQueueIfUpToDate;
         GITEA_MQ_BATCH_MAX = toString cfg.batchMax;
