@@ -132,6 +132,16 @@ in
       description = "Automerge discovery poll interval.";
     };
 
+    idlePollInterval = lib.mkOption {
+      type = lib.types.str;
+      default = "15m";
+      description = ''
+        Reconcile poll interval for repos without queued entries. Gitea sends
+        no webhook when auto-merge is scheduled, so this bounds how long such
+        PRs wait to be picked up.
+      '';
+    };
+
     checkTimeout = lib.mkOption {
       type = lib.types.str;
       default = "1h";
@@ -273,6 +283,7 @@ in
         GITEA_MQ_WEBHOOK_PATH = cfg.webhookPath;
         GITEA_MQ_EXTERNAL_URL = cfg.externalUrl;
         GITEA_MQ_POLL_INTERVAL = cfg.pollInterval;
+        GITEA_MQ_IDLE_POLL_INTERVAL = cfg.idlePollInterval;
         GITEA_MQ_CHECK_TIMEOUT = cfg.checkTimeout;
         GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE = lib.boolToString cfg.skipQueueIfUpToDate;
         GITEA_MQ_BATCH_MAX = toString cfg.batchMax;
