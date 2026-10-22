@@ -5,6 +5,7 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -59,53 +60,46 @@ func (s *Service) withTx(ctx context.Context, fn func(q *pg.Queries) error) erro
 }
 
 // Enqueue adds a PR to its repo+branch queue, ahead of normal PRs if priority.
-// If the PR is already queued, it is a no-op and returns the existing position.
-// Runs in a transaction so the insert and position count are atomic.
+// If the PR is already queued, it is a no-op and returns the existing entry.
 func (s *Service) Enqueue(ctx context.Context, repoID, prNumber int64, prHeadSHA, targetBranch string, priority bool) (*EnqueueResult, error) {
-	var result EnqueueResult
-
-	err := s.withTx(ctx, func(q *pg.Queries) error {
-		entry, insertErr := q.EnqueuePR(ctx, pg.EnqueuePRParams{
+	q := s.queries()
+	var (
+		entry pg.QueueEntry
+		isNew bool
+		err   error
+	)
+	// Retry if the conflicting row is dequeued before the lookup.
+	for range 3 {
+		entry, err = q.EnqueuePR(ctx, pg.EnqueuePRParams{
 			RepoID:       repoID,
 			PrNumber:     prNumber,
 			PrHeadSha:    prHeadSHA,
 			TargetBranch: targetBranch,
 			Priority:     priority,
 		})
-		result.IsNew = insertErr == nil
-		if !result.IsNew {
-			// ON CONFLICT DO NOTHING → pgx returns no rows; the PR is already queued.
-			var getErr error
-			entry, getErr = q.GetQueueEntry(ctx, pg.GetQueueEntryParams{RepoID: repoID, PrNumber: prNumber})
-			if getErr != nil {
-				return fmt.Errorf("enqueue PR #%d: insert failed (%w), and lookup failed (%w)", prNumber, insertErr, getErr)
-			}
+		isNew = err == nil
+		if errors.Is(err, pgx.ErrNoRows) {
+			entry, err = q.GetQueueEntry(ctx, pg.GetQueueEntryParams{RepoID: repoID, PrNumber: prNumber})
 		}
-		result.Entry = entry
-
-		pos, err := q.CountQueuePosition(ctx, pg.CountQueuePositionParams{
-			RepoID:       repoID,
-			TargetBranch: entry.TargetBranch,
-			PrNumber:     prNumber,
-		})
-		if err != nil {
-			return fmt.Errorf("count position for PR #%d: %w", prNumber, err)
+		if !errors.Is(err, pgx.ErrNoRows) {
+			break
 		}
-		result.Position = pos
-
-		return nil
-	})
+	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("enqueue PR #%d: %w", prNumber, err)
 	}
 
-	if result.IsNew {
-		slog.Info("enqueued PR", "pr", prNumber, "position", result.Position)
+	pos, err := s.Position(ctx, repoID, entry.TargetBranch, prNumber)
+	if err != nil {
+		return nil, fmt.Errorf("count position for PR #%d: %w", prNumber, err)
+	}
+
+	if isNew {
+		slog.Info("enqueued PR", "pr", prNumber, "position", pos)
 	} else {
-		slog.Debug("PR already in queue", "pr", prNumber, "position", result.Position)
+		slog.Debug("PR already in queue", "pr", prNumber, "position", pos)
 	}
-
-	return &result, nil
+	return &EnqueueResult{Position: pos, IsNew: isNew, Entry: entry}, nil
 }
 
 // Dequeue removes a PR from the queue; a missing PR is not an error.
