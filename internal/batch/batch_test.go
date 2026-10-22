@@ -66,7 +66,7 @@ func setup(t *testing.T, prs ...int64) (*batch.Engine, *fakeForge, *queue.Servic
 	t.Helper()
 	svc, ctx, repoID := testutil.TestQueueService(t)
 	for _, n := range prs {
-		if _, err := svc.Enqueue(ctx, repoID, n, fmt.Sprintf("sha%d", n), "main"); err != nil {
+		if _, err := svc.Enqueue(ctx, repoID, n, fmt.Sprintf("sha%d", n), "main", false); err != nil {
 			t.Fatal(err)
 		}
 	}

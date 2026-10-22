@@ -175,7 +175,7 @@ func TestRemoveCleansUpMergeBranchesAndDBEntries(t *testing.T) {
 	}
 
 	// Simulate a PR in the queue with a merge branch (as if testing is in progress).
-	_, err := queueSvc.Enqueue(ctx, m.RepoID, 42, "abc123", "main")
+	_, err := queueSvc.Enqueue(ctx, m.RepoID, 42, "abc123", "main", false)
 	if err != nil {
 		t.Fatalf("Enqueue: %v", err)
 	}

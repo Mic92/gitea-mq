@@ -114,6 +114,7 @@ type RepoDetailEntry struct {
 	TargetBranch string
 	State        string
 	BatchBucket  string // current/pending/landed when in a live batch
+	Priority     bool
 }
 
 // RepoDetailBatch surfaces a live batch on the repo detail page.
@@ -150,6 +151,7 @@ type PRDetailData struct {
 	Author          string
 	State           string
 	Position        int
+	Priority        bool
 	EnqueuedAt      time.Time
 	CheckStatuses   []pg.CheckStatus
 	InQueue         bool
@@ -349,6 +351,7 @@ func serveRepoDetail(w http.ResponseWriter, r *http.Request, deps *Deps, ref for
 			PrNumber:     e.PrNumber,
 			TargetBranch: e.TargetBranch,
 			State:        string(e.State),
+			Priority:     e.Priority,
 		}
 		if e.ActiveBatchID.Valid {
 			if b := byID[e.ActiveBatchID.Int64]; b != nil {
@@ -403,6 +406,7 @@ func servePRDetail(w http.ResponseWriter, r *http.Request, deps *Deps, ref forge
 
 	data.InQueue = true
 	data.State = string(entry.State)
+	data.Priority = entry.Priority
 	if entry.EnqueuedAt.Valid {
 		data.EnqueuedAt = entry.EnqueuedAt.Time.UTC()
 	}

@@ -207,15 +207,10 @@ func removeFromQueue(ctx context.Context, deps *Deps, entry *pg.QueueEntry, stat
 
 	merge.CleanupMergeBranch(ctx, deps.Forge, deps.Owner, deps.Repo, entry)
 
-	if err := deps.Queue.UpdateState(ctx, deps.RepoID, entry.PrNumber, pg.EntryStateFailed); err != nil {
-		slog.Warn("failed to update state to failed", "pr", entry.PrNumber, "error", err)
-	} else {
-		merge.SkipPendingMirroredChecks(ctx, deps.Forge, deps.Owner, deps.Repo, entry.PrHeadSha)
+	if err := deps.Queue.Dequeue(ctx, deps.RepoID, entry.PrNumber); err != nil {
+		return err
 	}
-
-	if _, err := deps.Queue.Advance(ctx, deps.RepoID, entry.TargetBranch); err != nil {
-		return fmt.Errorf("advance queue after removing PR #%d: %w", entry.PrNumber, err)
-	}
+	merge.SkipPendingMirroredChecks(ctx, deps.Forge, deps.Owner, deps.Repo, entry.PrHeadSha)
 
 	return nil
 }

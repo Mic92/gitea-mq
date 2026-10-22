@@ -5,8 +5,8 @@ ON CONFLICT (forge, owner, name) DO UPDATE SET owner = EXCLUDED.owner
 RETURNING *;
 
 -- name: EnqueuePR :one
-INSERT INTO queue_entries (repo_id, pr_number, pr_head_sha, target_branch)
-VALUES ($1, $2, $3, $4)
+INSERT INTO queue_entries (repo_id, pr_number, pr_head_sha, target_branch, priority)
+VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (repo_id, pr_number) DO NOTHING
 RETURNING *;
 
@@ -14,15 +14,13 @@ RETURNING *;
 DELETE FROM queue_entries
 WHERE repo_id = $1 AND pr_number = $2;
 
--- name: ListQueue :many
-SELECT * FROM queue_entries
-WHERE repo_id = $1 AND target_branch = $2
-ORDER BY enqueued_at ASC;
+-- Queue order everywhere: in-flight entries first so a priority arrival
+-- never preempts them, then priority, then FIFO.
 
 -- name: ListActiveEntriesByRepo :many
 SELECT * FROM queue_entries
-WHERE repo_id = $1 AND state NOT IN ('failed', 'cancelled')
-ORDER BY target_branch, enqueued_at ASC;
+WHERE repo_id = $1
+ORDER BY target_branch, state = 'queued', priority DESC, enqueued_at, id;
 
 -- name: GetQueueEntry :one
 SELECT * FROM queue_entries
@@ -32,13 +30,17 @@ WHERE repo_id = $1 AND pr_number = $2;
 UPDATE queue_entries
 SET state = @state,
     testing_started_at = CASE WHEN @state::entry_state = 'testing' THEN NOW() ELSE testing_started_at END,
-    completed_at = CASE WHEN @state::entry_state IN ('success', 'failed', 'cancelled') THEN NOW() ELSE completed_at END
+    completed_at = CASE WHEN @state::entry_state = 'success' THEN NOW() ELSE completed_at END
 WHERE repo_id = @repo_id AND pr_number = @pr_number;
 
 -- name: UpdateEntryMergeBranch :exec
 UPDATE queue_entries
 SET merge_branch_name = $3, merge_branch_sha = $4
 WHERE repo_id = $1 AND pr_number = $2;
+
+-- name: SetEntryPriority :exec
+UPDATE queue_entries SET priority = $3
+WHERE repo_id = $1 AND pr_number = $2 AND state = 'queued';
 
 -- name: UpdateEntryError :exec
 UPDATE queue_entries
@@ -55,35 +57,31 @@ SET state = EXCLUDED.state, target_url = EXCLUDED.target_url, updated_at = NOW()
 SELECT * FROM check_statuses
 WHERE queue_entry_id = $1;
 
--- name: LoadActiveQueues :many
-SELECT qe.*, r.forge, r.owner, r.name AS repo_name
-FROM queue_entries qe
-JOIN repos r ON r.id = qe.repo_id
-WHERE qe.state NOT IN ('failed', 'cancelled')
-ORDER BY r.owner, r.name, qe.target_branch, qe.enqueued_at ASC;
-
 -- name: GetHeadOfQueue :one
 SELECT * FROM queue_entries
 WHERE repo_id = $1 AND target_branch = $2
-ORDER BY enqueued_at ASC
+ORDER BY state = 'queued', priority DESC, enqueued_at, id
 LIMIT 1;
 
 -- name: CountQueuePosition :one
 SELECT COUNT(*) FROM queue_entries qe
+JOIN queue_entries me ON me.repo_id = qe.repo_id AND me.pr_number = $3
 WHERE qe.repo_id = $1 AND qe.target_branch = $2
-  AND qe.state NOT IN ('failed', 'cancelled')
-  AND qe.enqueued_at <= (SELECT qe2.enqueued_at FROM queue_entries qe2
-                         WHERE qe2.repo_id = $1 AND qe2.pr_number = $3
-                           AND qe2.state NOT IN ('failed', 'cancelled'));
+  AND (qe.state = 'queued', NOT qe.priority, qe.enqueued_at, qe.id)
+   <= (me.state = 'queued', NOT me.priority, me.enqueued_at, me.id);
 
 -- name: DequeueAllByRepo :exec
 DELETE FROM queue_entries
 WHERE repo_id = $1;
 
 -- name: TakeQueuedHead :many
-SELECT * FROM queue_entries
-WHERE repo_id = $1 AND target_branch = $2 AND state = 'queued'
-ORDER BY enqueued_at ASC
+SELECT q.* FROM queue_entries q
+WHERE q.repo_id = $1 AND q.target_branch = $2 AND q.state = 'queued'
+  -- Priority batches exclude normal PRs so one cannot delay the other via bisection.
+  AND (q.priority OR NOT EXISTS (
+    SELECT 1 FROM queue_entries p
+    WHERE p.repo_id = $1 AND p.target_branch = $2 AND p.state = 'queued' AND p.priority))
+ORDER BY q.enqueued_at, q.id
 LIMIT $3;
 
 -- name: GetEntriesByIDs :many

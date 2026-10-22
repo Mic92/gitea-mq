@@ -67,10 +67,10 @@ func getPage(t *testing.T, deps *web.Deps, path string) string {
 
 func TestOverviewShowsRepoAndQueueData(t *testing.T) {
 	svc, ctx, repoID := testutil.TestQueueService(t)
-	if _, err := svc.Enqueue(ctx, repoID, 42, "abc123", "main"); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 42, "abc123", "main", false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Enqueue(ctx, repoID, 43, "def456", "main"); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 43, "def456", "main", false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -126,10 +126,10 @@ func TestOverviewNoReposShowsHelpMessage(t *testing.T) {
 func TestRepoDetailShowsPRs(t *testing.T) {
 	svc, ctx, repoID := testutil.TestQueueService(t)
 
-	if _, err := svc.Enqueue(ctx, repoID, 42, "abc123", "main"); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 42, "abc123", "main", false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Enqueue(ctx, repoID, 43, "def456", "main"); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 43, "def456", "main", false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -239,10 +239,10 @@ func TestPRDetailHeadOfQueueTesting(t *testing.T) {
 func TestPRDetailNonHeadQueued(t *testing.T) {
 	svc, ctx, repoID := testutil.TestQueueService(t)
 
-	if _, err := svc.Enqueue(ctx, repoID, 42, "abc123", "main"); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 42, "abc123", "main", false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Enqueue(ctx, repoID, 43, "def456", "main"); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 43, "def456", "main", false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -267,7 +267,7 @@ func TestPRDetailNonHeadQueued(t *testing.T) {
 func TestPRDetailGiteaAPIFailure(t *testing.T) {
 	svc, ctx, repoID := testutil.TestQueueService(t)
 
-	if _, err := svc.Enqueue(ctx, repoID, 42, "abc123", "main"); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 42, "abc123", "main", false); err != nil {
 		t.Fatal(err)
 	}
 

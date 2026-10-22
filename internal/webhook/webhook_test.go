@@ -137,7 +137,7 @@ func TestHandler_SignatureValidation(t *testing.T) {
 func TestHandler_IgnoresOwnContexts(t *testing.T) {
 	env := setup(t)
 
-	if _, err := env.svc.Enqueue(env.ctx, env.repoID, 5, "pr-head", "main"); err != nil {
+	if _, err := env.svc.Enqueue(env.ctx, env.repoID, 5, "pr-head", "main", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := env.svc.SetMergeBranch(env.ctx, env.repoID, 5, "gitea-mq/5", "merge-sha"); err != nil {

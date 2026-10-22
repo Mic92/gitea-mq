@@ -186,6 +186,7 @@ type QueueEntry struct {
 	MergeBranchSha   pgtype.Text        `json:"merge_branch_sha"`
 	ErrorMessage     pgtype.Text        `json:"error_message"`
 	ActiveBatchID    pgtype.Int8        `json:"active_batch_id"`
+	Priority         bool               `json:"priority"`
 }
 
 type Repo struct {

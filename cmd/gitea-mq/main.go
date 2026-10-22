@@ -126,6 +126,7 @@ func run() error {
 		CheckTimeout:        cfg.CheckTimeout,
 		FallbackChecks:      cfg.RequiredChecks,
 		MergeLabel:          cfg.MergeLabel,
+		PriorityLabel:       cfg.PriorityLabel,
 		LabelPrefix:         cfg.LabelPrefix,
 		SuccessTimeout:      5 * time.Minute,
 		SkipQueueIfUpToDate: cfg.SkipQueueIfUpToDate,

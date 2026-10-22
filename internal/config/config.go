@@ -27,6 +27,7 @@ type Config struct {
 	CheckTimeout        time.Duration
 	RequiredChecks      []string
 	MergeLabel          string
+	PriorityLabel       string
 	LabelPrefix         string
 	SkipQueueIfUpToDate bool
 	BatchMax            int
@@ -155,9 +156,14 @@ func Load() (*Config, error) {
 		cfg.MergeLabel = ""
 	}
 
+	cfg.PriorityLabel = os.Getenv("GITEA_MQ_PRIORITY_LABEL")
+
 	cfg.LabelPrefix = envOrDefault("GITEA_MQ_LABEL_PREFIX", "mq/")
 	if cfg.LabelPrefix == "none" {
 		cfg.LabelPrefix = ""
+	}
+	if err := checkLabels(cfg); err != nil {
+		return nil, err
 	}
 
 	cfg.SkipQueueIfUpToDate, err = parseBool("GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE", true)
@@ -347,4 +353,18 @@ func parseDurationOrDefault(envKey string, defaultVal time.Duration) (time.Durat
 		return 0, fmt.Errorf("%s: duration must be positive, got %v", envKey, d)
 	}
 	return d, nil
+}
+
+// checkLabels rejects trigger labels that the state-label sync would strip:
+// it removes every label under LabelPrefix.
+func checkLabels(cfg *Config) error {
+	for _, l := range []struct{ env, val string }{
+		{"GITEA_MQ_MERGE_LABEL", cfg.MergeLabel},
+		{"GITEA_MQ_PRIORITY_LABEL", cfg.PriorityLabel},
+	} {
+		if l.val != "" && cfg.LabelPrefix != "" && strings.HasPrefix(strings.ToLower(l.val), strings.ToLower(cfg.LabelPrefix)) {
+			return fmt.Errorf("%s=%q must not start with GITEA_MQ_LABEL_PREFIX %q", l.env, l.val, cfg.LabelPrefix)
+		}
+	}
+	return nil
 }

@@ -34,6 +34,8 @@ type Deps struct {
 	FallbackChecks []string
 	// MergeLabel enqueues labeled PRs (stack-aware on GitHub); empty disables.
 	MergeLabel string
+	// PriorityLabel sorts queued PRs carrying it ahead of others; empty disables.
+	PriorityLabel string
 	// SuccessTimeout is how long a PR may sit in "success" without merging
 	// before we assume the forge's auto-merge failed.
 	SuccessTimeout time.Duration
@@ -99,8 +101,7 @@ type removeOpts struct {
 }
 
 func removePR(ctx context.Context, deps *Deps, result *PollResult, entry *pg.QueueEntry, opts removeOpts) error {
-	dqResult, err := deps.Queue.Dequeue(ctx, deps.RepoID, entry.PrNumber)
-	if err != nil {
+	if err := deps.Queue.Dequeue(ctx, deps.RepoID, entry.PrNumber); err != nil {
 		return err
 	}
 	merge.SkipPendingMirroredChecks(ctx, deps.Forge, deps.Owner, deps.Repo, entry.PrHeadSha)
@@ -113,7 +114,7 @@ func removePR(ctx context.Context, deps *Deps, result *PollResult, entry *pg.Que
 	}
 	// The batch engine owns gitea-mq/batch/<id>; deleting it here can race a
 	// concurrent Build and cause MergeInto to fail with wrong attribution.
-	if dqResult.WasHead && !entry.ActiveBatchID.Valid {
+	if !entry.ActiveBatchID.Valid {
 		merge.CleanupMergeBranch(ctx, deps.Forge, deps.Owner, deps.Repo, entry)
 	}
 
@@ -124,6 +125,10 @@ func removePR(ctx context.Context, deps *Deps, result *PollResult, entry *pg.Que
 
 	slog.Info(opts.logMsg, append([]any{"pr", entry.PrNumber}, opts.logAttrs...)...)
 	return nil
+}
+
+func (deps *Deps) isPriority(pr *forge.PR) bool {
+	return deps.PriorityLabel != "" && pr.HasLabel(deps.PriorityLabel)
 }
 
 // prCheckResult evaluates the PR's own head-commit checks against the
@@ -328,7 +333,7 @@ func enqueuePR(ctx context.Context, deps *Deps, result *PollResult, pr *forge.PR
 		return
 	}
 
-	enqResult, err := deps.Queue.Enqueue(ctx, deps.RepoID, pr.Number, pr.HeadSHA, targetBranch)
+	enqResult, err := deps.Queue.Enqueue(ctx, deps.RepoID, pr.Number, pr.HeadSHA, targetBranch, deps.isPriority(pr))
 	if err != nil {
 		result.Errors = append(result.Errors, fmt.Errorf("enqueue PR #%d: %w", pr.Number, err))
 		return
@@ -565,6 +570,11 @@ func reconcileEntries(ctx context.Context, deps *Deps, result *PollResult, openP
 		}
 		if isOpen && holdIfBlocked(ctx, deps, result, &entry) {
 			continue
+		}
+		if prio := deps.isPriority(pr); entry.State == pg.EntryStateQueued && entry.Priority != prio {
+			if err := deps.Queue.SetPriority(ctx, deps.RepoID, entry.PrNumber, prio); err != nil {
+				result.Errors = append(result.Errors, fmt.Errorf("set priority for PR #%d: %w", entry.PrNumber, err))
+			}
 		}
 		finalizeLabeledMerge(ctx, deps, result, &entry, pr)
 		handleSuccessTimeout(ctx, deps, result, &entry, pr)

@@ -75,7 +75,7 @@ func TestProcessCheckStatus_Failure_CancelsAndAdvances(t *testing.T) {
 	entry := testutil.EnqueueTesting(t, svc, repoID, 42, "sha42", "mergesha")
 
 	// PR #43 is next in line.
-	if _, err := svc.Enqueue(ctx, repoID, 43, "sha43", "main"); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 43, "sha43", "main", false); err != nil {
 		t.Fatal(err)
 	}
 

@@ -59,7 +59,7 @@ func TestPollOnce_OpenDependency_WaitsOutsideTheQueue(t *testing.T) {
 // removal, with its auto-merge still scheduled.
 func TestPollOnce_QueuedPRGainsDependency_HeldNotCancelled(t *testing.T) {
 	deps, mock, svc, ctx, repoID := setupPollerTest(t)
-	if _, err := svc.Enqueue(ctx, repoID, 42, "sha42", "main"); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 42, "sha42", "main", false); err != nil {
 		t.Fatal(err)
 	}
 	mockAutomergePRs(mock, makePR(42, "sha42", "main"))

@@ -51,7 +51,7 @@ func StartTesting(ctx context.Context, f forge.Forge, svc *queue.Service, owner,
 			"❌ Removed from merge queue: merge conflict with target branch. Please rebase and re-schedule the merge."),
 			"post comment failed", "pr", entry.PrNumber)
 
-		if _, err := svc.Dequeue(ctx, repoID, entry.PrNumber); err != nil {
+		if err := svc.Dequeue(ctx, repoID, entry.PrNumber); err != nil {
 			return nil, fmt.Errorf("dequeue conflicting PR #%d: %w", entry.PrNumber, err)
 		}
 		SkipPendingMirroredChecks(ctx, f, owner, repo, entry.PrHeadSha)
@@ -70,7 +70,7 @@ func StartTesting(ctx context.Context, f forge.Forge, svc *queue.Service, owner,
 			fmt.Sprintf("❌ Removed from merge queue: failed to create merge branch.\n\n```\n%v\n```", err)),
 			"post comment failed", "pr", entry.PrNumber)
 
-		if _, err := svc.Dequeue(ctx, repoID, entry.PrNumber); err != nil {
+		if err := svc.Dequeue(ctx, repoID, entry.PrNumber); err != nil {
 			return nil, fmt.Errorf("dequeue PR #%d after merge error: %w", entry.PrNumber, err)
 		}
 		SkipPendingMirroredChecks(ctx, f, owner, repo, entry.PrHeadSha)

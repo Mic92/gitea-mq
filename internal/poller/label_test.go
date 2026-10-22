@@ -82,7 +82,7 @@ func TestLabeledStackPRUsesStackBase(t *testing.T) {
 
 func TestLabelRemovalDequeues(t *testing.T) {
 	deps, mock, svc, ctx, repoID := setupLabelTest(t)
-	if _, err := svc.Enqueue(ctx, repoID, 7, "h7", "main"); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 7, "h7", "main", false); err != nil {
 		t.Fatal(err)
 	}
 	mock.ListOpenPRsFn = func(context.Context, string, string) ([]forge.PR, error) {
@@ -100,7 +100,7 @@ func TestLabelRemovalDequeues(t *testing.T) {
 
 func TestFinalizeLabeledStackMerge(t *testing.T) {
 	deps, mock, svc, ctx, repoID := setupLabelTest(t)
-	if _, err := svc.Enqueue(ctx, repoID, 2, "sha2", "main"); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 2, "sha2", "main", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.UpdateState(ctx, repoID, 2, pg.EntryStateSuccess); err != nil {
@@ -229,5 +229,37 @@ func TestStackHint(t *testing.T) {
 	}
 	if hinted["sha3"] != 0 {
 		t.Errorf("non-stack PR must not be hinted: %v", hinted)
+	}
+}
+
+// The priority label decides which queued PR starts first and is re-read on
+// every poll, so adding it just after the merge label still counts.
+func TestPriorityLabel(t *testing.T) {
+	deps, mock, svc, ctx, repoID := setupLabelTest(t)
+	deps.PriorityLabel = "urgent"
+	labels := map[int64][]string{7: {"merge-queue"}, 8: {"merge-queue", "urgent"}}
+	mock.ListOpenPRsFn = func(context.Context, string, string) ([]forge.PR, error) {
+		return []forge.PR{
+			{Number: 7, State: "open", HeadSHA: "h7", BaseBranch: "main", Labels: labels[7]},
+			{Number: 8, State: "open", HeadSHA: "h8", BaseBranch: "main", Labels: labels[8]},
+		}, nil
+	}
+	mock.CreateMergeBranchFn = func(context.Context, string, string, string, string, string) (string, bool, error) {
+		return "m", false, nil
+	}
+
+	if _, err := poller.PollOnce(ctx, deps); err != nil {
+		t.Fatal(err)
+	}
+	if e, _ := svc.GetEntry(ctx, repoID, 8); e == nil || e.State != pg.EntryStateTesting || !e.Priority {
+		t.Fatalf("priority PR #8 should be testing: %+v", e)
+	}
+
+	labels[7] = append(labels[7], "urgent")
+	if _, err := poller.PollOnce(ctx, deps); err != nil {
+		t.Fatal(err)
+	}
+	if e, _ := svc.GetEntry(ctx, repoID, 7); e == nil || !e.Priority {
+		t.Fatalf("label added while queued should promote PR #7: %+v", e)
 	}
 }

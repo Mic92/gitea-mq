@@ -14,7 +14,7 @@ func EnqueueTesting(t *testing.T, svc *queue.Service, repoID, pr int64, headSHA,
 	t.Helper()
 	ctx := t.Context()
 
-	if _, err := svc.Enqueue(ctx, repoID, pr, headSHA, "main"); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, pr, headSHA, "main", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.UpdateState(ctx, repoID, pr, pg.EntryStateTesting); err != nil {

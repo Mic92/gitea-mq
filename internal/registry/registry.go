@@ -38,6 +38,7 @@ type Deps struct {
 	CheckTimeout        time.Duration
 	FallbackChecks      []string
 	MergeLabel          string
+	PriorityLabel       string
 	LabelPrefix         string
 	SuccessTimeout      time.Duration
 	SkipQueueIfUpToDate bool
@@ -174,6 +175,7 @@ func (r *RepoRegistry) Add(ctx context.Context, ref forge.RepoRef) error {
 		ExternalURL:         r.deps.ExternalURL,
 		FallbackChecks:      r.deps.FallbackChecks,
 		MergeLabel:          r.deps.MergeLabel,
+		PriorityLabel:       r.deps.PriorityLabel,
 		LabelPrefix:         r.deps.LabelPrefix,
 		SuccessTimeout:      r.deps.SuccessTimeout,
 		CheckTimeout:        r.deps.CheckTimeout,

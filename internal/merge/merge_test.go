@@ -38,7 +38,7 @@ func TestStartTesting_Success(t *testing.T) {
 		return &gitea.MergeResult{SHA: "mergesha123"}, nil
 	}
 
-	if _, err := svc.Enqueue(ctx, repoID, 42, "prsha", "main"); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 42, "prsha", "main", false); err != nil {
 		t.Fatal(err)
 	}
 	entry, _ := svc.GetEntry(ctx, repoID, 42)
@@ -90,7 +90,7 @@ func TestStartTesting_Conflict(t *testing.T) {
 		return nil, &gitea.MergeConflictError{Base: "main", Head: "prsha", Message: "conflict"}
 	}
 
-	if _, err := svc.Enqueue(ctx, repoID, 42, "prsha", "main"); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 42, "prsha", "main", false); err != nil {
 		t.Fatal(err)
 	}
 	entry, _ := svc.GetEntry(ctx, repoID, 42)
@@ -154,7 +154,7 @@ func TestStartTesting_ClearsStaleStatuses(t *testing.T) {
 		}, nil
 	}
 
-	if _, err := svc.Enqueue(ctx, repoID, 42, "prsha", "main"); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 42, "prsha", "main", false); err != nil {
 		t.Fatal(err)
 	}
 	entry, _ := svc.GetEntry(ctx, repoID, 42)
@@ -230,7 +230,7 @@ func TestStartTesting_NoStaleStatuses(t *testing.T) {
 		}, nil
 	}
 
-	if _, err := svc.Enqueue(ctx, repoID, 42, "prsha", "main"); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 42, "prsha", "main", false); err != nil {
 		t.Fatal(err)
 	}
 	entry, _ := svc.GetEntry(ctx, repoID, 42)
@@ -267,7 +267,7 @@ func TestCleanupStaleBranches_DeletesOrphans(t *testing.T) {
 	branch99 := merge.BranchName(99)
 
 	// Create one active entry with a merge branch.
-	if _, err := svc.Enqueue(ctx, repoID, 10, "sha10", "main"); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 10, "sha10", "main", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.SetMergeBranch(ctx, repoID, 10, branch10, "mergesha10"); err != nil {

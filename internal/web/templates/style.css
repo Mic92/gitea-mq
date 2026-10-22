@@ -22,6 +22,7 @@ a:hover { text-decoration: underline; }
 .bucket-pending { background: #eaeef2; color: #57606a; }
 .bucket-landed  { background: #dafbe1; color: #116329; }
 .bucket-ejected { background: #ffebe9; color: #cf222e; }
+.bucket-priority { background: #fbefff; color: #8250df; }
 .batch-header { padding: 8px 12px; background: #f6f8fa; border-left: 3px solid #9a6700; }
 .check-icon { font-size: 16px; }
 .empty { color: #57606a; font-style: italic; }

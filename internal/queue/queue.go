@@ -21,13 +21,6 @@ type EnqueueResult struct {
 	Entry    pg.QueueEntry
 }
 
-// DequeueResult describes what happened when dequeueing a PR.
-type DequeueResult struct {
-	WasHead bool // true if the removed entry was head-of-queue
-	Found   bool // true if the PR was in the queue
-	Entry   pg.QueueEntry
-}
-
 // Service provides merge queue operations backed by the database.
 type Service struct {
 	pool *pgxpool.Pool
@@ -65,10 +58,10 @@ func (s *Service) withTx(ctx context.Context, fn func(q *pg.Queries) error) erro
 	return tx.Commit(ctx)
 }
 
-// Enqueue adds a PR to the tail of its repo+branch queue.
+// Enqueue adds a PR to its repo+branch queue, ahead of normal PRs if priority.
 // If the PR is already queued, it is a no-op and returns the existing position.
 // Runs in a transaction so the insert and position count are atomic.
-func (s *Service) Enqueue(ctx context.Context, repoID, prNumber int64, prHeadSHA, targetBranch string) (*EnqueueResult, error) {
+func (s *Service) Enqueue(ctx context.Context, repoID, prNumber int64, prHeadSHA, targetBranch string, priority bool) (*EnqueueResult, error) {
 	var result EnqueueResult
 
 	err := s.withTx(ctx, func(q *pg.Queries) error {
@@ -77,42 +70,28 @@ func (s *Service) Enqueue(ctx context.Context, repoID, prNumber int64, prHeadSHA
 			PrNumber:     prNumber,
 			PrHeadSha:    prHeadSHA,
 			TargetBranch: targetBranch,
+			Priority:     priority,
 		})
-		if insertErr != nil {
-			// ON CONFLICT DO NOTHING → pgx returns no rows.
-			// The PR already exists; look it up.
-			existing, getErr := q.GetQueueEntry(ctx, pg.GetQueueEntryParams{
-				RepoID:   repoID,
-				PrNumber: prNumber,
-			})
+		result.IsNew = insertErr == nil
+		if !result.IsNew {
+			// ON CONFLICT DO NOTHING → pgx returns no rows; the PR is already queued.
+			var getErr error
+			entry, getErr = q.GetQueueEntry(ctx, pg.GetQueueEntryParams{RepoID: repoID, PrNumber: prNumber})
 			if getErr != nil {
 				return fmt.Errorf("enqueue PR #%d: insert failed (%w), and lookup failed (%w)", prNumber, insertErr, getErr)
 			}
-
-			pos, posErr := q.CountQueuePosition(ctx, pg.CountQueuePositionParams{
-				RepoID:       repoID,
-				TargetBranch: existing.TargetBranch,
-				PrNumber:     prNumber,
-			})
-			if posErr != nil {
-				return fmt.Errorf("count position for PR #%d: %w", prNumber, posErr)
-			}
-
-			result = EnqueueResult{Position: pos, IsNew: false, Entry: existing}
-
-			return nil
 		}
+		result.Entry = entry
 
-		pos, posErr := q.CountQueuePosition(ctx, pg.CountQueuePositionParams{
+		pos, err := q.CountQueuePosition(ctx, pg.CountQueuePositionParams{
 			RepoID:       repoID,
-			TargetBranch: targetBranch,
+			TargetBranch: entry.TargetBranch,
 			PrNumber:     prNumber,
 		})
-		if posErr != nil {
-			return fmt.Errorf("count position for PR #%d: %w", prNumber, posErr)
+		if err != nil {
+			return fmt.Errorf("count position for PR #%d: %w", prNumber, err)
 		}
-
-		result = EnqueueResult{Position: pos, IsNew: true, Entry: entry}
+		result.Position = pos
 
 		return nil
 	})
@@ -129,49 +108,13 @@ func (s *Service) Enqueue(ctx context.Context, repoID, prNumber int64, prHeadSHA
 	return &result, nil
 }
 
-// Dequeue removes a PR from the queue.
-// Returns whether it was found and whether it was head-of-queue.
-// Runs in a transaction so the head check and delete are atomic.
-func (s *Service) Dequeue(ctx context.Context, repoID, prNumber int64) (*DequeueResult, error) {
-	var result DequeueResult
-
-	err := s.withTx(ctx, func(q *pg.Queries) error {
-		entry, getErr := q.GetQueueEntry(ctx, pg.GetQueueEntryParams{
-			RepoID:   repoID,
-			PrNumber: prNumber,
-		})
-		if getErr != nil {
-			// Not found.
-			result = DequeueResult{Found: false}
-			return nil
-		}
-
-		head, headErr := q.GetHeadOfQueue(ctx, pg.GetHeadOfQueueParams{
-			RepoID:       repoID,
-			TargetBranch: entry.TargetBranch,
-		})
-		wasHead := headErr == nil && head.PrNumber == prNumber
-
-		if err := q.DequeuePR(ctx, pg.DequeuePRParams{
-			RepoID:   repoID,
-			PrNumber: prNumber,
-		}); err != nil {
-			return fmt.Errorf("dequeue PR #%d: %w", prNumber, err)
-		}
-
-		result = DequeueResult{WasHead: wasHead, Found: true, Entry: entry}
-
-		return nil
-	})
-	if err != nil {
-		return nil, err
+// Dequeue removes a PR from the queue; a missing PR is not an error.
+func (s *Service) Dequeue(ctx context.Context, repoID, prNumber int64) error {
+	if err := s.queries().DequeuePR(ctx, pg.DequeuePRParams{RepoID: repoID, PrNumber: prNumber}); err != nil {
+		return fmt.Errorf("dequeue PR #%d: %w", prNumber, err)
 	}
-
-	if result.Found {
-		slog.Info("dequeued PR", "pr", prNumber, "was_head", result.WasHead)
-	}
-
-	return &result, nil
+	slog.Info("dequeued PR", "pr", prNumber)
+	return nil
 }
 
 // Head returns the head-of-queue entry for a (repo, branch), or nil if empty.
@@ -187,68 +130,22 @@ func (s *Service) Head(ctx context.Context, repoID int64, targetBranch string) (
 	return &entry, nil
 }
 
-// Advance removes the head-of-queue and returns the new head (or nil).
-// Runs in a transaction so the delete and new-head lookup are atomic.
-func (s *Service) Advance(ctx context.Context, repoID int64, targetBranch string) (*pg.QueueEntry, error) {
-	var newHead *pg.QueueEntry
-
-	err := s.withTx(ctx, func(q *pg.Queries) error {
-		head, headErr := q.GetHeadOfQueue(ctx, pg.GetHeadOfQueueParams{
-			RepoID:       repoID,
-			TargetBranch: targetBranch,
-		})
-		if headErr != nil {
-			// Empty queue.
-			return nil
-		}
-
-		if err := q.DequeuePR(ctx, pg.DequeuePRParams{
-			RepoID:   repoID,
-			PrNumber: head.PrNumber,
-		}); err != nil {
-			return fmt.Errorf("advance queue: %w", err)
-		}
-
-		next, nextErr := q.GetHeadOfQueue(ctx, pg.GetHeadOfQueueParams{
-			RepoID:       repoID,
-			TargetBranch: targetBranch,
-		})
-		if nextErr != nil {
-			// Queue is now empty.
-			return nil
-		}
-
-		newHead = &next
-
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return newHead, nil
-}
-
-// List returns all entries in a (repo, branch) queue in FIFO order.
-func (s *Service) List(ctx context.Context, repoID int64, targetBranch string) ([]pg.QueueEntry, error) {
-	entries, err := s.queries().ListQueue(ctx, pg.ListQueueParams{
-		RepoID:       repoID,
-		TargetBranch: targetBranch,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("list queue: %w", err)
-	}
-
-	return entries, nil
-}
-
-// Position returns the PR's 1-based position among active entries for its
-// target branch, or 0 when the PR is not queued.
+// Position returns the PR's 1-based position in its target branch queue, or 0
+// when the PR is not queued.
 func (s *Service) Position(ctx context.Context, repoID int64, targetBranch string, prNumber int64) (int64, error) {
 	return s.queries().CountQueuePosition(ctx, pg.CountQueuePositionParams{
 		RepoID:       repoID,
 		TargetBranch: targetBranch,
 		PrNumber:     prNumber,
+	})
+}
+
+// SetPriority re-ranks a still-queued entry; in-flight entries are left alone.
+func (s *Service) SetPriority(ctx context.Context, repoID, prNumber int64, priority bool) error {
+	return s.queries().SetEntryPriority(ctx, pg.SetEntryPriorityParams{
+		RepoID:   repoID,
+		PrNumber: prNumber,
+		Priority: priority,
 	})
 }
 
@@ -308,7 +205,7 @@ func (s *Service) GetCheckStatuses(ctx context.Context, entryID int64) ([]pg.Che
 	return s.queries().GetCheckStatuses(ctx, entryID)
 }
 
-// ListActiveEntries returns all non-terminal entries for a repo.
+// ListActiveEntries returns all entries for a repo in queue order.
 func (s *Service) ListActiveEntries(ctx context.Context, repoID int64) ([]pg.QueueEntry, error) {
 	return s.queries().ListActiveEntriesByRepo(ctx, repoID)
 }
@@ -326,9 +223,4 @@ func (s *Service) GetOrCreateRepo(ctx context.Context, forge, owner, name string
 // removed from the registry to avoid leaving orphaned entries in the DB.
 func (s *Service) DequeueAll(ctx context.Context, repoID int64) error {
 	return s.queries().DequeueAllByRepo(ctx, repoID)
-}
-
-// LoadActiveQueues returns all non-terminal entries across all repos for startup recovery.
-func (s *Service) LoadActiveQueues(ctx context.Context) ([]pg.LoadActiveQueuesRow, error) {
-	return s.queries().LoadActiveQueues(ctx)
 }

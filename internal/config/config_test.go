@@ -1,6 +1,7 @@
 package config
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,6 +113,30 @@ func TestLoad_LabelPrefix(t *testing.T) {
 		}
 		if cfg.LabelPrefix != tc.want {
 			t.Errorf("GITEA_MQ_LABEL_PREFIX=%q: LabelPrefix = %q, want %q", tc.env, cfg.LabelPrefix, tc.want)
+		}
+	}
+}
+
+// The state-label sync strips anything under LabelPrefix, so such a label
+// would be removed on every poll.
+func TestLoad_LabelCollisions(t *testing.T) {
+	for _, tc := range []struct {
+		env     map[string]string
+		wantErr bool
+	}{
+		{map[string]string{"GITEA_MQ_PRIORITY_LABEL": "urgent"}, false},
+		{map[string]string{"GITEA_MQ_PRIORITY_LABEL": "MQ/urgent"}, true},
+		{map[string]string{"GITEA_MQ_MERGE_LABEL": "mq/merge"}, true},
+		{map[string]string{"GITEA_MQ_MERGE_LABEL": "mq/merge", "GITEA_MQ_LABEL_PREFIX": "none"}, false},
+	} {
+		env := maps.Clone(giteaEnv)
+		for k, v := range tc.env {
+			env[k] = v
+		}
+		setEnv(t, env)
+		_, err := Load()
+		if (err != nil) != tc.wantErr {
+			t.Errorf("%v: err = %v, wantErr %v", tc.env, err, tc.wantErr)
 		}
 	}
 }

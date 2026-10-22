@@ -142,6 +142,12 @@ in
       '';
     };
 
+    priorityLabel = lib.mkOption {
+      type = lib.types.str;
+      default = "";
+      description = "Label that sorts a queued PR ahead of unlabelled ones without interrupting running tests. Empty disables.";
+    };
+
     checkTimeout = lib.mkOption {
       type = lib.types.str;
       default = "1h";
@@ -285,6 +291,7 @@ in
         GITEA_MQ_POLL_INTERVAL = cfg.pollInterval;
         GITEA_MQ_IDLE_POLL_INTERVAL = cfg.idlePollInterval;
         GITEA_MQ_CHECK_TIMEOUT = cfg.checkTimeout;
+        GITEA_MQ_PRIORITY_LABEL = cfg.priorityLabel;
         GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE = lib.boolToString cfg.skipQueueIfUpToDate;
         GITEA_MQ_BATCH_MAX = toString cfg.batchMax;
         GITEA_MQ_BISECT_MAX_STEPS = toString cfg.bisectMaxSteps;
