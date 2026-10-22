@@ -37,17 +37,13 @@ func (s *Service) queries() *pg.Queries {
 	return pg.New(s.pool)
 }
 
-// withTx runs fn inside a serializable transaction.
-// Serializable isolation prevents phantom reads and ensures multi-step
-// operations see a consistent snapshot.
+// withTx uses READ COMMITTED with explicit row locks: SERIALIZABLE tracks
+// reads per table on these small tables and aborted unrelated writers.
 func (s *Service) withTx(ctx context.Context, fn func(q *pg.Queries) error) error {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{
-		IsoLevel: pgx.Serializable,
-	})
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-
 	defer func() {
 		_ = tx.Rollback(ctx)
 	}()
@@ -55,7 +51,6 @@ func (s *Service) withTx(ctx context.Context, fn func(q *pg.Queries) error) erro
 	if err := fn(pg.New(tx)); err != nil {
 		return err
 	}
-
 	return tx.Commit(ctx)
 }
 

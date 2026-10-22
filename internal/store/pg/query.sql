@@ -48,8 +48,9 @@ SET error_message = $3
 WHERE repo_id = $1 AND pr_number = $2;
 
 -- name: SaveCheckStatus :exec
+-- Locks the entry first, like the cascade from entry deletes.
 INSERT INTO check_statuses (queue_entry_id, context, state, target_url)
-VALUES ($1, $2, $3, $4)
+SELECT e.id, @context, @state, @target_url FROM queue_entries e WHERE e.id = @queue_entry_id FOR KEY SHARE
 ON CONFLICT (queue_entry_id, context) DO UPDATE
 SET state = EXCLUDED.state, target_url = EXCLUDED.target_url, updated_at = NOW();
 
@@ -70,9 +71,11 @@ WHERE qe.repo_id = $1 AND qe.target_branch = $2
   AND (qe.state = 'queued', NOT qe.priority, qe.enqueued_at, qe.id)
    <= (me.state = 'queued', NOT me.priority, me.enqueued_at, me.id);
 
+-- Multi-row statements lock in id order to avoid deadlocks.
+
 -- name: DequeueAllByRepo :exec
 DELETE FROM queue_entries
-WHERE repo_id = $1;
+WHERE id IN (SELECT l.id FROM queue_entries l WHERE l.repo_id = $1 ORDER BY l.id FOR UPDATE);
 
 -- name: TakeQueuedHead :many
 SELECT q.* FROM queue_entries q
@@ -81,8 +84,9 @@ WHERE q.repo_id = $1 AND q.target_branch = $2 AND q.state = 'queued'
   AND (q.priority OR NOT EXISTS (
     SELECT 1 FROM queue_entries p
     WHERE p.repo_id = $1 AND p.target_branch = $2 AND p.state = 'queued' AND p.priority))
-ORDER BY q.enqueued_at, q.id
-LIMIT $3;
+ORDER BY q.id
+LIMIT $3
+FOR NO KEY UPDATE OF q;
 
 -- name: GetEntriesByIDs :many
 SELECT * FROM queue_entries
@@ -90,7 +94,7 @@ WHERE id = ANY(@ids::bigint[]);
 
 -- name: DeleteEntriesByIDs :exec
 DELETE FROM queue_entries
-WHERE id = ANY(@ids::bigint[]);
+WHERE id IN (SELECT id FROM queue_entries WHERE id = ANY(@ids::bigint[]) ORDER BY id FOR UPDATE);
 
 -- name: SetEntryActiveBatch :exec
 UPDATE queue_entries
@@ -101,11 +105,11 @@ WHERE id = ANY(@ids::bigint[]);
 -- name: ClearEntryMergeBranch :exec
 UPDATE queue_entries
 SET merge_branch_name = NULL, merge_branch_sha = NULL
-WHERE id = ANY(@ids::bigint[]);
+WHERE id IN (SELECT id FROM queue_entries WHERE id = ANY(@ids::bigint[]) ORDER BY id FOR NO KEY UPDATE);
 
 -- name: ClearCheckStatuses :exec
 DELETE FROM check_statuses
-WHERE queue_entry_id = ANY(@ids::bigint[]);
+WHERE id IN (SELECT id FROM check_statuses WHERE queue_entry_id = ANY(@ids::bigint[]) ORDER BY id FOR UPDATE);
 
 -- name: CreateBatch :one
 INSERT INTO batches (repo_id, target_branch, member_ids, current_ids)
@@ -141,4 +145,4 @@ RETURNING *;
 
 -- name: CancelBatchesByRepo :exec
 UPDATE batches SET state = 'cancelled'
-WHERE repo_id = $1 AND state IN ('forming', 'testing');
+WHERE id IN (SELECT l.id FROM batches l WHERE l.repo_id = $1 AND l.state IN ('forming', 'testing') ORDER BY l.id FOR UPDATE);

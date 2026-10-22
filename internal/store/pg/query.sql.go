@@ -13,7 +13,7 @@ import (
 
 const cancelBatchesByRepo = `-- name: CancelBatchesByRepo :exec
 UPDATE batches SET state = 'cancelled'
-WHERE repo_id = $1 AND state IN ('forming', 'testing')
+WHERE id IN (SELECT l.id FROM batches l WHERE l.repo_id = $1 AND l.state IN ('forming', 'testing') ORDER BY l.id FOR UPDATE)
 `
 
 func (q *Queries) CancelBatchesByRepo(ctx context.Context, repoID int64) error {
@@ -23,7 +23,7 @@ func (q *Queries) CancelBatchesByRepo(ctx context.Context, repoID int64) error {
 
 const clearCheckStatuses = `-- name: ClearCheckStatuses :exec
 DELETE FROM check_statuses
-WHERE queue_entry_id = ANY($1::bigint[])
+WHERE id IN (SELECT id FROM check_statuses WHERE queue_entry_id = ANY($1::bigint[]) ORDER BY id FOR UPDATE)
 `
 
 func (q *Queries) ClearCheckStatuses(ctx context.Context, ids []int64) error {
@@ -34,7 +34,7 @@ func (q *Queries) ClearCheckStatuses(ctx context.Context, ids []int64) error {
 const clearEntryMergeBranch = `-- name: ClearEntryMergeBranch :exec
 UPDATE queue_entries
 SET merge_branch_name = NULL, merge_branch_sha = NULL
-WHERE id = ANY($1::bigint[])
+WHERE id IN (SELECT id FROM queue_entries WHERE id = ANY($1::bigint[]) ORDER BY id FOR NO KEY UPDATE)
 `
 
 func (q *Queries) ClearEntryMergeBranch(ctx context.Context, ids []int64) error {
@@ -101,7 +101,7 @@ func (q *Queries) CreateBatch(ctx context.Context, arg CreateBatchParams) (Batch
 
 const deleteEntriesByIDs = `-- name: DeleteEntriesByIDs :exec
 DELETE FROM queue_entries
-WHERE id = ANY($1::bigint[])
+WHERE id IN (SELECT id FROM queue_entries WHERE id = ANY($1::bigint[]) ORDER BY id FOR UPDATE)
 `
 
 func (q *Queries) DeleteEntriesByIDs(ctx context.Context, ids []int64) error {
@@ -110,10 +110,12 @@ func (q *Queries) DeleteEntriesByIDs(ctx context.Context, ids []int64) error {
 }
 
 const dequeueAllByRepo = `-- name: DequeueAllByRepo :exec
+
 DELETE FROM queue_entries
-WHERE repo_id = $1
+WHERE id IN (SELECT l.id FROM queue_entries l WHERE l.repo_id = $1 ORDER BY l.id FOR UPDATE)
 `
 
+// Multi-row statements lock in id order to avoid deadlocks.
 func (q *Queries) DequeueAllByRepo(ctx context.Context, repoID int64) error {
 	_, err := q.db.Exec(ctx, dequeueAllByRepo, repoID)
 	return err
@@ -560,24 +562,25 @@ func (q *Queries) SaveBatch(ctx context.Context, arg SaveBatchParams) (Batch, er
 
 const saveCheckStatus = `-- name: SaveCheckStatus :exec
 INSERT INTO check_statuses (queue_entry_id, context, state, target_url)
-VALUES ($1, $2, $3, $4)
+SELECT e.id, $1, $2, $3 FROM queue_entries e WHERE e.id = $4 FOR KEY SHARE
 ON CONFLICT (queue_entry_id, context) DO UPDATE
 SET state = EXCLUDED.state, target_url = EXCLUDED.target_url, updated_at = NOW()
 `
 
 type SaveCheckStatusParams struct {
-	QueueEntryID int64      `json:"queue_entry_id"`
 	Context      string     `json:"context"`
 	State        CheckState `json:"state"`
 	TargetUrl    string     `json:"target_url"`
+	QueueEntryID int64      `json:"queue_entry_id"`
 }
 
+// Locks the entry first, like the cascade from entry deletes.
 func (q *Queries) SaveCheckStatus(ctx context.Context, arg SaveCheckStatusParams) error {
 	_, err := q.db.Exec(ctx, saveCheckStatus,
-		arg.QueueEntryID,
 		arg.Context,
 		arg.State,
 		arg.TargetUrl,
+		arg.QueueEntryID,
 	)
 	return err
 }
@@ -622,8 +625,9 @@ WHERE q.repo_id = $1 AND q.target_branch = $2 AND q.state = 'queued'
   AND (q.priority OR NOT EXISTS (
     SELECT 1 FROM queue_entries p
     WHERE p.repo_id = $1 AND p.target_branch = $2 AND p.state = 'queued' AND p.priority))
-ORDER BY q.enqueued_at, q.id
+ORDER BY q.id
 LIMIT $3
+FOR NO KEY UPDATE OF q
 `
 
 type TakeQueuedHeadParams struct {
