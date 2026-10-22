@@ -1,5 +1,6 @@
-// Package webhook implements the HTTP handler that receives Gitea webhook
-// events (commit_status) and routes them to the check monitor.
+// Package webhook implements the HTTP handlers that receive forge webhook
+// events: commit statuses are routed to the check monitor, PR-level events
+// trigger a reconcile of the repo's poller.
 package webhook
 
 import (
@@ -9,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/Mic92/gitea-mq/internal/forge"
 	"github.com/Mic92/gitea-mq/internal/monitor"
@@ -60,6 +62,20 @@ func Handler(secret string, repos RepoLookup, queueSvc *queue.Service) http.Hand
 			return
 		}
 
+		switch kind := eventKind(r.Header); {
+		case kind == "" || kind == "status":
+			// Older Gitea versions omit the event header; treat as status.
+		case strings.HasPrefix(kind, "pull_request"):
+			handlePREvent(w, body, repos, kind)
+			return
+		default:
+			// Acknowledge everything else so the forge does not mark the
+			// hook as failing when it is subscribed to more events.
+			slog.Debug("ignoring gitea webhook event", "event", kind)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
 		var event statusEvent
 		if err := json.Unmarshal(body, &event); err != nil {
 			slog.Warn("malformed webhook payload", "error", err)
@@ -98,6 +114,49 @@ func Handler(secret string, repos RepoLookup, queueSvc *queue.Service) http.Hand
 		maybeTriggerPoll(rm, check.State)
 		w.WriteHeader(http.StatusOK)
 	})
+}
+
+// eventKind returns the delivery's event name. Forgejo sends its own header
+// alongside (or, in future, instead of) the Gitea one.
+func eventKind(h http.Header) string {
+	for _, k := range []string{"X-Gitea-Event", "X-Forgejo-Event", "X-Gogs-Event"} {
+		if v := h.Get(k); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// prEvent is the subset of Gitea's pull_request* payloads we need. Every
+// variant (opened, closed, synchronized, label, review, ...) carries the
+// repository.
+type prEvent struct {
+	Action     string `json:"action"`
+	Repository struct {
+		FullName string `json:"full_name"`
+	} `json:"repository"`
+}
+
+// handlePREvent reconciles the repo on any PR-level change. Like the GitHub
+// handler it does not interpret the action: the poller owns the
+// enqueue/dequeue logic and is idempotent, so a spare reconcile is harmless.
+func handlePREvent(w http.ResponseWriter, body []byte, repos RepoLookup, kind string) {
+	var event prEvent
+	if err := json.Unmarshal(body, &event); err != nil {
+		slog.Warn("malformed webhook payload", "event", kind, "error", err)
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if event.Repository.FullName == "" {
+		http.Error(w, "bad request: missing repository", http.StatusBadRequest)
+		return
+	}
+	repoKey := string(forge.KindGitea) + ":" + event.Repository.FullName
+	if rm, ok := repos.LookupMonitor(repoKey); ok && rm.TriggerPoll != nil {
+		slog.Debug("pull request webhook, reconciling", "repo", repoKey, "event", kind, "action", event.Action)
+		rm.TriggerPoll()
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 // routeCheck is the shared status/check-run path for both forges: match the
