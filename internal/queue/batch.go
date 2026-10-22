@@ -10,6 +10,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+var ErrBatchNotLive = errors.New("batch is no longer live")
+
 // FormBatch atomically takes up to max queued entries for (repo, branch),
 // creates a batch row owning them, and marks each entry testing with
 // active_batch_id set. Returns nil when there is nothing queued.
@@ -100,7 +102,8 @@ func nn(s []int64) []int64 {
 	return s
 }
 
-// SaveBatch persists the batch row
+// SaveBatch persists the batch row and deletes removeEntries atomically.
+// Fails with ErrBatchNotLive if the batch was finished or cancelled meanwhile.
 func (s *Service) SaveBatch(ctx context.Context, b *pg.Batch, removeEntries ...int64) error {
 	if len(removeEntries) == 0 {
 		return saveBatch(ctx, s.queries(), b)
@@ -132,6 +135,9 @@ func saveBatch(ctx context.Context, q *pg.Queries, b *pg.Batch) error {
 		Flaky:            b.Flaky,
 		TestingStartedAt: b.TestingStartedAt,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrBatchNotLive
+	}
 	if err != nil {
 		return err
 	}

@@ -136,7 +136,7 @@ UPDATE batches SET
     ff_retries = $10,
     flaky = $11,
     testing_started_at = $12
-WHERE id = $1
+WHERE id = $1 AND state IN ('forming', 'testing')
 RETURNING *;
 
 -- name: CancelBatchesByRepo :exec

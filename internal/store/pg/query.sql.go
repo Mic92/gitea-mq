@@ -502,7 +502,7 @@ UPDATE batches SET
     ff_retries = $10,
     flaky = $11,
     testing_started_at = $12
-WHERE id = $1
+WHERE id = $1 AND state IN ('forming', 'testing')
 RETURNING id, repo_id, target_branch, state, member_ids, current_ids, pending, landed_ids, ejected_ids, branch_name, branch_sha, builds, ff_retries, flaky, created_at, testing_started_at
 `
 
