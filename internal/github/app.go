@@ -13,6 +13,7 @@ import (
 	gh "github.com/google/go-github/v84/github"
 
 	"github.com/Mic92/gitea-mq/internal/forge"
+	"github.com/Mic92/gitea-mq/internal/httpx"
 )
 
 // DefaultBaseURL is github.com's REST root. Tests inject a ghfake URL.
@@ -43,7 +44,7 @@ func NewApp(appID int64, privateKey []byte, baseURL string) (*App, error) {
 	// with a 304, which GitHub does not charge against the rate limit. Both
 	// the app client and every installation client derive from this transport
 	// (installation clients reuse atr.tr), so all reads are covered.
-	caching := newETagCache(http.DefaultTransport, 4096)
+	caching := newETagCache(httpx.NewRetryTransport(http.DefaultTransport), 4096)
 	atr, err := ghinstallation.NewAppsTransport(caching, appID, privateKey)
 	if err != nil {
 		return nil, fmt.Errorf("github app transport: %w", err)
@@ -67,6 +68,7 @@ func NewApp(appID int64, privateKey []byte, baseURL string) (*App, error) {
 // newClient builds a go-github client rooted at baseURL. For github.com the
 // enterprise-URL helper would mangle the path, so it is special-cased.
 func newClient(hc *http.Client, baseURL string) (*gh.Client, error) {
+	hc.Timeout = httpx.DefaultTimeout
 	if baseURL == DefaultBaseURL {
 		return gh.NewClient(hc), nil
 	}

@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/Mic92/gitea-mq/internal/httpx"
 )
 
 // HTTPClient implements Client using Gitea's REST API over HTTP.
@@ -27,9 +29,12 @@ type HTTPClient struct {
 // NewHTTPClient creates a new HTTP-based Gitea API client.
 func NewHTTPClient(baseURL, token string) *HTTPClient {
 	c := &HTTPClient{
-		baseURL:    strings.TrimRight(baseURL, "/"),
-		token:      token,
-		httpClient: &http.Client{},
+		baseURL: strings.TrimRight(baseURL, "/"),
+		token:   token,
+		httpClient: &http.Client{
+			Transport: httpx.NewRetryTransport(nil),
+			Timeout:   httpx.DefaultTimeout,
+		},
 	}
 	// Git auth via extraHeader; see gitcache.go for why.
 	var authFlags []string
