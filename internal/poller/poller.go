@@ -73,7 +73,7 @@ type Deps struct {
 	stateLabels map[int64]string
 	// hintedSHAs dedupes stack-hint statuses per head SHA.
 	hintedSHAs map[string]bool
-	// blockedStatus: head SHA -> last "blocked" description posted.
+	// blockedStatus: head SHA -> last "blocked"/"draft" description posted.
 	blockedStatus map[string]string
 }
 
@@ -310,8 +310,15 @@ func enqueueAutoMergePRs(ctx context.Context, deps *Deps, result *PollResult, op
 	}
 }
 
+const draftStatus = "Draft PR: mark it ready for review to enter the queue"
+
 // enqueuePR adds a PR to the queue for targetBranch once its own CI is green.
 func enqueuePR(ctx context.Context, deps *Deps, result *PollResult, pr *forge.PR, targetBranch, source string) {
+	if pr.Draft {
+		markWaiting(ctx, deps, pr.Number, pr.HeadSHA, draftStatus)
+		return
+	}
+
 	res, err := prCheckResult(ctx, deps, pr, targetBranch)
 	if err != nil {
 		result.Errors = append(result.Errors, fmt.Errorf("check CI status for PR #%d: %w", pr.Number, err))
@@ -546,6 +553,15 @@ func reconcileEntries(ctx context.Context, deps *Deps, result *PollResult, openP
 				when:  !pr.AutoMergeEnabled && !labeled,
 				label: "cancelled",
 				opts:  removeOpts{logMsg: "removed PR due to merge intent cancellation"},
+			},
+			{
+				when:  isOpen && pr.Draft,
+				label: "draft",
+				opts: removeOpts{
+					comment: "⏸️ Removed from merge queue: PR was converted to a draft. It re-enters once marked ready.",
+					advance: true,
+					logMsg:  "removed PR converted to draft",
+				},
 			},
 		}
 
@@ -824,7 +840,11 @@ func Run(ctx context.Context, deps *Deps, interval, idleInterval time.Duration) 
 
 // markBlocked posts the blocked status once per head SHA and description.
 func markBlocked(ctx context.Context, deps *Deps, number int64, sha string, blockers []forge.Dependency) {
-	desc := forge.BlockedStatus(blockers, deps.Owner, deps.Repo)
+	markWaiting(ctx, deps, number, sha, forge.BlockedStatus(blockers, deps.Owner, deps.Repo))
+}
+
+// markWaiting posts a pending status once per head SHA and description.
+func markWaiting(ctx context.Context, deps *Deps, number int64, sha, desc string) {
 	if deps.blockedStatus[sha] == desc {
 		return
 	}
@@ -832,7 +852,7 @@ func markBlocked(ctx context.Context, deps *Deps, number int64, sha string, bloc
 	if err := deps.Forge.SetMQStatus(ctx, deps.Owner, deps.Repo, sha, forge.MQStatus{
 		State: pg.CheckStatePending, Description: desc, TargetURL: targetURL,
 	}); err != nil {
-		slog.Warn("set blocked status failed", "pr", number, "error", err)
+		slog.Warn("set waiting status failed", "pr", number, "error", err)
 		return
 	}
 	if deps.blockedStatus == nil {
