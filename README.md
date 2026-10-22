@@ -51,19 +51,22 @@ gitea-mq can manage Gitea repos, GitHub repos, or both from one process. At
 least one backend must be configured. All configuration is via environment
 variables.
 
+Variables marked `/ _FILE` can instead be read from the file named by
+`<VAR>_FILE`, keeping secrets out of the process environment.
+
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `GITEA_MQ_GITEA_URL` | gitea | - | Gitea instance URL. Setting this enables the Gitea backend. |
-| `GITEA_MQ_GITEA_TOKEN` | gitea | - | API token with `repository` and `issue` read/write scopes |
+| `GITEA_MQ_GITEA_TOKEN` / `_FILE` | gitea | - | API token with `repository` and `issue` read/write scopes |
 | `GITEA_MQ_REPOS` | no | - | Comma-separated `owner/repo` list of Gitea repos (optional when `GITEA_MQ_TOPIC` is set) |
 | `GITEA_MQ_TOPIC` | no | - | Discover Gitea repos by topic instead of (or in addition to) a static list |
-| `GITEA_MQ_WEBHOOK_SECRET` | gitea | - | Shared secret for the Gitea webhook HMAC |
+| `GITEA_MQ_WEBHOOK_SECRET` / `_FILE` | gitea | - | Shared secret for the Gitea webhook HMAC |
 | `GITEA_MQ_GITHUB_APP_ID` | github | - | GitHub App ID. Setting this enables the GitHub backend. |
 | `GITEA_MQ_GITHUB_PRIVATE_KEY` / `_FILE` | github | - | PEM-encoded App private key, or path to a file containing it |
-| `GITEA_MQ_GITHUB_WEBHOOK_SECRET` | github | - | Webhook secret configured on the GitHub App |
+| `GITEA_MQ_GITHUB_WEBHOOK_SECRET` / `_FILE` | github | - | Webhook secret configured on the GitHub App |
 | `GITEA_MQ_GITHUB_REPOS` | no | - | Comma-separated `owner/repo` list of GitHub repos to manage in addition to all repos the App is installed on |
 | `GITEA_MQ_GITHUB_POLL_INTERVAL` | no | `GITEA_MQ_POLL_INTERVAL` | Override the reconcile poll interval for GitHub (its rate limit is much higher) |
-| `GITEA_MQ_DATABASE_URL` | yes | - | PostgreSQL connection string |
+| `GITEA_MQ_DATABASE_URL` / `_FILE` | yes | - | PostgreSQL connection string |
 | `GITEA_MQ_LISTEN_ADDR` | no | `:8080` | HTTP listen address |
 | `GITEA_MQ_WEBHOOK_PATH` | no | `/webhook` | Legacy alias for the Gitea webhook endpoint (the canonical path is `/webhook/gitea`) |
 | `GITEA_MQ_EXTERNAL_URL` | yes | - | URL where Gitea can reach this service (used for webhook auto-setup and commit status target URLs) |

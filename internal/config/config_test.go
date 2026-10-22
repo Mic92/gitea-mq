@@ -280,3 +280,23 @@ func TestLoad_GiteaOnlyStillWorks(t *testing.T) {
 		t.Errorf("Repos() = %+v", cfg.Repos())
 	}
 }
+
+func TestLoad_SecretFromFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(path, []byte("tok\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	setEnv(t, with(map[string]string{
+		"GITEA_MQ_GITEA_URL":        "https://gitea.example.com",
+		"GITEA_MQ_GITEA_TOKEN_FILE": path,
+		"GITEA_MQ_WEBHOOK_SECRET":   "sec",
+		"GITEA_MQ_REPOS":            "org/app",
+	}))
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Gitea.Token != "tok" {
+		t.Errorf("Token = %q, want tok", cfg.Gitea.Token)
+	}
+}
