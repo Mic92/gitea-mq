@@ -3,6 +3,7 @@ package poller_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -266,6 +267,14 @@ func TestPollOnce_Reconcile(t *testing.T) {
 			name:     "automerge_cancelled",
 			openPRs:  []gitea.PR{makePR(42, "sha42", "main")},
 			timeline: cancelledTimeline(),
+		},
+		{
+			// Intent is kept (no cancel) so the PR re-enters once ready.
+			name:        "converted_to_draft",
+			openPRs:     []gitea.PR{draftPR(42, "sha42", "main")},
+			timeline:    automergeTimeline(),
+			wantAdvance: true,
+			wantComment: true,
 		},
 	}
 
@@ -667,5 +676,53 @@ func TestRun_TriggerPollsIdleRepo(t *testing.T) {
 	// Startup poll + triggered poll.
 	if listed != 2 {
 		t.Fatalf("triggered idle repo polled forge %d times, want 2", listed)
+	}
+}
+
+func draftPR(index int64, headSHA, baseBranch string) gitea.PR {
+	pr := makePR(index, headSHA, baseBranch)
+	pr.Draft = true
+	return pr
+}
+
+// A draft with armed automerge or the merge label must not land; it waits
+// with an explanatory status and is queued once marked ready.
+func TestPollOnce_DraftNotEnqueued(t *testing.T) {
+	deps, mock, svc, ctx, repoID := setupPollerTest(t)
+	mockAutomergePRs(mock, draftPR(42, "sha42", "main"))
+
+	for range 2 {
+		result, err := poller.PollOnce(ctx, deps)
+		if err != nil {
+			t.Fatalf("PollOnce: %v", err)
+		}
+		if len(result.Enqueued) != 0 {
+			t.Fatalf("draft PR enqueued: %v", result.Enqueued)
+		}
+	}
+	if entry, _ := svc.GetEntry(ctx, repoID, 42); entry != nil {
+		t.Fatalf("draft PR has queue entry %+v", entry)
+	}
+	calls := mock.CallsTo("CreateCommitStatus")
+	if len(calls) != 1 {
+		t.Fatalf("expected one waiting status across polls, got %d", len(calls))
+	}
+	if st := calls[0].Args[3].(gitea.CommitStatus); st.State != "pending" || !strings.Contains(st.Description, "Draft") {
+		t.Fatalf("unexpected status %+v", st)
+	}
+	if n := len(mock.CallsTo("CancelAutoMerge")); n != 0 {
+		t.Fatalf("draft must keep merge intent, got %d CancelAutoMerge calls", n)
+	}
+
+	mockAutomergePRs(mock, makePR(42, "sha42", "main"))
+	mock.MergeBranchesFn = func(_ context.Context, _, _, _, _, _ string) (*gitea.MergeResult, error) {
+		return &gitea.MergeResult{SHA: "merge-sha"}, nil
+	}
+	result, err := poller.PollOnce(ctx, deps)
+	if err != nil {
+		t.Fatalf("PollOnce: %v", err)
+	}
+	if len(result.Enqueued) != 1 {
+		t.Fatalf("ready PR not enqueued: %v", result.Enqueued)
 	}
 }

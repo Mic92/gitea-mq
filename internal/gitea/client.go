@@ -23,6 +23,8 @@ type PR struct {
 	Base      *PRRef     `json:"base"`
 	HTMLURL   string     `json:"html_url"`
 	Labels    []*Label   `json:"labels"`
+	// Draft reflects Gitea's work-in-progress title prefixes (e.g. "WIP:").
+	Draft bool `json:"draft"`
 }
 
 // Label represents an issue/PR label from the Gitea API (subset of fields).
