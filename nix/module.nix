@@ -326,15 +326,16 @@ in
 
       path = [ pkgs.git ];
 
-      # Script wrapper to load secrets from credential files into env vars.
+      # Point the _FILE variables at the systemd credentials so secret values
+      # never enter the process environment.
       script = ''
         ${lib.optionalString giteaEnabled ''
-          export GITEA_MQ_GITEA_TOKEN="$(< "$CREDENTIALS_DIRECTORY/gitea-token")"
-          export GITEA_MQ_WEBHOOK_SECRET="$(< "$CREDENTIALS_DIRECTORY/webhook-secret")"
+          export GITEA_MQ_GITEA_TOKEN_FILE="$CREDENTIALS_DIRECTORY/gitea-token"
+          export GITEA_MQ_WEBHOOK_SECRET_FILE="$CREDENTIALS_DIRECTORY/webhook-secret"
         ''}
         ${lib.optionalString githubEnabled ''
           export GITEA_MQ_GITHUB_PRIVATE_KEY_FILE="$CREDENTIALS_DIRECTORY/github-private-key"
-          export GITEA_MQ_GITHUB_WEBHOOK_SECRET="$(< "$CREDENTIALS_DIRECTORY/github-webhook-secret")"
+          export GITEA_MQ_GITHUB_WEBHOOK_SECRET_FILE="$CREDENTIALS_DIRECTORY/github-webhook-secret"
         ''}
         exec ${lib.getExe cfg.package}
       '';

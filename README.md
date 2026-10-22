@@ -51,19 +51,26 @@ gitea-mq can manage Gitea repos, GitHub repos, or both from one process. At
 least one backend must be configured. All configuration is via environment
 variables.
 
+Every secret marked `/ _FILE` in the table below can be read from a file
+instead by appending `_FILE` to the variable name, e.g.
+`GITEA_MQ_GITEA_TOKEN_FILE=/run/secrets/gitea-token`. This keeps the value out
+of the process environment, where `docker inspect`, `/proc/<pid>/environ` and
+child processes can see it. Trailing newlines in the file are ignored (the PEM
+key is read verbatim). If both forms are set, the plain variable wins.
+
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `GITEA_MQ_GITEA_URL` | gitea | - | Gitea instance URL. Setting this enables the Gitea backend. |
-| `GITEA_MQ_GITEA_TOKEN` | gitea | - | API token with `repository` and `issue` read/write scopes |
+| `GITEA_MQ_GITEA_TOKEN` / `_FILE` | gitea | - | API token with `repository` and `issue` read/write scopes, or path to a file containing it |
 | `GITEA_MQ_REPOS` | no | - | Comma-separated `owner/repo` list of Gitea repos (optional when `GITEA_MQ_TOPIC` is set) |
 | `GITEA_MQ_TOPIC` | no | - | Discover Gitea repos by topic instead of (or in addition to) a static list |
-| `GITEA_MQ_WEBHOOK_SECRET` | gitea | - | Shared secret for the Gitea webhook HMAC |
+| `GITEA_MQ_WEBHOOK_SECRET` / `_FILE` | gitea | - | Shared secret for the Gitea webhook HMAC, or path to a file containing it |
 | `GITEA_MQ_GITHUB_APP_ID` | github | - | GitHub App ID. Setting this enables the GitHub backend. |
 | `GITEA_MQ_GITHUB_PRIVATE_KEY` / `_FILE` | github | - | PEM-encoded App private key, or path to a file containing it |
-| `GITEA_MQ_GITHUB_WEBHOOK_SECRET` | github | - | Webhook secret configured on the GitHub App |
+| `GITEA_MQ_GITHUB_WEBHOOK_SECRET` / `_FILE` | github | - | Webhook secret configured on the GitHub App, or path to a file containing it |
 | `GITEA_MQ_GITHUB_REPOS` | no | - | Comma-separated `owner/repo` list of GitHub repos to manage in addition to all repos the App is installed on |
 | `GITEA_MQ_GITHUB_POLL_INTERVAL` | no | `GITEA_MQ_POLL_INTERVAL` | Override the reconcile poll interval for GitHub (its rate limit is much higher) |
-| `GITEA_MQ_DATABASE_URL` | yes | - | PostgreSQL connection string |
+| `GITEA_MQ_DATABASE_URL` / `_FILE` | yes | - | PostgreSQL connection string, or path to a file containing it |
 | `GITEA_MQ_LISTEN_ADDR` | no | `:8080` | HTTP listen address |
 | `GITEA_MQ_WEBHOOK_PATH` | no | `/webhook` | Legacy alias for the Gitea webhook endpoint (the canonical path is `/webhook/gitea`) |
 | `GITEA_MQ_EXTERNAL_URL` | yes | - | URL where Gitea can reach this service (used for webhook auto-setup and commit status target URLs) |
@@ -295,10 +302,16 @@ services:
       GITEA_MQ_DATABASE_URL: postgres://gitea-mq:changeme@db/gitea-mq?sslmode=disable
       GITEA_MQ_EXTERNAL_URL: https://mq.example.com
       GITEA_MQ_GITEA_URL: https://gitea.example.com
-      GITEA_MQ_GITEA_TOKEN: ...
-      GITEA_MQ_WEBHOOK_SECRET: ...
+      GITEA_MQ_GITEA_TOKEN_FILE: /run/secrets/gitea_token
+      GITEA_MQ_WEBHOOK_SECRET_FILE: /run/secrets/webhook_secret
       GITEA_MQ_TOPIC: merge-queue
+    secrets: [gitea_token, webhook_secret]
     volumes: [cache:/var/cache/gitea-mq]
+secrets:
+  gitea_token:
+    file: ./secrets/gitea_token
+  webhook_secret:
+    file: ./secrets/webhook_secret
 volumes:
   db:
   cache:
