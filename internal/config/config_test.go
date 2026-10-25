@@ -280,3 +280,69 @@ func TestLoad_GiteaOnlyStillWorks(t *testing.T) {
 		t.Errorf("Repos() = %+v", cfg.Repos())
 	}
 }
+
+func TestLoad_SecretsFromFiles(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, content string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	setEnv(t, map[string]string{
+		"GITEA_MQ_EXTERNAL_URL":               "https://mq.example.com",
+		"GITEA_MQ_DATABASE_URL_FILE":          write("db", "postgres://from-file\n"),
+		"GITEA_MQ_GITEA_URL":                  "https://gitea.example.com",
+		"GITEA_MQ_GITEA_TOKEN_FILE":           write("token", "tok-from-file\n"),
+		"GITEA_MQ_WEBHOOK_SECRET_FILE":        write("hook", "hook-from-file\r\n"),
+		"GITEA_MQ_REPOS":                      "org/app",
+		"GITEA_MQ_GITHUB_APP_ID":              "1",
+		"GITEA_MQ_GITHUB_PRIVATE_KEY":         "PEMDATA",
+		"GITEA_MQ_GITHUB_WEBHOOK_SECRET_FILE": write("ghhook", "gh-from-file"),
+	})
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	for _, c := range []struct{ name, got, want string }{
+		{"DatabaseURL", cfg.DatabaseURL, "postgres://from-file"},
+		{"Gitea.Token", cfg.Gitea.Token, "tok-from-file"},
+		{"Gitea.WebhookSecret", cfg.Gitea.WebhookSecret, "hook-from-file"},
+		{"Github.WebhookSecret", cfg.Github.WebhookSecret, "gh-from-file"},
+	} {
+		if c.got != c.want {
+			t.Errorf("%s = %q, want %q", c.name, c.got, c.want)
+		}
+	}
+}
+
+func TestLoad_SecretEnvWinsOverFile(t *testing.T) {
+	setEnv(t, with(map[string]string{
+		"GITEA_MQ_GITEA_URL":        "https://gitea.example.com",
+		"GITEA_MQ_GITEA_TOKEN":      "tok-env",
+		"GITEA_MQ_GITEA_TOKEN_FILE": "/nonexistent",
+		"GITEA_MQ_WEBHOOK_SECRET":   "sec",
+		"GITEA_MQ_REPOS":            "org/app",
+	}))
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Gitea.Token != "tok-env" {
+		t.Errorf("Token = %q, want tok-env", cfg.Gitea.Token)
+	}
+}
+
+func TestLoad_SecretFileUnreadable(t *testing.T) {
+	setEnv(t, with(map[string]string{
+		"GITEA_MQ_GITEA_URL":        "https://gitea.example.com",
+		"GITEA_MQ_GITEA_TOKEN_FILE": filepath.Join(t.TempDir(), "missing"),
+		"GITEA_MQ_WEBHOOK_SECRET":   "sec",
+		"GITEA_MQ_REPOS":            "org/app",
+	}))
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "GITEA_MQ_GITEA_TOKEN_FILE") {
+		t.Fatalf("expected GITEA_MQ_GITEA_TOKEN_FILE error, got %v", err)
+	}
+}
