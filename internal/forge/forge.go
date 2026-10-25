@@ -125,6 +125,8 @@ type PR struct {
 	HTMLURL          string
 	AutoMergeEnabled bool
 	Labels           []string
+	// Draft is set for draft / work-in-progress PRs, which are never queued.
+	Draft bool
 }
 
 // HasLabel reports whether the PR carries the given label (case-insensitive,

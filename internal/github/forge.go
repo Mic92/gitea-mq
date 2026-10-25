@@ -67,6 +67,7 @@ func toForgePR(p *gh.PullRequest) forge.PR {
 		BaseBranch:       p.GetBase().GetRef(),
 		HTMLURL:          p.GetHTMLURL(),
 		AutoMergeEnabled: p.GetAutoMerge() != nil,
+		Draft:            p.GetDraft(),
 	}
 }
 

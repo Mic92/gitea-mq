@@ -108,6 +108,14 @@ Trade-offs and prerequisites:
 - If the forge does not detect a PR as merged within ~10s of the fast-forward,
   gitea-mq closes it with a "Merged as `<sha>`" comment.
 
+## Draft PRs
+
+Draft PRs (GitHub drafts, or a Gitea title starting with a work-in-progress
+prefix such as `WIP:`) are never queued, even when automerge is armed or the
+merge label is set. Their `gitea-mq` status explains why; the merge intent is
+kept, so the PR enters the queue once it is marked ready. A queued PR that is
+converted back to a draft is removed from the queue, again keeping its intent.
+
 ## Issue dependencies (Gitea)
 
 Gitea refuses to merge a PR with an open dependency, but batches land by

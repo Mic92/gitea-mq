@@ -98,6 +98,7 @@ func toForgePR(pr *PR, autoMerge bool) forge.PR {
 		Merged:           pr.HasMerged,
 		HTMLURL:          pr.HTMLURL,
 		AutoMergeEnabled: autoMerge,
+		Draft:            pr.Draft,
 	}
 	if pr.User != nil {
 		out.AuthorLogin = pr.User.Login
