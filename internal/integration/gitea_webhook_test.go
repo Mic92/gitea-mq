@@ -20,7 +20,8 @@ func TestGiteaEnsureWebhookSubscribesPREvents(t *testing.T) {
 	api := testutil.NewGiteaAPI(giteaServer.URL)
 	api.CreateToken(t)
 	const repoName = "webhook-events"
-	api.MustDo(t, "POST", "/user/repos", `{"name": "`+repoName+`", "auto_init": true, "default_branch": "main"}`)
+	// Webhook setup needs no commits; avoid running generated hooks in the Nix sandbox.
+	api.MustDo(t, "POST", "/user/repos", `{"name": "`+repoName+`", "auto_init": false, "default_branch": "main"}`)
 
 	client := gitea.NewHTTPClient(giteaServer.URL, api.Token)
 	const url = "https://mq.example.com/webhook/gitea"
