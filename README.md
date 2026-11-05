@@ -111,6 +111,11 @@ Trade-offs and prerequisites:
 - If the forge does not detect a PR as merged within ~10s of the fast-forward,
   gitea-mq closes it with a "Merged as `<sha>`" comment.
 
+## Draft PRs
+
+Draft PRs (including Gitea `WIP:` titles) are not queued until marked ready.
+Converting a queued PR to a draft removes it from the queue.
+
 ## Issue dependencies (Gitea)
 
 Gitea refuses to merge a PR with an open dependency, but batches land by

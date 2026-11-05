@@ -125,6 +125,7 @@ type PR struct {
 	HTMLURL          string
 	AutoMergeEnabled bool
 	Labels           []string
+	Draft            bool
 }
 
 // HasLabel reports whether the PR carries the given label (case-insensitive,
