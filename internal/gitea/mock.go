@@ -21,36 +21,37 @@ type MockClient struct {
 	// Response configurators. Set these before calling the method under test.
 	// Each returns (result, error). If nil, the method returns zero value + nil.
 
-	SearchReposByTopicFn      func(ctx context.Context, topic string) ([]Repo, error)
-	ListOpenPRsFn             func(ctx context.Context, owner, repo string) ([]PR, error)
-	GetPRFn                   func(ctx context.Context, owner, repo string, index int64) (*PR, error)
-	GetPRTimelineFn           func(ctx context.Context, owner, repo string, index int64) ([]TimelineComment, error)
-	GetCombinedCommitStatusFn func(ctx context.Context, owner, repo, ref string) (*CombinedStatus, error)
-	CreateCommitStatusFn      func(ctx context.Context, owner, repo, sha string, status CommitStatus) error
-	CreateCommentFn           func(ctx context.Context, owner, repo string, index int64, body string) error
-	CancelAutoMergeFn         func(ctx context.Context, owner, repo string, index int64) error
-	MergePRFn                 func(ctx context.Context, owner, repo string, index int64) error
-	RemoveIssueLabelFn        func(ctx context.Context, owner, repo string, index, labelID int64) error
-	ListRepoLabelsFn          func(ctx context.Context, owner, repo string) ([]Label, error)
-	CreateRepoLabelFn         func(ctx context.Context, owner, repo, name, color string, exclusive bool) (*Label, error)
-	DeleteRepoLabelFn         func(ctx context.Context, owner, repo string, labelID int64) error
-	AddIssueLabelsFn          func(ctx context.Context, owner, repo string, index int64, labelIDs []int64) ([]Label, error)
-	GetBranchProtectionFn     func(ctx context.Context, owner, repo, branch string) (*BranchProtection, error)
-	ListBranchesFn            func(ctx context.Context, owner, repo string) ([]Branch, error)
-	CreateBranchFn            func(ctx context.Context, owner, repo, name, target string) error
-	DeleteBranchFn            func(ctx context.Context, owner, repo, name string) error
-	CompareCommitsFn          func(ctx context.Context, owner, repo, base, head string) (*Compare, error)
-	MergeBranchesFn           func(ctx context.Context, owner, repo, base, head, branchName string) (*MergeResult, error)
-	StackMergesFn             func(ctx context.Context, owner, repo, base string, heads []string, branch string) (string, []StackStep, error)
-	FastForwardRefFn          func(ctx context.Context, owner, repo, branch, sha string) error
-	EditIssueStateFn          func(ctx context.Context, owner, repo string, index int64, state string) error
-	ListBranchProtectionsFn   func(ctx context.Context, owner, repo string) ([]BranchProtection, error)
-	EditBranchProtectionFn    func(ctx context.Context, owner, repo, name string, opts EditBranchProtectionOpts) error
-	ListWebhooksFn            func(ctx context.Context, owner, repo string) ([]Webhook, error)
-	CreateWebhookFn           func(ctx context.Context, owner, repo string, opts CreateWebhookOpts) error
-	ServerVersionFn           func(ctx context.Context) (string, error)
-	IsForgejoFn               func(ctx context.Context) (bool, error)
-	ListIssueDependenciesFn   func(ctx context.Context, owner, repo string, index int64) ([]Issue, error)
+	SearchReposByTopicFn        func(ctx context.Context, topic string) ([]Repo, error)
+	ListOpenPRsFn               func(ctx context.Context, owner, repo string) ([]PR, error)
+	GetPRFn                     func(ctx context.Context, owner, repo string, index int64) (*PR, error)
+	GetPRTimelineFn             func(ctx context.Context, owner, repo string, index int64) ([]TimelineComment, error)
+	GetCombinedCommitStatusFn   func(ctx context.Context, owner, repo, ref string) (*CombinedStatus, error)
+	CreateCommitStatusFn        func(ctx context.Context, owner, repo, sha string, status CommitStatus) error
+	CreateCommentFn             func(ctx context.Context, owner, repo string, index int64, body string) error
+	CancelAutoMergeFn           func(ctx context.Context, owner, repo string, index int64) error
+	MergePRFn                   func(ctx context.Context, owner, repo string, index int64) error
+	RemoveIssueLabelFn          func(ctx context.Context, owner, repo string, index, labelID int64) error
+	ListRepoLabelsFn            func(ctx context.Context, owner, repo string) ([]Label, error)
+	CreateRepoLabelFn           func(ctx context.Context, owner, repo, name, color string, exclusive bool) (*Label, error)
+	DeleteRepoLabelFn           func(ctx context.Context, owner, repo string, labelID int64) error
+	AddIssueLabelsFn            func(ctx context.Context, owner, repo string, index int64, labelIDs []int64) ([]Label, error)
+	GetBranchProtectionFn       func(ctx context.Context, owner, repo, branch string) (*BranchProtection, error)
+	ListBranchesFn              func(ctx context.Context, owner, repo string) ([]Branch, error)
+	CreateBranchFn              func(ctx context.Context, owner, repo, name, target string) error
+	DeleteBranchFn              func(ctx context.Context, owner, repo, name string) error
+	CompareCommitsFn            func(ctx context.Context, owner, repo, base, head string) (*Compare, error)
+	MergeBranchesFn             func(ctx context.Context, owner, repo, base, head, branchName string) (*MergeResult, error)
+	StackMergesFn               func(ctx context.Context, owner, repo, base string, heads []string, branch string) (string, []StackStep, error)
+	FastForwardRefFn            func(ctx context.Context, owner, repo, branch, sha string) error
+	EditIssueStateFn            func(ctx context.Context, owner, repo string, index int64, state string) error
+	ListBranchProtectionsFn     func(ctx context.Context, owner, repo string) ([]BranchProtection, error)
+	EditBranchProtectionFn      func(ctx context.Context, owner, repo, name string, opts EditBranchProtectionOpts) error
+	ListWebhooksFn              func(ctx context.Context, owner, repo string) ([]Webhook, error)
+	CreateWebhookFn             func(ctx context.Context, owner, repo string, opts CreateWebhookOpts) error
+	ServerVersionFn             func(ctx context.Context) (string, error)
+	IsForgejoFn                 func(ctx context.Context) (bool, error)
+	ListIssueDependenciesFn     func(ctx context.Context, owner, repo string, index int64) ([]Issue, error)
+	GetCollaboratorPermissionFn func(ctx context.Context, owner, repo, user string) (string, error)
 }
 
 // Ensure MockClient implements Client at compile time.
@@ -382,4 +383,14 @@ func (m *MockClient) ListIssueDependencies(ctx context.Context, owner, repo stri
 	}
 
 	return nil, nil
+}
+
+func (m *MockClient) GetCollaboratorPermission(ctx context.Context, owner, repo, user string) (string, error) {
+	m.record("GetCollaboratorPermission", owner, repo, user)
+
+	if m.GetCollaboratorPermissionFn != nil {
+		return m.GetCollaboratorPermissionFn(ctx, owner, repo, user)
+	}
+
+	return "", nil
 }

@@ -2,6 +2,7 @@ package poller_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -261,5 +262,54 @@ func TestPriorityLabel(t *testing.T) {
 	}
 	if e, _ := svc.GetEntry(ctx, repoID, 7); e == nil || !e.Priority {
 		t.Fatalf("label added while queued should promote PR #7: %+v", e)
+	}
+}
+
+func TestMergeLabelWithoutMergeRightsIsRemoved(t *testing.T) {
+	deps, mock, svc, ctx, repoID := setupLabelTest(t)
+	mock.ListOpenPRsFn = func(context.Context, string, string) ([]forge.PR, error) {
+		return []forge.PR{{Number: 7, State: "open", HeadSHA: "h7", BaseBranch: "main", Labels: []string{"merge-queue"}}}, nil
+	}
+	mock.MergeLabelAdderFn = func(context.Context, string, string, int64, string) (string, bool, error) {
+		return "mallory", false, nil
+	}
+
+	if _, err := poller.PollOnce(ctx, deps); err != nil {
+		t.Fatal(err)
+	}
+
+	if e, _ := svc.GetEntry(ctx, repoID, 7); e != nil {
+		t.Fatalf("unauthorized label must not enqueue: %+v", e)
+	}
+	if rm := mock.CallsTo("RemoveLabel"); len(rm) != 1 || rm[0].Args[3] != "merge-queue" {
+		t.Fatalf("RemoveLabel calls = %+v", rm)
+	}
+	if c := mock.CallsTo("Comment"); len(c) != 1 || !strings.Contains(c[0].Args[3].(string), "@mallory") {
+		t.Fatalf("Comment calls = %+v", c)
+	}
+}
+
+// A failed permission lookup must not strip a maintainer's label.
+func TestMergeLabelLookupErrorKeepsLabel(t *testing.T) {
+	deps, mock, svc, ctx, repoID := setupLabelTest(t)
+	mock.ListOpenPRsFn = func(context.Context, string, string) ([]forge.PR, error) {
+		return []forge.PR{{Number: 7, State: "open", HeadSHA: "h7", BaseBranch: "main", Labels: []string{"merge-queue"}}}, nil
+	}
+	mock.MergeLabelAdderFn = func(context.Context, string, string, int64, string) (string, bool, error) {
+		return "", false, errors.New("boom")
+	}
+
+	res, err := poller.PollOnce(ctx, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Errors) == 0 {
+		t.Fatal("expected lookup error in result")
+	}
+	if e, _ := svc.GetEntry(ctx, repoID, 7); e != nil {
+		t.Fatalf("must not enqueue on lookup error: %+v", e)
+	}
+	if n := len(mock.CallsTo("RemoveLabel")); n != 0 {
+		t.Fatalf("RemoveLabel called %d times", n)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -302,6 +303,33 @@ func (f *giteaForge) RemoveLabel(ctx context.Context, owner, name string, number
 		}
 	}
 	return nil
+}
+
+// The timeline also records labels set at PR creation, by the PR author.
+func (f *giteaForge) MergeLabelAdder(ctx context.Context, owner, name string, number int64, label string) (string, bool, error) {
+	timeline, err := f.client.GetPRTimeline(ctx, owner, name, number)
+	if err != nil {
+		return "", false, err
+	}
+	login := lastLabelAdder(timeline, label)
+	if login == "" {
+		return "", false, nil
+	}
+	perm, err := f.client.GetCollaboratorPermission(ctx, owner, name, login)
+	if err != nil {
+		return login, false, err
+	}
+	return login, perm == "write" || perm == "admin" || perm == "owner", nil
+}
+
+func lastLabelAdder(timeline []TimelineComment, label string) string {
+	for _, c := range slices.Backward(timeline) {
+		// Body "1" marks an addition.
+		if c.Type == "label" && c.Body == "1" && c.Label != nil && c.User != nil && strings.EqualFold(c.Label.Name, label) {
+			return c.User.Login
+		}
+	}
+	return ""
 }
 
 func (f *giteaForge) Comment(ctx context.Context, owner, name string, number int64, body string) error {

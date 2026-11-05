@@ -45,6 +45,7 @@ type MockForge struct {
 	OpenDependenciesFn  func(ctx context.Context, owner, name string, number int64) ([]Dependency, error)
 	ApplyLabelsFn       func(ctx context.Context, owner, name string, number int64, add, remove []string) error
 	DeleteLabelFn       func(ctx context.Context, owner, name, label string) error
+	MergeLabelAdderFn   func(ctx context.Context, owner, name string, number int64, label string) (string, bool, error)
 }
 
 var (
@@ -271,4 +272,12 @@ func (m *MockForge) OpenDependencies(ctx context.Context, owner, name string, nu
 		return m.OpenDependenciesFn(ctx, owner, name, number)
 	}
 	return nil, nil
+}
+
+func (m *MockForge) MergeLabelAdder(ctx context.Context, owner, name string, number int64, label string) (string, bool, error) {
+	m.record("MergeLabelAdder", owner, name, number, label)
+	if m.MergeLabelAdderFn != nil {
+		return m.MergeLabelAdderFn(ctx, owner, name, number, label)
+	}
+	return "maintainer", true, nil
 }

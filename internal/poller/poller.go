@@ -382,6 +382,16 @@ func enqueueLabeledPRs(ctx context.Context, deps *Deps, result *PollResult, open
 			continue
 		}
 
+		login, canMerge, err := deps.Forge.MergeLabelAdder(ctx, deps.Owner, deps.Repo, pr.Number, deps.MergeLabel)
+		if err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("check who labeled PR #%d: %w", pr.Number, err))
+			continue
+		}
+		if !canMerge {
+			rejectMergeLabel(ctx, deps, result, pr.Number, login)
+			continue
+		}
+
 		target, err := labeledTargetBranch(ctx, deps, pr)
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("resolve stack for PR #%d: %w", pr.Number, err))
@@ -389,6 +399,21 @@ func enqueueLabeledPRs(ctx context.Context, deps *Deps, result *PollResult, open
 		}
 		enqueuePR(ctx, deps, result, pr, target, "merge label")
 	}
+}
+
+func rejectMergeLabel(ctx context.Context, deps *Deps, result *PollResult, number int64, login string) {
+	if err := deps.Forge.RemoveLabel(ctx, deps.Owner, deps.Repo, number, deps.MergeLabel); err != nil {
+		result.Errors = append(result.Errors, fmt.Errorf("remove unauthorized merge label from PR #%d: %w", number, err))
+		return
+	}
+	who := "someone"
+	if login != "" {
+		who = "@" + login
+	}
+	slog.Warn("removed merge label added without merge permission", "pr", number, "user", login)
+	logutil.WarnIfErr(deps.Forge.Comment(ctx, deps.Owner, deps.Repo, number,
+		fmt.Sprintf("⚠️ Removed `%s`: it was added by %s, who lacks merge permission. A maintainer has to add it.", deps.MergeLabel, who)),
+		"comment on unauthorized merge label failed", "pr", number)
 }
 
 // labeledTargetBranch is the stack base branch for stacked PRs, else the PR's

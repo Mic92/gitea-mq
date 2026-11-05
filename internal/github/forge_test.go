@@ -316,3 +316,37 @@ func TestForge_CancelAutoMerge(t *testing.T) {
 		t.Fatalf("second cancel: %v", err)
 	}
 }
+
+func TestForge_MergeLabelAdder(t *testing.T) {
+	srv, f := newTestForge(t)
+	rp := srv.Repo("org", "app")
+	rp.Permissions = map[string]string{"maint": "write", "triager": "read"}
+	rp.LabelEvents = map[int64][]ghfake.LabelEvent{
+		1: {{Actor: "maint", Label: "merge-queue"}},
+		2: {
+			{Actor: "maint", Label: "merge-queue"},
+			{Actor: "maint", Label: "merge-queue", Removed: true},
+			{Actor: "triager", Label: "Merge-Queue"},
+			{Actor: "maint", Label: "bug"},
+		},
+		3: {{Actor: "stranger", Label: "merge-queue"}},
+	}
+	for _, tc := range []struct {
+		number    int64
+		wantLogin string
+		wantOK    bool
+	}{
+		{1, "maint", true},
+		{2, "triager", false},
+		{3, "stranger", false},
+		{4, "", false},
+	} {
+		login, ok, err := f.MergeLabelAdder(context.Background(), "org", "app", tc.number, "merge-queue")
+		if err != nil {
+			t.Fatalf("#%d: %v", tc.number, err)
+		}
+		if login != tc.wantLogin || ok != tc.wantOK {
+			t.Errorf("#%d: got (%q, %v), want (%q, %v)", tc.number, login, ok, tc.wantLogin, tc.wantOK)
+		}
+	}
+}

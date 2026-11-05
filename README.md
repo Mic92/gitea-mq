@@ -25,7 +25,8 @@ no auto-merge: label the topmost PR you want to merge, gitea-mq tests the
 whole stack against the stack's base branch and, on green, marks all stack
 heads as passed and performs the atomic stack merge itself. Stacked PRs
 without the label get a pending `gitea-mq` status hinting at this workflow.
-Removing the label removes the PR from the queue.
+Removing the label removes the PR from the queue. The label only counts when
+added by a user with write access. Otherwise gitea-mq removes it and comments.
 
 By default one PR is tested at a time per target branch (see Batching below
 for testing several at once). PRs targeting different

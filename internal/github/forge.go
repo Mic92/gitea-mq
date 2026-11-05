@@ -71,6 +71,35 @@ func toForgePR(p *gh.PullRequest) forge.PR {
 	}
 }
 
+func (f *githubForge) MergeLabelAdder(ctx context.Context, owner, name string, number int64, label string) (string, bool, error) {
+	c, err := f.app.ClientForRepo(owner, name)
+	if err != nil {
+		return "", false, err
+	}
+	var login string
+	for ev, err := range c.Issues.ListIssueEventsIter(ctx, owner, name, int(number), &gh.ListOptions{PerPage: 100}) {
+		if err != nil {
+			return "", false, err
+		}
+		if ev.GetEvent() == "labeled" && strings.EqualFold(ev.GetLabel().GetName(), label) {
+			login = ev.GetActor().GetLogin()
+		}
+	}
+	if login == "" {
+		return "", false, nil
+	}
+	perm, resp, err := c.Repositories.GetPermissionLevel(ctx, owner, name, login)
+	if err != nil {
+		if resp != nil && resp.StatusCode == http.StatusNotFound {
+			return login, false, nil
+		}
+		return login, false, err
+	}
+	// Maintain reports as "write" and triage as "read".
+	p := perm.GetPermission()
+	return login, p == "write" || p == "admin", nil
+}
+
 func (f *githubForge) ListOpenPRs(ctx context.Context, owner, name string) ([]forge.PR, error) {
 	c, err := f.app.ClientForRepo(owner, name)
 	if err != nil {

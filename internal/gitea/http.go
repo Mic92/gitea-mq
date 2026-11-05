@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -726,6 +727,23 @@ func (c *HTTPClient) CreateWebhook(ctx context.Context, owner, repo string, opts
 
 // ServerVersion returns the Gitea/Forgejo server version string.
 // GET /version
+func (c *HTTPClient) GetCollaboratorPermission(ctx context.Context, owner, repo, user string) (string, error) {
+	resp, err := c.do(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/%s/collaborators/%s/permission", owner, repo, url.PathEscape(user)), nil)
+	if err != nil {
+		return "", err
+	}
+	var p struct {
+		Permission string `json:"permission"`
+	}
+	if err := c.decodeJSON(resp, &p); err != nil {
+		if IsNotFound(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("get permission of %s in %s/%s: %w", user, owner, repo, err)
+	}
+	return p.Permission, nil
+}
+
 func (c *HTTPClient) ServerVersion(ctx context.Context) (string, error) {
 	resp, err := c.do(ctx, http.MethodGet, "/version", nil)
 	if err != nil {

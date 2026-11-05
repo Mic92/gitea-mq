@@ -59,6 +59,8 @@ type TimelineComment struct {
 	Type      string    `json:"type"`
 	Body      string    `json:"body"`
 	CreatedAt time.Time `json:"created_at"`
+	User      *User     `json:"user"`
+	Label     *Label    `json:"label"`
 }
 
 // CommitStatus is a status to post on a commit via
@@ -282,6 +284,9 @@ type Client interface {
 	// disabled for the repository.
 	// GET /repos/{owner}/{repo}/issues/{index}/dependencies
 	ListIssueDependencies(ctx context.Context, owner, repo string, index int64) ([]Issue, error)
+
+	// GET /repos/{owner}/{repo}/collaborators/{user}/permission
+	GetCollaboratorPermission(ctx context.Context, owner, repo, user string) (string, error)
 
 	// ServerVersion returns the Gitea/Forgejo server version string.
 	// GET /version

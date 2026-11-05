@@ -115,6 +115,14 @@ type Repo struct {
 	AsyncMergeStatus string
 	// AsyncMergeConflict makes merge-async return 409.
 	AsyncMergeConflict bool
+
+	LabelEvents map[int64][]LabelEvent
+	Permissions map[string]string
+}
+
+type LabelEvent struct {
+	Actor, Label string
+	Removed      bool
 }
 
 type Stack struct {
@@ -288,6 +296,8 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT "+apiV3+"/repos/{o}/{r}/pulls/{n}/merge-async", s.hMergeAsync)
 	mux.HandleFunc("DELETE "+apiV3+"/repos/{o}/{r}/issues/{n}/labels/{l}", s.hRemoveLabel)
 	mux.HandleFunc("POST "+apiV3+"/repos/{o}/{r}/issues/{n}/labels", s.hAddLabels)
+	mux.HandleFunc("GET "+apiV3+"/repos/{o}/{r}/issues/{n}/events", s.hIssueEvents)
+	mux.HandleFunc("GET "+apiV3+"/repos/{o}/{r}/collaborators/{u}/permission", s.hPermission)
 	mux.HandleFunc("POST "+apiV3+"/repos/{o}/{r}/labels", s.hCreateLabel)
 	mux.HandleFunc("DELETE "+apiV3+"/repos/{o}/{r}/labels/{l...}", s.hDeleteLabel)
 	mux.HandleFunc("GET "+apiV3+"/repos/{o}/{r}/compare/{basehead...}", s.hCompare)
@@ -1115,4 +1125,42 @@ func (s *Server) hGraphQL(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"data": map[string]any{
 		"disablePullRequestAutoMerge": map[string]any{"clientMutationId": nil},
 	}})
+}
+
+func (s *Server) hIssueEvents(w http.ResponseWriter, r *http.Request) {
+	rp, ok := s.repoOr404(w, r)
+	if !ok {
+		return
+	}
+	n, _ := strconv.ParseInt(r.PathValue("n"), 10, 64)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := []any{}
+	for _, e := range rp.LabelEvents[n] {
+		event := "labeled"
+		if e.Removed {
+			event = "unlabeled"
+		}
+		out = append(out, map[string]any{
+			"event": event,
+			"actor": map[string]any{"login": e.Actor},
+			"label": map[string]any{"name": e.Label},
+		})
+	}
+	writeJSON(w, 200, out)
+}
+
+func (s *Server) hPermission(w http.ResponseWriter, r *http.Request) {
+	rp, ok := s.repoOr404(w, r)
+	if !ok {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	perm, ok := rp.Permissions[r.PathValue("u")]
+	if !ok {
+		writeJSON(w, 404, map[string]any{"message": "Not Found"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"permission": perm})
 }
