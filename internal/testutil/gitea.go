@@ -262,7 +262,8 @@ type GiteaAPI struct {
 func NewGiteaAPI(baseURL string) *GiteaAPI {
 	return &GiteaAPI{
 		BaseURL: strings.TrimRight(baseURL, "/"),
-		Client:  &http.Client{Timeout: 10 * time.Second},
+		// Pushes run Gitea's hooks, which take >10s on slow CI builders.
+		Client: &http.Client{Timeout: 2 * time.Minute},
 	}
 }
 
