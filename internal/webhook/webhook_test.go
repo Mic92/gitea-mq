@@ -210,3 +210,49 @@ func TestHandler_MirrorsStatusToPRHead(t *testing.T) {
 		t.Errorf("mirror target_url = %q, want %q", status.TargetURL, "https://ci.example.com/build/1")
 	}
 }
+
+func doEventRequest(handler http.Handler, event string, body []byte) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
+	req.Header.Set("X-Gitea-Signature", sign(body))
+	req.Header.Set("X-Gitea-Event", event)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestHandler_PREventsTriggerReconcile(t *testing.T) {
+	triggered := 0
+	repos := webhook.MapRepoLookup{
+		"gitea:org/app": {TriggerPoll: func() { triggered++ }},
+	}
+	h := webhook.Handler(testSecret, repos, nil)
+
+	for _, event := range []string{"pull_request", "pull_request_label", "pull_request_sync"} {
+		body := []byte(`{"action":"label_updated","number":3,"repository":{"full_name":"org/app"}}`)
+		if rec := doEventRequest(h, event, body); rec.Code != http.StatusOK {
+			t.Errorf("%s: code=%d want 200 (%s)", event, rec.Code, rec.Body.String())
+		}
+	}
+	if triggered != 3 {
+		t.Errorf("reconcile triggered %d times, want 3", triggered)
+	}
+
+	// Unmanaged repos are acknowledged without a reconcile.
+	body := []byte(`{"action":"opened","repository":{"full_name":"other/repo"}}`)
+	if rec := doEventRequest(h, "pull_request", body); rec.Code != http.StatusOK {
+		t.Errorf("unmanaged: code=%d want 200", rec.Code)
+	}
+	if triggered != 3 {
+		t.Errorf("unmanaged repo triggered a reconcile")
+	}
+}
+
+func TestHandler_UnrelatedEventsAcknowledged(t *testing.T) {
+	h := webhook.Handler(testSecret, webhook.MapRepoLookup{}, nil)
+	for _, event := range []string{"push", "issues", "create", "release"} {
+		body := []byte(`{"ref":"refs/heads/main","repository":{"full_name":"org/app"}}`)
+		if rec := doEventRequest(h, event, body); rec.Code != http.StatusOK {
+			t.Errorf("%s: code=%d want 200", event, rec.Code)
+		}
+	}
+}

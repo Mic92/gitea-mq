@@ -206,7 +206,8 @@ labels, so each transition is a single API call.
 On startup, gitea-mq configures each managed repository:
 
 - Gitea: adds `gitea-mq` as a required status check to all existing branch
-  protection rules and creates a `status` webhook pointed at the service.
+  protection rules and creates a webhook for `status` and pull request events
+  pointed at the service. Existing hooks are not modified.
 - GitHub: enables `allow_auto_merge` and creates a `gitea-mq` repository
   ruleset that requires the `gitea-mq` check on the default branch (the App and
   repo admins are bypass actors). Add further target branches to the ruleset's

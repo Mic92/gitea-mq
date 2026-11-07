@@ -48,8 +48,18 @@ func EnsureBranchProtection(ctx context.Context, client Client, owner, repo stri
 	return nil
 }
 
-// EnsureWebhook creates a `status`-event webhook pointing at webhookURL unless
-// one already exists with that URL.
+// PR events trigger an immediate reconcile instead of waiting for the next poll.
+var webhookEvents = []string{
+	"status",
+	"pull_request",
+	"pull_request_label",
+	"pull_request_sync",
+	"pull_request_review_approved",
+	"pull_request_review_rejected",
+}
+
+// EnsureWebhook creates a webhook pointing at webhookURL unless one already
+// exists with that URL.
 func EnsureWebhook(ctx context.Context, client Client, owner, repo, webhookURL, secret string) error {
 	hooks, err := client.ListWebhooks(ctx, owner, repo)
 	if err != nil {
@@ -66,7 +76,7 @@ func EnsureWebhook(ctx context.Context, client Client, owner, repo, webhookURL, 
 
 	opts := CreateWebhookOpts{
 		Type:   "gitea",
-		Events: []string{"status"},
+		Events: webhookEvents,
 		Active: true,
 		Config: map[string]string{
 			"url":          webhookURL,
