@@ -1,5 +1,5 @@
-// Package webhook implements the HTTP handler that receives Gitea webhook
-// events (commit_status) and routes them to the check monitor.
+// Package webhook implements the HTTP handlers that receive forge webhook
+// events.
 package webhook
 
 import (
@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/Mic92/gitea-mq/internal/forge"
 	"github.com/Mic92/gitea-mq/internal/monitor"
@@ -60,6 +61,18 @@ func Handler(secret string, repos RepoLookup, queueSvc *queue.Service) http.Hand
 			return
 		}
 
+		switch kind := r.Header.Get("X-Gitea-Event"); {
+		case kind == "" || kind == "status":
+			// Older Gitea versions omit the event header; treat as status.
+		case strings.HasPrefix(kind, "pull_request"):
+			handlePREvent(w, body, repos, kind)
+			return
+		default:
+			// Don't let Gitea mark the hook as failing for unused events.
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
 		var event statusEvent
 		if err := json.Unmarshal(body, &event); err != nil {
 			slog.Warn("malformed webhook payload", "error", err)
@@ -98,6 +111,31 @@ func Handler(secret string, repos RepoLookup, queueSvc *queue.Service) http.Hand
 		maybeTriggerPoll(rm, check.State)
 		w.WriteHeader(http.StatusOK)
 	})
+}
+
+type prEvent struct {
+	Repository struct {
+		FullName string `json:"full_name"`
+	} `json:"repository"`
+}
+
+// handlePREvent reconciles the repo on any PR change; the poller is idempotent.
+func handlePREvent(w http.ResponseWriter, body []byte, repos RepoLookup, kind string) {
+	var event prEvent
+	if err := json.Unmarshal(body, &event); err != nil {
+		slog.Warn("malformed webhook payload", "event", kind, "error", err)
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if event.Repository.FullName == "" {
+		http.Error(w, "bad request: missing repository", http.StatusBadRequest)
+		return
+	}
+	repoKey := string(forge.KindGitea) + ":" + event.Repository.FullName
+	if rm, ok := repos.LookupMonitor(repoKey); ok && rm.TriggerPoll != nil {
+		rm.TriggerPoll()
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 // routeCheck is the shared status/check-run path for both forges: match the
