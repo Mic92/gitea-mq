@@ -24,6 +24,8 @@ buildGoModule {
   # Don't run E2E tests on macOS
   subPackages = lib.optionals stdenv.hostPlatform.isDarwin [ "cmd/gitea-mq" ];
   inherit vendorHash;
+  # Gitea's push hooks are slow on the shared aarch64 builder.
+  checkFlags = [ "-timeout=20m" ];
   nativeCheckInputs = lib.optionals stdenv.hostPlatform.isLinux [
     postgresql
     gitea
