@@ -65,20 +65,25 @@ func TestForge_ListOpenPRs_FoldsTimeline(t *testing.T) {
 
 func TestForge_GetRequiredChecks_StripsSelf(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		bp   *gitea.BranchProtection
-		want []string
+		name   string
+		branch *gitea.Branch
+		want   []string
 	}{
-		{"strips-self", &gitea.BranchProtection{
+		{"strips-self", &gitea.Branch{
+			Name:                "main",
 			EnableStatusCheck:   true,
 			StatusCheckContexts: []string{"ci/build", "gitea-mq", "ci/test"},
 		}, []string{"ci/build", "ci/test"}},
-		{"no-protection", nil, nil},
+		{"status-checks-off", &gitea.Branch{
+			Name:                "main",
+			StatusCheckContexts: []string{"ci/build"},
+		}, nil},
+		{"no-branch", nil, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newForge(&gitea.MockClient{
-				GetBranchProtectionFn: func(_ context.Context, _, _, _ string) (*gitea.BranchProtection, error) {
-					return tc.bp, nil
+				GetBranchFn: func(_ context.Context, _, _, _ string) (*gitea.Branch, error) {
+					return tc.branch, nil
 				},
 			})
 			checks, err := f.GetRequiredChecks(context.Background(), "org", "app", "main")

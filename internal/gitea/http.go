@@ -340,26 +340,26 @@ func (c *HTTPClient) CancelAutoMerge(ctx context.Context, owner, repo string, in
 	return nil
 }
 
-// GetBranchProtection returns the branch protection rule for a branch.
-// GET /repos/{owner}/{repo}/branch_protections/{name}
-func (c *HTTPClient) GetBranchProtection(ctx context.Context, owner, repo, branch string) (*BranchProtection, error) {
-	path := fmt.Sprintf("/repos/%s/%s/branch_protections/%s", owner, repo, branch)
+// GetBranch returns a branch with the protection that applies to it.
+// GET /repos/{owner}/{repo}/branches/{branch}
+func (c *HTTPClient) GetBranch(ctx context.Context, owner, repo, branch string) (*Branch, error) {
+	path := fmt.Sprintf("/repos/%s/%s/branches/%s", owner, repo, branch)
 
 	resp, err := c.do(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	var bp BranchProtection
-	if err := c.decodeJSON(resp, &bp); err != nil {
+	var b Branch
+	if err := c.decodeJSON(resp, &b); err != nil {
 		if IsNotFound(err) {
 			return nil, nil
 		}
 
-		return nil, fmt.Errorf("get branch protection for %s in %s/%s: %w", branch, owner, repo, err)
+		return nil, fmt.Errorf("get branch %s in %s/%s: %w", branch, owner, repo, err)
 	}
 
-	return &bp, nil
+	return &b, nil
 }
 
 // ListBranches returns all branches for a repository. Handles pagination.

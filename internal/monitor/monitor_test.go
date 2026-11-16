@@ -33,8 +33,8 @@ func setupMonitorTest(t *testing.T) (*monitor.Deps, *gitea.MockClient, *queue.Se
 }
 
 func withBranchProtection(mock *gitea.MockClient, checks ...string) {
-	mock.GetBranchProtectionFn = func(_ context.Context, _, _, _ string) (*gitea.BranchProtection, error) {
-		return &gitea.BranchProtection{
+	mock.GetBranchFn = func(_ context.Context, _, _, _ string) (*gitea.Branch, error) {
+		return &gitea.Branch{
 			EnableStatusCheck:   true,
 			StatusCheckContexts: checks,
 		}, nil

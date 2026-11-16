@@ -79,9 +79,13 @@ func MQStatus(state, description, targetURL string) CommitStatus {
 }
 
 // Branch represents a branch from the Gitea API.
-// Only the fields we need are included.
+// Only the fields we need are included. The status-check fields describe the
+// protection rule that applies to the branch, glob rules included; the API
+// fills them for any user who can read the repository.
 type Branch struct {
-	Name string `json:"name"`
+	Name                string   `json:"name"`
+	EnableStatusCheck   bool     `json:"enable_status_check"`
+	StatusCheckContexts []string `json:"status_check_contexts"`
 }
 
 // BranchProtection holds the relevant fields from a branch protection rule.
@@ -223,9 +227,13 @@ type Client interface {
 	// POST /repos/{owner}/{repo}/issues/{index}/labels; unknown ids are silently ignored
 	AddIssueLabels(ctx context.Context, owner, repo string, index int64, labelIDs []int64) ([]Label, error)
 
-	// GetBranchProtection returns the branch protection rule for a branch.
-	// GET /repos/{owner}/{repo}/branch_protections/{name}
-	GetBranchProtection(ctx context.Context, owner, repo, branch string) (*BranchProtection, error)
+	// GetBranch returns a branch with the protection that applies to it.
+	// Unlike GET /repos/{owner}/{repo}/branch_protections/{name}, which needs
+	// repository admin and looks rules up by rule name, this needs only read
+	// access and resolves glob rules. Returns nil, nil if the branch does not
+	// exist.
+	// GET /repos/{owner}/{repo}/branches/{branch}
+	GetBranch(ctx context.Context, owner, repo, branch string) (*Branch, error)
 
 	// ListBranches returns all branches for a repository.
 	// Handles pagination internally.

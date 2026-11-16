@@ -34,8 +34,8 @@ func setup(t *testing.T) *testEnv {
 	svc, ctx, repoID := testutil.TestQueueService(t)
 
 	mock := &gitea.MockClient{}
-	mock.GetBranchProtectionFn = func(_ context.Context, _, _, _ string) (*gitea.BranchProtection, error) {
-		return &gitea.BranchProtection{
+	mock.GetBranchFn = func(_ context.Context, _, _, _ string) (*gitea.Branch, error) {
+		return &gitea.Branch{
 			EnableStatusCheck:   true,
 			StatusCheckContexts: []string{"gitea-mq", "ci/build"},
 		}, nil

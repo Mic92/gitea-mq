@@ -35,7 +35,7 @@ type MockClient struct {
 	CreateRepoLabelFn           func(ctx context.Context, owner, repo, name, color string, exclusive bool) (*Label, error)
 	DeleteRepoLabelFn           func(ctx context.Context, owner, repo string, labelID int64) error
 	AddIssueLabelsFn            func(ctx context.Context, owner, repo string, index int64, labelIDs []int64) ([]Label, error)
-	GetBranchProtectionFn       func(ctx context.Context, owner, repo, branch string) (*BranchProtection, error)
+	GetBranchFn                 func(ctx context.Context, owner, repo, branch string) (*Branch, error)
 	ListBranchesFn              func(ctx context.Context, owner, repo string) ([]Branch, error)
 	CreateBranchFn              func(ctx context.Context, owner, repo, name, target string) error
 	DeleteBranchFn              func(ctx context.Context, owner, repo, name string) error
@@ -227,11 +227,11 @@ func (m *MockClient) CancelAutoMerge(ctx context.Context, owner, repo string, in
 	return nil
 }
 
-func (m *MockClient) GetBranchProtection(ctx context.Context, owner, repo, branch string) (*BranchProtection, error) {
-	m.record("GetBranchProtection", owner, repo, branch)
+func (m *MockClient) GetBranch(ctx context.Context, owner, repo, branch string) (*Branch, error) {
+	m.record("GetBranch", owner, repo, branch)
 
-	if m.GetBranchProtectionFn != nil {
-		return m.GetBranchProtectionFn(ctx, owner, repo, branch)
+	if m.GetBranchFn != nil {
+		return m.GetBranchFn(ctx, owner, repo, branch)
 	}
 
 	return nil, nil

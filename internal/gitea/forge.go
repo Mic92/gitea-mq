@@ -166,16 +166,19 @@ func (f *giteaForge) MirrorCheck(ctx context.Context, owner, name, sha, checkCon
 }
 
 func (f *giteaForge) GetRequiredChecks(ctx context.Context, owner, name, branch string) ([]string, error) {
-	bp, err := f.client.GetBranchProtection(ctx, owner, name, branch)
+	// Read the branch, not its branch_protections rule: that endpoint needs
+	// repository admin, which the token otherwise does not need, and finds a
+	// rule only when its name equals the branch name.
+	b, err := f.client.GetBranch(ctx, owner, name, branch)
 	if err != nil {
 		return nil, err
 	}
-	if bp == nil || !bp.EnableStatusCheck {
+	if b == nil || !b.EnableStatusCheck {
 		return nil, nil
 	}
 	// Never report ourselves as a required external check.
 	var out []string
-	for _, c := range bp.StatusCheckContexts {
+	for _, c := range b.StatusCheckContexts {
 		if forge.IsOwnContext(c) {
 			continue
 		}
