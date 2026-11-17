@@ -138,15 +138,15 @@ func TestFinalizeLabeledStackMerge(t *testing.T) {
 	}
 }
 
-// Regression: an up-to-date labeled stack head must be landed by gitea-mq
-// (fast-forward), not handed to the forge's merge API which re-checks every
-// stack member's own rules.
-func TestLabeledStackUpToDateLandsViaFastForward(t *testing.T) {
+// A fast-forward left all but the bottom PR open and the label re-enqueued the
+// top in a loop; polling while the forge merges must not enqueue it again.
+func TestLabeledStackLandsViaStackMergeOnce(t *testing.T) {
 	deps, mock, svc, ctx, repoID := setupLabelTest(t)
 	deps.SkipQueueIfUpToDate = true
 	deps.Batch = &batch.Engine{
 		Forge: mock, Queue: svc, Owner: "org", Repo: "app", RepoID: repoID,
 		SkipIfUpToDate: true, MergedPollInterval: 1, MergedPollAttempts: 1,
+		StackMergedPollInterval: 1, StackMergedPollAttempts: 1,
 	}
 	mock.ListOpenPRsFn = func(context.Context, string, string) ([]forge.PR, error) {
 		return []forge.PR{
@@ -168,27 +168,26 @@ func TestLabeledStackUpToDateLandsViaFastForward(t *testing.T) {
 	mock.GetCheckStatesFn = func(_ context.Context, _, _, sha string) (map[string]forge.Check, error) {
 		return map[string]forge.Check{"ci": {State: pg.CheckStateSuccess}}, nil
 	}
-	var ffTo string
-	mock.FastForwardFn = func(_ context.Context, _, _, branch, sha string) error {
-		if branch != "main" {
-			t.Errorf("fast-forward branch = %q", branch)
+
+	// The forge keeps both PRs open (async merge still running).
+	for range 3 {
+		if res, err := poller.PollOnce(ctx, deps); err != nil || len(res.Errors) > 0 {
+			t.Fatalf("PollOnce: %v %v", err, res)
 		}
-		ffTo = sha
-		return nil
 	}
 
-	if res, err := poller.PollOnce(ctx, deps); err != nil || len(res.Errors) > 0 {
-		t.Fatalf("PollOnce: %v %v", err, res)
+	if n := len(mock.CallsTo("FastForward")); n != 0 {
+		t.Fatalf("FastForward called %d times; a stack must land via the forge", n)
 	}
-
-	if ffTo != "sha2" {
-		t.Fatalf("main fast-forwarded to %q, want sha2", ffTo)
-	}
-	if n := len(mock.CallsTo("MergePR")); n != 0 {
-		t.Fatalf("MergePR called %d times; forge must not be asked to merge", n)
+	merges := mock.CallsTo("MergePR")
+	if len(merges) != 1 || merges[0].Args[2].(int64) != 2 {
+		t.Fatalf("MergePR calls = %+v, want exactly one for #2", merges)
 	}
 	if e, _ := svc.GetEntry(ctx, repoID, 2); e != nil {
-		t.Fatalf("entry should be landed and removed: %+v", e)
+		t.Fatalf("landed entry must not be re-enqueued: %+v", e)
+	}
+	if n := len(mock.CallsTo("ClosePR")); n != 0 {
+		t.Fatalf("ClosePR called %d times for a stack", n)
 	}
 
 	var parentGreen bool
@@ -199,6 +198,85 @@ func TestLabeledStackUpToDateLandsViaFastForward(t *testing.T) {
 	}
 	if !parentGreen {
 		t.Error("expected success status on stack parent head sha1")
+	}
+}
+
+// After a restart the landed record is gone; a head already in the target is
+// still not queued.
+func TestLabeledPRContainedInTargetIsNotEnqueued(t *testing.T) {
+	deps, mock, svc, ctx, repoID := setupLabelTest(t)
+	deps.Batch = &batch.Engine{Forge: mock, Queue: svc, Owner: "org", Repo: "app", RepoID: repoID}
+	mock.ListOpenPRsFn = func(context.Context, string, string) ([]forge.PR, error) {
+		return []forge.PR{{Number: 7, State: "open", HeadSHA: "h7", BaseBranch: "main", Labels: []string{"merge-queue"}}}, nil
+	}
+	mock.IsUpToDateFn = func(_ context.Context, _, _, base, head string) (bool, error) {
+		return base == "h7" && head == "main", nil
+	}
+
+	if _, err := poller.PollOnce(ctx, deps); err != nil {
+		t.Fatal(err)
+	}
+	if e, _ := svc.GetEntry(ctx, repoID, 7); e != nil {
+		t.Fatalf("PR already in target was enqueued: %+v", e)
+	}
+}
+
+// Mic92/nixbot#179: the forge's stack merge re-checks every member's own CI,
+// so a stack is only queued once all of them are green.
+func TestLabeledStackWaitsForMemberCI(t *testing.T) {
+	deps, mock, svc, ctx, repoID := setupLabelTest(t)
+	mock.ListOpenPRsFn = func(context.Context, string, string) ([]forge.PR, error) {
+		return []forge.PR{
+			{Number: 1, State: "open", HeadBranch: "b1", HeadSHA: "sha1", BaseBranch: "main"},
+			{Number: 2, State: "open", HeadBranch: "b2", HeadSHA: "sha2", BaseBranch: "b1"},
+			{Number: 3, State: "open", HeadBranch: "b3", HeadSHA: "sha3", BaseBranch: "b2", Labels: []string{"merge-queue"}},
+		}, nil
+	}
+	mock.ResolveStackFn = func(context.Context, string, string, int64) (*forge.Stack, error) {
+		return &forge.Stack{BaseBranch: "main", PRs: []forge.StackPR{
+			{Number: 1, HeadSHA: "sha1"}, {Number: 2, HeadSHA: "sha2"}, {Number: 3, HeadSHA: "sha3"},
+		}}, nil
+	}
+	mock.GetRequiredChecksFn = func(context.Context, string, string, string) ([]string, error) {
+		return []string{"ci"}, nil
+	}
+	pending := true
+	mock.GetCheckStatesFn = func(_ context.Context, _, _, sha string) (map[string]forge.Check, error) {
+		if sha == "sha2" && pending {
+			return map[string]forge.Check{"ci": {State: pg.CheckStatePending}}, nil
+		}
+		return map[string]forge.Check{"ci": {State: pg.CheckStateSuccess}}, nil
+	}
+	mock.CreateMergeBranchFn = func(context.Context, string, string, string, string, string) (string, bool, error) {
+		return "m3", false, nil
+	}
+
+	if _, err := poller.PollOnce(ctx, deps); err != nil {
+		t.Fatal(err)
+	}
+	if e, _ := svc.GetEntry(ctx, repoID, 3); e != nil {
+		t.Fatalf("stack with a pending member was enqueued: %+v", e)
+	}
+	var waiting bool
+	for _, c := range mock.CallsTo("SetMQStatus") {
+		st := c.Args[3].(forge.MQStatus)
+		if c.Args[2] == "sha3" && st.State == pg.CheckStatePending && strings.Contains(st.Description, "#2") {
+			waiting = true
+		}
+	}
+	if !waiting {
+		t.Fatalf("no waiting status naming member #2: %+v", mock.CallsTo("SetMQStatus"))
+	}
+	if n := len(mock.CallsTo("RemoveLabel")); n != 0 {
+		t.Fatal("merge intent must be kept while waiting")
+	}
+
+	pending = false
+	if _, err := poller.PollOnce(ctx, deps); err != nil {
+		t.Fatal(err)
+	}
+	if e, _ := svc.GetEntry(ctx, repoID, 3); e == nil {
+		t.Fatal("stack not enqueued once members are green")
 	}
 }
 
