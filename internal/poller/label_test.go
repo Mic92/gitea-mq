@@ -3,6 +3,7 @@ package poller_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -277,6 +278,50 @@ func TestLabeledStackWaitsForMemberCI(t *testing.T) {
 	}
 	if e, _ := svc.GetEntry(ctx, repoID, 3); e == nil {
 		t.Fatal("stack not enqueued once members are green")
+	}
+}
+
+// A stack's members share the base's required checks; resolving them per
+// member made every poll of a large waiting stack cost two calls per member.
+func TestLabeledStackResolvesRequiredChecksOnce(t *testing.T) {
+	deps, mock, svc, ctx, repoID := setupLabelTest(t)
+	const n = 6
+	var open []forge.PR
+	var members []forge.StackPR
+	for i := int64(1); i <= n; i++ {
+		base := fmt.Sprintf("b%d", i-1)
+		if i == 1 {
+			base = "main"
+		}
+		pr := forge.PR{Number: i, State: "open", HeadBranch: fmt.Sprintf("b%d", i), HeadSHA: fmt.Sprintf("sha%d", i), BaseBranch: base}
+		if i == n {
+			pr.Labels = []string{"merge-queue"}
+		}
+		open = append(open, pr)
+		members = append(members, forge.StackPR{Number: i, HeadSHA: pr.HeadSHA})
+	}
+	mock.ListOpenPRsFn = func(context.Context, string, string) ([]forge.PR, error) { return open, nil }
+	mock.ResolveStackFn = func(context.Context, string, string, int64) (*forge.Stack, error) {
+		return &forge.Stack{BaseBranch: "main", PRs: members}, nil
+	}
+	mock.GetRequiredChecksFn = func(context.Context, string, string, string) ([]string, error) {
+		return []string{"ci"}, nil
+	}
+	mock.GetCheckStatesFn = func(context.Context, string, string, string) (map[string]forge.Check, error) {
+		return map[string]forge.Check{"ci": {State: pg.CheckStateSuccess}}, nil
+	}
+	mock.CreateMergeBranchFn = func(context.Context, string, string, string, string, string) (string, bool, error) {
+		return "m", false, nil
+	}
+
+	if _, err := poller.PollOnce(ctx, deps); err != nil {
+		t.Fatal(err)
+	}
+	if e, _ := svc.GetEntry(ctx, repoID, n); e == nil {
+		t.Fatal("green stack not enqueued")
+	}
+	if got := len(mock.CallsTo("GetRequiredChecks")); got >= n-1 {
+		t.Fatalf("GetRequiredChecks called %d times for %d lower members; want them resolved once", got, n-1)
 	}
 }
 

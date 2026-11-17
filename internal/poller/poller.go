@@ -138,7 +138,11 @@ func prCheckResult(ctx context.Context, deps *Deps, pr *forge.PR, targetBranch s
 	if err != nil {
 		return monitor.CheckWaiting, fmt.Errorf("resolve required checks for PR #%d: %w", pr.Number, err)
 	}
+	return headCheckResult(ctx, deps, pr, requiredChecks)
+}
 
+// headCheckResult is prCheckResult with the required checks already resolved.
+func headCheckResult(ctx context.Context, deps *Deps, pr *forge.PR, requiredChecks []string) (monitor.CheckResult, error) {
 	checks, err := deps.Forge.GetCheckStates(ctx, deps.Owner, deps.Repo, pr.HeadSHA)
 	if err != nil {
 		return monitor.CheckWaiting, fmt.Errorf("get check states for PR #%d: %w", pr.Number, err)
@@ -479,6 +483,13 @@ func stackMembersGreen(ctx context.Context, deps *Deps, result *PollResult, pr *
 	if stack == nil {
 		return true
 	}
+	// Members share the stack base's required checks; resolving them per
+	// member would cost a large stack two calls per member on every poll.
+	requiredChecks, err := monitor.ResolveRequiredChecks(ctx, deps.Forge, deps.Owner, deps.Repo, target, deps.FallbackChecks)
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Errorf("resolve required checks for stack of PR #%d: %w", pr.Number, err))
+		return false
+	}
 	members, _ := stack.MembersUpTo(pr.Number)
 	byNumber := make(map[int64]*forge.PR, len(openPRs))
 	for i := range openPRs {
@@ -492,7 +503,7 @@ func stackMembersGreen(ctx context.Context, deps *Deps, result *PollResult, pr *
 		if !ok {
 			continue
 		}
-		res, err := prCheckResult(ctx, deps, member, target)
+		res, err := headCheckResult(ctx, deps, member, requiredChecks)
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("check CI status for stack member #%d of PR #%d: %w", m.Number, pr.Number, err))
 			return false
