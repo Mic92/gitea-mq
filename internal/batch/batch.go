@@ -59,7 +59,7 @@ type Engine struct {
 	MergedPollAttempts int
 
 	// StackMergedPoll controls the wait after a stack merge, which GitHub
-	// finishes in the background. Defaults: 1s × 30.
+	// finishes in the background. Defaults: 1s × (30 + 3 per member).
 	StackMergedPollInterval time.Duration
 	StackMergedPollAttempts int
 
@@ -78,6 +78,12 @@ type landedStack struct {
 	headSHA string
 	at      time.Time
 }
+
+// GitHub merges a stack member by member: 40 members took about 90s.
+const (
+	stackMergedBaseAttempts      = 30
+	stackMergedAttemptsPerMember = 3
+)
 
 // landedStackTTL bounds how long a stack merge may stay unfinished before the
 // PR may be enqueued again; by then the merge has most likely failed.
@@ -496,9 +502,9 @@ func (e *Engine) landStack(ctx context.Context, b *pg.Batch, ent *pg.QueueEntry)
 		}
 	}
 	setAll(forge.MQStatus{State: pg.CheckStateSuccess, Description: fmt.Sprintf("Merging stack via batch #%d", b.ID)})
-	for _, head := range statusHeads {
-		merge.SkipPendingMirroredChecks(ctx, e.Forge, e.Owner, e.Repo, head.sha)
-	}
+	// Mirrored checks only sit on the queued head; lower members were never
+	// queued, and reading their checks would cost two calls per member.
+	merge.SkipPendingMirroredChecks(ctx, e.Forge, e.Owner, e.Repo, ent.PrHeadSha)
 
 	if err := e.Forge.MergePR(ctx, e.Owner, e.Repo, ent.PrNumber); err != nil {
 		setAll(forge.MQStatus{State: pg.CheckStateError, Description: "Stack merge failed"})
@@ -520,8 +526,10 @@ func (e *Engine) landStack(ctx context.Context, b *pg.Batch, ent *pg.QueueEntry)
 	}
 	slog.Info("batch landed", "batch", b.ID, "sha", b.BranchSha.String, "prs", 1, "via", "stack merge", "pr", ent.PrNumber)
 
-	// Unlike ensureMergedOrClose, never close: that would race the async merge.
-	if !e.waitMerged(ctx, ent.PrNumber, cmp.Or(e.StackMergedPollInterval, time.Second), cmp.Or(e.StackMergedPollAttempts, 30)) {
+	// The next batch would race GitHub's merge on the target, so wait for it;
+	// unlike ensureMergedOrClose, never close, which would race it too.
+	attempts := cmp.Or(e.StackMergedPollAttempts, stackMergedBaseAttempts+stackMergedAttemptsPerMember*len(statusHeads))
+	if !e.waitMerged(ctx, ent.PrNumber, cmp.Or(e.StackMergedPollInterval, time.Second), attempts) {
 		slog.Warn("stack merge not reported by forge yet", "batch", b.ID, "pr", ent.PrNumber)
 	}
 	return e.finish(ctx, b, build)

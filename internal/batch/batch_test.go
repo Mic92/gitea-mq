@@ -652,6 +652,54 @@ func TestHandlePass_StackEntryLandsViaMergePR(t *testing.T) {
 	}
 }
 
+// Mirrored checks only ever sit on the queued head; reading every lower
+// member's checks as well tripled the forge calls of landing a large stack.
+func TestHandlePass_StackCleansMirrorsOnQueuedHeadOnly(t *testing.T) {
+	e, f, _, ctx := setup(t, 10)
+	stackFor(f, 10)
+	f.merged[10] = true
+	e.StackMergedPollInterval, e.StackMergedPollAttempts = 1, 1
+
+	b, err := e.FormAndBuild(ctx, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.HandlePass(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+
+	reads := map[string]int{}
+	for _, c := range f.CallsTo("GetCheckStates") {
+		reads[c.Args[2].(string)]++
+	}
+	if reads["sha8"]+reads["sha9"] != 0 || reads["sha10"] == 0 {
+		t.Fatalf("GetCheckStates per head = %v; want the queued head only", reads)
+	}
+}
+
+// The wait for GitHub to report a stack merged grows with its members.
+func TestHandlePass_StackMergedWaitGrowsWithMembers(t *testing.T) {
+	e, f, _, ctx := setup(t, 10)
+	stackFor(f, 10)
+	e.StackMergedPollInterval = 1
+	polls := 0
+	f.GetPRFn = func(_ context.Context, _, _ string, n int64) (*forge.PR, error) {
+		polls++
+		return &forge.PR{Number: n, Merged: polls >= 35, State: "open"}, nil
+	}
+
+	b, err := e.FormAndBuild(ctx, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.HandlePass(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	if polls != 35 {
+		t.Fatalf("polled %d times; want to keep polling a 3-member stack until it reports merged at 35", polls)
+	}
+}
+
 // A stack never shares a batch: [plain, stack, plain] lands as FF, merge-PR,
 // FF in queue order.
 func TestFormAndBuild_StackEntryIsNotBatched(t *testing.T) {
