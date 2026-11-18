@@ -54,7 +54,7 @@ func commitFile(t *testing.T, work, name, content, msg string) string {
 
 func newTestCache(t *testing.T) *gitCache {
 	t.Helper()
-	return newGitCache(t.TempDir(), nil, func(s string) string { return s })
+	return newGitCache(t.TempDir(), nil, nil, func(s string) string { return s })
 }
 
 // TestGitCache_IncrementalFetch verifies the clone persists across operations

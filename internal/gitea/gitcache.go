@@ -5,8 +5,10 @@ package gitea
 // in-memory (merge-tree/commit-tree), so no worktree is ever created.
 //
 // Every git command runs through one runner that injects the API token as an
-// http.<url>.extraHeader -c option, so pushes, fetches and lazy promisor blob
-// fetches are all authenticated and the token never hits disk.
+// http.<url>.extraHeader setting, so pushes, fetches and lazy promisor blob
+// fetches are all authenticated and the token never hits disk. The header
+// value travels in the child's environment and is referenced with
+// --config-env (git >= 2.31), so it is not visible in the process list.
 //
 // The cache is disposable: corrupted clones are deleted and rebuilt, and a
 // .last-used marker drives age-based cleanup of repos removed from config.
@@ -26,22 +28,28 @@ import (
 
 const cacheMarkerFile = ".last-used"
 
+// gitAuthHeaderEnv names the environment variable that carries the
+// Authorization header value to git children (read via --config-env).
+const gitAuthHeaderEnv = "GITEA_MQ_GIT_AUTH_HEADER"
+
 // DefaultCacheMaxAge is how long an unused cached repository is kept.
 const DefaultCacheMaxAge = 30 * 24 * time.Hour
 
 type gitCache struct {
 	baseDir   string
-	authFlags []string            // git -c options prepended to every command
+	authFlags []string            // git config references prepended to every command
+	authEnv   []string            // secret values those references read, child env only
 	redact    func(string) string // strips secrets from git output
 
 	mu    sync.Mutex
 	locks map[string]*sync.Mutex
 }
 
-func newGitCache(baseDir string, authFlags []string, redact func(string) string) *gitCache {
+func newGitCache(baseDir string, authFlags, authEnv []string, redact func(string) string) *gitCache {
 	return &gitCache{
 		baseDir:   baseDir,
 		authFlags: authFlags,
+		authEnv:   authEnv,
 		redact:    redact,
 		locks:     make(map[string]*sync.Mutex),
 	}
@@ -69,7 +77,7 @@ func (g *gitCache) runner(ctx context.Context, dir string) func(args ...string) 
 		cmd := exec.CommandContext(ctx, "git", append(append([]string{}, g.authFlags...), args...)...)
 		cmd.Dir = dir
 		cmd.Env = append(
-			os.Environ(),
+			append(os.Environ(), g.authEnv...),
 			"GIT_TERMINAL_PROMPT=0",
 			"GIT_AUTHOR_NAME=gitea-mq", "GIT_AUTHOR_EMAIL=gitea-mq@localhost",
 			"GIT_COMMITTER_NAME=gitea-mq", "GIT_COMMITTER_EMAIL=gitea-mq@localhost",

@@ -37,12 +37,15 @@ func NewHTTPClient(baseURL, token string) *HTTPClient {
 			Timeout:   httpx.DefaultTimeout,
 		},
 	}
-	// Git auth via extraHeader; see gitcache.go for why.
-	var authFlags []string
+	// Git auth via extraHeader; see gitcache.go for why. The header value is
+	// passed through the child environment and referenced with --config-env,
+	// so the token is not part of git's command line.
+	var authFlags, authEnv []string
 	if token != "" {
-		authFlags = []string{"-c", "http." + c.baseURL + "/.extraheader=Authorization: token " + token}
+		authFlags = []string{"--config-env=http." + c.baseURL + "/.extraheader=" + gitAuthHeaderEnv}
+		authEnv = []string{gitAuthHeaderEnv + "=Authorization: token " + token}
 	}
-	c.gitCache = newGitCache(filepath.Join(os.TempDir(), "gitea-mq-cache"), authFlags, c.redact)
+	c.gitCache = newGitCache(filepath.Join(os.TempDir(), "gitea-mq-cache"), authFlags, authEnv, c.redact)
 	return c
 }
 
