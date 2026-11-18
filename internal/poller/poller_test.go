@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Mic92/gitea-mq/internal/batch"
 	"github.com/Mic92/gitea-mq/internal/gitea"
 	"github.com/Mic92/gitea-mq/internal/merge"
 	"github.com/Mic92/gitea-mq/internal/poller"
@@ -279,6 +280,90 @@ func TestPollOnce_Reconcile(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, tc.run)
+	}
+}
+
+// A deleted PR is neither in the open list nor readable: GetPR answers 404.
+// It must leave the queue the same way a closed PR does, including
+// OnMemberRemoved so the batch it belonged to drops it.
+func TestPollOnce_ReconcileDeletedPR(t *testing.T) {
+	deps, mock, svc, ctx, repoID := setupPollerTest(t)
+
+	if _, err := svc.Enqueue(ctx, repoID, 42, "sha42", "main", false); err != nil {
+		t.Fatal(err)
+	}
+	entry, err := svc.GetEntry(ctx, repoID, 42)
+	if err != nil || entry == nil {
+		t.Fatalf("GetEntry: %v", err)
+	}
+	b, err := svc.FormBatch(ctx, repoID, "main", 2)
+	if err != nil || b == nil {
+		t.Fatalf("FormBatch: %v", err)
+	}
+	deps.Batch = &batch.Engine{Forge: deps.Forge, Queue: svc, Owner: deps.Owner, Repo: deps.Repo, RepoID: repoID}
+
+	mock.ListOpenPRsFn = func(_ context.Context, _, _ string) ([]gitea.PR, error) { return nil, nil }
+	mock.GetPRFn = func(_ context.Context, _, _ string, _ int64) (*gitea.PR, error) {
+		return nil, &gitea.APIError{StatusCode: 404}
+	}
+
+	result, err := poller.PollOnce(ctx, deps)
+	if err != nil {
+		t.Fatalf("PollOnce: %v", err)
+	}
+	if len(result.Dequeued) != 1 || result.Dequeued[0] != 42 {
+		t.Fatalf("expected PR #42 dequeued, got %v (errors: %v)", result.Dequeued, result.Errors)
+	}
+	if got, _ := svc.GetEntry(ctx, repoID, 42); got != nil {
+		t.Fatalf("PR #42 should be removed from queue, got %+v", got)
+	}
+	got, err := svc.GetBatch(ctx, b.ID)
+	if err != nil || got == nil {
+		t.Fatalf("GetBatch: %v", err)
+	}
+	if len(got.CurrentIds) != 0 || len(got.EjectedIds) != 1 || got.EjectedIds[0] != entry.ID {
+		t.Fatalf("batch should have dropped the deleted PR: current=%v ejected=%v", got.CurrentIds, got.EjectedIds)
+	}
+}
+
+// A transient read failure (500) is not a deletion: the entry stays queued and
+// the error is reported so the next poll retries.
+func TestPollOnce_ReconcilePRFetchError_KeepsEntry(t *testing.T) {
+	deps, mock, svc, ctx, repoID := setupPollerTest(t)
+
+	if _, err := svc.Enqueue(ctx, repoID, 42, "sha42", "main", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.UpdateState(ctx, repoID, 42, pg.EntryStateTesting); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SetMergeBranch(ctx, repoID, 42, merge.BranchName(42), "mergesha"); err != nil {
+		t.Fatal(err)
+	}
+
+	mock.ListOpenPRsFn = func(_ context.Context, _, _ string) ([]gitea.PR, error) { return nil, nil }
+	mock.GetPRFn = func(_ context.Context, _, _ string, _ int64) (*gitea.PR, error) {
+		return nil, &gitea.APIError{StatusCode: 500}
+	}
+
+	result, err := poller.PollOnce(ctx, deps)
+	if err != nil {
+		t.Fatalf("PollOnce: %v", err)
+	}
+	if len(result.Dequeued) != 0 {
+		t.Fatalf("PR #42 should stay queued, dequeued: %v", result.Dequeued)
+	}
+	if got, _ := svc.GetEntry(ctx, repoID, 42); got == nil {
+		t.Fatal("PR #42 should still be in the queue")
+	}
+	var reported bool
+	for _, e := range result.Errors {
+		if strings.Contains(e.Error(), "get PR #42") {
+			reported = true
+		}
+	}
+	if !reported {
+		t.Fatalf("expected a get PR #42 error, got %v", result.Errors)
 	}
 }
 

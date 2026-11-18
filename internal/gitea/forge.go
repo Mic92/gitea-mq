@@ -141,6 +141,11 @@ func (f *giteaForge) ListOpenPRs(ctx context.Context, owner, name string) ([]for
 func (f *giteaForge) GetPR(ctx context.Context, owner, name string, number int64) (*forge.PR, error) {
 	pr, err := f.client.GetPR(ctx, owner, name, number)
 	if err != nil {
+		// A deleted PR answers 404: it is gone for good, unlike a transient
+		// read failure.
+		if IsNotFound(err) {
+			return nil, fmt.Errorf("%w: %w", forge.ErrNotFound, err)
+		}
 		return nil, err
 	}
 	timeline, err := f.client.GetPRTimeline(ctx, owner, name, number)

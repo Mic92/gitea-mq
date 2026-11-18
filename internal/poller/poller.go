@@ -5,6 +5,7 @@ package poller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -125,6 +126,20 @@ func removePR(ctx context.Context, deps *Deps, result *PollResult, entry *pg.Que
 
 	slog.Info(opts.logMsg, append([]any{"pr", entry.PrNumber}, opts.logAttrs...)...)
 	return nil
+}
+
+// removeEntry drops the entry from the queue and lets the batch engine rebuild
+// or cancel a batch it was a member of. Every reconcile removal goes through
+// here; label only names the reason in errors.
+func removeEntry(ctx context.Context, deps *Deps, result *PollResult, entry *pg.QueueEntry, label string, opts removeOpts) {
+	if err := removePR(ctx, deps, result, entry, opts); err != nil {
+		result.Errors = append(result.Errors, fmt.Errorf("dequeue %s PR #%d: %w", label, entry.PrNumber, err))
+	}
+	if entry.ActiveBatchID.Valid && deps.Batch != nil {
+		if err := deps.Batch.OnMemberRemoved(ctx, entry.TargetBranch, entry.ActiveBatchID.Int64, entry.ID); err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("batch member removed PR #%d: %w", entry.PrNumber, err))
+		}
+	}
 }
 
 func (deps *Deps) isPriority(pr *forge.PR) bool {
@@ -511,7 +526,7 @@ func finalizeLabeledMerge(ctx context.Context, deps *Deps, result *PollResult, e
 }
 
 // reconcileEntries removes queue entries whose PR was merged, closed,
-// retargeted, pushed to, or had auto-merge cancelled.
+// deleted, retargeted, pushed to, or had auto-merge cancelled.
 func reconcileEntries(ctx context.Context, deps *Deps, result *PollResult, openPRMap map[int64]*forge.PR) {
 	activeEntries, err := deps.Queue.ListActiveEntries(ctx, deps.RepoID)
 	if err != nil {
@@ -524,7 +539,14 @@ func reconcileEntries(ctx context.Context, deps *Deps, result *PollResult, openP
 		if !isOpen {
 			// PR no longer in the open list: fetch directly to learn merged/closed.
 			fullPR, err := deps.Forge.GetPR(ctx, deps.Owner, deps.Repo, entry.PrNumber)
-			if err != nil {
+			switch {
+			case errors.Is(err, forge.ErrNotFound):
+				// A deleted PR cannot be read at all, so it is gone for good:
+				// drop it like a closed one instead of retrying the 404 on
+				// every poll. There is no PR left to comment on.
+				removeEntry(ctx, deps, result, &entry, "deleted", removeOpts{logMsg: "removed deleted PR from queue"})
+				continue
+			case err != nil:
 				result.Errors = append(result.Errors, fmt.Errorf("get PR #%d: %w", entry.PrNumber, err))
 				continue
 			}
@@ -595,18 +617,11 @@ func reconcileEntries(ctx context.Context, deps *Deps, result *PollResult, openP
 			if !c.when {
 				continue
 			}
-			if err := removePR(ctx, deps, result, &entry, c.opts); err != nil {
-				result.Errors = append(result.Errors, fmt.Errorf("dequeue %s PR #%d: %w", c.label, entry.PrNumber, err))
-			}
+			removeEntry(ctx, deps, result, &entry, c.label, c.opts)
 			matched = true
 			break
 		}
 		if matched {
-			if entry.ActiveBatchID.Valid && deps.Batch != nil {
-				if err := deps.Batch.OnMemberRemoved(ctx, entry.TargetBranch, entry.ActiveBatchID.Int64, entry.ID); err != nil {
-					result.Errors = append(result.Errors, fmt.Errorf("batch member removed PR #%d: %w", entry.PrNumber, err))
-				}
-			}
 			continue
 		}
 		if isOpen && holdIfBlocked(ctx, deps, result, &entry) {
