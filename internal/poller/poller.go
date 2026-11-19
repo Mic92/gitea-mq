@@ -138,7 +138,11 @@ func prCheckResult(ctx context.Context, deps *Deps, pr *forge.PR, targetBranch s
 	if err != nil {
 		return monitor.CheckWaiting, fmt.Errorf("resolve required checks for PR #%d: %w", pr.Number, err)
 	}
+	return headCheckResult(ctx, deps, pr, requiredChecks)
+}
 
+// headCheckResult is prCheckResult with the required checks already resolved.
+func headCheckResult(ctx context.Context, deps *Deps, pr *forge.PR, requiredChecks []string) (monitor.CheckResult, error) {
 	checks, err := deps.Forge.GetCheckStates(ctx, deps.Owner, deps.Repo, pr.HeadSHA)
 	if err != nil {
 		return monitor.CheckWaiting, fmt.Errorf("get check states for PR #%d: %w", pr.Number, err)
@@ -392,9 +396,24 @@ func enqueueLabeledPRs(ctx context.Context, deps *Deps, result *PollResult, open
 			continue
 		}
 
-		target, err := labeledTargetBranch(ctx, deps, pr)
+		// A stack top stays open and labeled while the forge merges it.
+		if deps.Batch.RecentlyLanded(pr.Number, pr.HeadSHA) {
+			continue
+		}
+
+		stack, err := labeledStack(ctx, deps, pr)
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("resolve stack for PR #%d: %w", pr.Number, err))
+			continue
+		}
+		target := pr.BaseBranch
+		if stack != nil {
+			target = stack.BaseBranch
+		}
+		if deps.Batch.Enabled() && landedOnTarget(ctx, deps, pr, target) {
+			continue
+		}
+		if !stackMembersGreen(ctx, deps, result, pr, stack, target, openPRs) {
 			continue
 		}
 		enqueuePR(ctx, deps, result, pr, target, "merge label")
@@ -416,19 +435,90 @@ func rejectMergeLabel(ctx context.Context, deps *Deps, result *PollResult, numbe
 		"comment on unauthorized merge label failed", "pr", number)
 }
 
+// labeledStack is the PR's stack, or nil when it is not part of one.
+func labeledStack(ctx context.Context, deps *Deps, pr *forge.PR) (*forge.Stack, error) {
+	stack, err := forge.ResolveStack(ctx, deps.Forge, deps.Owner, deps.Repo, pr.Number)
+	if err != nil || stack == nil {
+		return nil, err
+	}
+	if _, ok := stack.MembersUpTo(pr.Number); !ok {
+		return nil, nil
+	}
+	return stack, nil
+}
+
 // labeledTargetBranch is the stack base branch for stacked PRs, else the PR's
 // own base branch.
 func labeledTargetBranch(ctx context.Context, deps *Deps, pr *forge.PR) (string, error) {
-	stack, err := forge.ResolveStack(ctx, deps.Forge, deps.Owner, deps.Repo, pr.Number)
+	stack, err := labeledStack(ctx, deps, pr)
 	if err != nil {
 		return "", err
 	}
 	if stack != nil {
-		if _, ok := stack.MembersUpTo(pr.Number); ok {
-			return stack.BaseBranch, nil
-		}
+		return stack.BaseBranch, nil
 	}
 	return pr.BaseBranch, nil
+}
+
+// landedOnTarget reports whether the PR's head is already in the target, as
+// right after a landing, before the forge marks the PR merged. Compare errors
+// count as not landed so a flaky API never blocks the queue.
+func landedOnTarget(ctx context.Context, deps *Deps, pr *forge.PR, target string) bool {
+	landed, err := deps.Forge.IsUpToDate(ctx, deps.Owner, deps.Repo, pr.HeadSHA, target)
+	if err != nil {
+		slog.Warn("landed check failed", "pr", pr.Number, "error", err)
+		return false
+	}
+	if landed {
+		slog.Info("labeled PR already contained in target; not enqueuing", "pr", pr.Number, "target", target)
+	}
+	return landed
+}
+
+// stackMembersGreen holds back a labeled stack top until every lower member's
+// own CI is green: the forge's stack merge re-checks each member, and a stuck
+// one would leave the top in success until the success timeout
+// (Mic92/nixbot#179). The merge intent stays.
+func stackMembersGreen(ctx context.Context, deps *Deps, result *PollResult, pr *forge.PR, stack *forge.Stack, target string, openPRs []forge.PR) bool {
+	if stack == nil {
+		return true
+	}
+	// Members share the stack base's required checks; resolving them per
+	// member would cost a large stack two calls per member on every poll.
+	requiredChecks, err := monitor.ResolveRequiredChecks(ctx, deps.Forge, deps.Owner, deps.Repo, target, deps.FallbackChecks)
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Errorf("resolve required checks for stack of PR #%d: %w", pr.Number, err))
+		return false
+	}
+	members, _ := stack.MembersUpTo(pr.Number)
+	byNumber := make(map[int64]*forge.PR, len(openPRs))
+	for i := range openPRs {
+		byNumber[openPRs[i].Number] = &openPRs[i]
+	}
+	for _, m := range members {
+		if m.Merged || m.Number == pr.Number {
+			continue
+		}
+		member, ok := byNumber[m.Number]
+		if !ok {
+			continue
+		}
+		res, err := headCheckResult(ctx, deps, member, requiredChecks)
+		if err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("check CI status for stack member #%d of PR #%d: %w", m.Number, pr.Number, err))
+			return false
+		}
+		switch res {
+		case monitor.CheckSuccess:
+			continue
+		case monitor.CheckFailure:
+			markWaiting(ctx, deps, pr.Number, pr.HeadSHA, fmt.Sprintf("Stack member #%d CI failed", m.Number))
+		default:
+			markWaiting(ctx, deps, pr.Number, pr.HeadSHA, fmt.Sprintf("Waiting for stack member #%d CI", m.Number))
+		}
+		return false
+	}
+	return true
 }
 
 // hintStackedPRs surfaces the label workflow on stacked PRs, whose required

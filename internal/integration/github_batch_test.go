@@ -153,3 +153,90 @@ func TestGithub_BatchFlow_Green(t *testing.T) {
 		t.Fatalf("batch branch %s not cleaned up", live.BranchName.String)
 	}
 }
+
+// The merge label on the top of a 3-PR stack lands it through merge-async, not
+// a fast-forward, and later polls must not merge the still-open top again.
+func TestGithub_BatchFlow_LabeledStack(t *testing.T) {
+	srv := ghfake.New()
+	t.Cleanup(srv.Close)
+	srv.AddRepo("org", "app")
+	srv.AddInstallation(100, "org/app")
+	repo := srv.Repo("org", "app")
+	repo.RequiredChecks["main"] = []string{"ci"}
+	repo.Stacks = []ghfake.Stack{{BaseRef: "main", PRs: []int64{1, 2, 3}}}
+	repo.Permissions = map[string]string{"maint": "write"}
+	repo.LabelEvents = map[int64][]ghfake.LabelEvent{3: {{Actor: "maint", Label: "merge-queue"}}}
+	for n := int64(1); n <= 3; n++ {
+		sha := fmt.Sprintf("sha%d", n)
+		base := "main"
+		if n > 1 {
+			base = fmt.Sprintf("b%d", n-1)
+		}
+		pr := ghfake.PR{Number: n, BaseRef: base, HeadRef: fmt.Sprintf("b%d", n), HeadSHA: sha}
+		if n == 3 {
+			pr.Labels = []string{"merge-queue"}
+		}
+		srv.AddPR("org", "app", pr)
+		repo.CheckRuns[sha] = []*ghfake.CheckRun{{Name: "ci", Status: "completed", Conclusion: "success"}}
+		// The top head does not yet appear in main; the tested tip is current.
+		repo.BehindBy[sha+"...main"] = 1
+	}
+	mainBefore := repo.Refs["main"]
+
+	app, err := githubpkg.NewApp(1, testutil.GithubAppKey(), srv.URL+"/api/v3")
+	if err != nil {
+		t.Fatalf("new app: %v", err)
+	}
+	ctx := t.Context()
+	if err := app.Refresh(ctx); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	f := githubpkg.NewForge(app, "")
+
+	pool := testutil.TestDB(t)
+	svc := queue.NewService(pool)
+	dbRepo, _ := svc.GetOrCreateRepo(ctx, "github", "org", "app")
+
+	eng := &batch.Engine{
+		Forge: f, Queue: svc, Owner: "org", Repo: "app", RepoID: dbRepo.ID,
+		BatchMax: 5, SkipIfUpToDate: true, MergeLabel: "merge-queue",
+		MergedPollInterval: 1, MergedPollAttempts: 1,
+		StackMergedPollInterval: 1, StackMergedPollAttempts: 1,
+	}
+	pollerDeps := &poller.Deps{
+		Forge: f, Queue: svc, RepoID: dbRepo.ID, Owner: "org", Repo: "app",
+		SuccessTimeout: 5 * time.Minute, CheckTimeout: time.Hour, Batch: eng,
+		MergeLabel: "merge-queue",
+	}
+
+	// GitHub keeps all three PRs open while merge-async is pending.
+	for range 3 {
+		if _, err := poller.PollOnce(ctx, pollerDeps); err != nil {
+			t.Fatalf("PollOnce: %v", err)
+		}
+	}
+
+	if len(repo.AsyncMerges) != 1 || repo.AsyncMerges[0] != 3 {
+		t.Fatalf("AsyncMerges = %v, want exactly [3]", repo.AsyncMerges)
+	}
+	if repo.Refs["main"] != mainBefore {
+		t.Fatalf("main moved to %q; stacks must land via the forge", repo.Refs["main"])
+	}
+	for n := int64(1); n <= 3; n++ {
+		if repo.PRs[n].State != "open" {
+			t.Fatalf("PR #%d state = %q; gitea-mq must not close stack members", n, repo.PRs[n].State)
+		}
+		var green bool
+		for _, cr := range repo.CheckRuns[fmt.Sprintf("sha%d", n)] {
+			if cr.Name == forge.MQContext && cr.Conclusion == "success" {
+				green = true
+			}
+		}
+		if !green {
+			t.Fatalf("PR #%d missing gitea-mq success before the stack merge", n)
+		}
+	}
+	if e, _ := svc.GetEntry(ctx, dbRepo.ID, 3); e != nil {
+		t.Fatalf("landed top re-enqueued: %+v", e)
+	}
+}

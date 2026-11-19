@@ -573,3 +573,239 @@ func TestPendingDrop(t *testing.T) {
 		t.Fatalf("expected done, got %+v", b)
 	}
 }
+
+// stackFor makes PR top the head of a stack whose lower members are
+// numbered top-2, top-1 with heads "sha<N>".
+func stackFor(f *fakeForge, top int64) {
+	prev := f.ResolveStackFn
+	f.ResolveStackFn = func(ctx context.Context, o, r string, n int64) (*forge.Stack, error) {
+		if n != top {
+			if prev != nil {
+				return prev(ctx, o, r, n)
+			}
+			return nil, nil
+		}
+		return &forge.Stack{BaseBranch: "main", PRs: []forge.StackPR{
+			{Number: top - 2, HeadSHA: fmt.Sprintf("sha%d", top-2)},
+			{Number: top - 1, HeadSHA: fmt.Sprintf("sha%d", top-1)},
+			{Number: top, HeadSHA: fmt.Sprintf("sha%d", top)},
+		}}, nil
+	}
+	f.IsUpToDateFn = func(_ context.Context, _, _, _, head string) (bool, error) {
+		return strings.Contains(head, f.target), nil
+	}
+}
+
+func callIndex(f *fakeForge, pred func(forge.MockCall) bool) int {
+	return slices.IndexFunc(f.Calls, pred)
+}
+
+func isMQSuccess(sha string) func(forge.MockCall) bool {
+	return func(c forge.MockCall) bool {
+		return c.Method == "SetMQStatus" && c.Args[2] == sha && c.Args[3].(forge.MQStatus).State == pg.CheckStateSuccess
+	}
+}
+
+// After a fast-forward GitHub marks only the bottom PR merged, so a stack
+// lands through the forge's stack merge with every member head green first.
+func TestHandlePass_StackEntryLandsViaMergePR(t *testing.T) {
+	e, f, svc, ctx := setup(t, 10)
+	stackFor(f, 10)
+	f.merged[10] = true
+	e.StackMergedPollInterval, e.StackMergedPollAttempts = 1, 1
+
+	b, err := e.FormAndBuild(ctx, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.HandlePass(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+
+	if n := len(f.CallsTo("FastForward")); n != 0 {
+		t.Fatalf("FastForward called %d times for a stack", n)
+	}
+	merges := f.CallsTo("MergePR")
+	if len(merges) != 1 || merges[0].Args[2].(int64) != 10 {
+		t.Fatalf("MergePR calls = %+v", merges)
+	}
+	mergeAt := callIndex(f, func(c forge.MockCall) bool { return c.Method == "MergePR" })
+	for _, sha := range []string{"sha8", "sha9", "sha10"} {
+		if i := callIndex(f, isMQSuccess(sha)); i < 0 || i > mergeAt {
+			t.Fatalf("success status on %s at call %d, MergePR at %d", sha, i, mergeAt)
+		}
+	}
+	if n := len(f.CallsTo("ClosePR")) + len(f.CallsTo("Comment")); n != 0 {
+		t.Fatalf("ClosePR/Comment called %d times for a stack landing", n)
+	}
+	if b.State != pg.BatchStateDone || len(b.LandedIds) != 1 {
+		t.Fatalf("batch = %+v", b)
+	}
+	if ent, _ := svc.GetEntry(ctx, e.RepoID, 10); ent != nil {
+		t.Fatal("landed stack entry still queued")
+	}
+	if !e.RecentlyLanded(10, "sha10") {
+		t.Fatal("landed stack top not remembered")
+	}
+	if e.RecentlyLanded(10, "other") {
+		t.Fatal("different head must not count as landed")
+	}
+}
+
+// Mirrored checks only ever sit on the queued head; reading every lower
+// member's checks as well tripled the forge calls of landing a large stack.
+func TestHandlePass_StackCleansMirrorsOnQueuedHeadOnly(t *testing.T) {
+	e, f, _, ctx := setup(t, 10)
+	stackFor(f, 10)
+	f.merged[10] = true
+	e.StackMergedPollInterval, e.StackMergedPollAttempts = 1, 1
+
+	b, err := e.FormAndBuild(ctx, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.HandlePass(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+
+	reads := map[string]int{}
+	for _, c := range f.CallsTo("GetCheckStates") {
+		reads[c.Args[2].(string)]++
+	}
+	if reads["sha8"]+reads["sha9"] != 0 || reads["sha10"] == 0 {
+		t.Fatalf("GetCheckStates per head = %v; want the queued head only", reads)
+	}
+}
+
+// The wait for GitHub to report a stack merged grows with its members.
+func TestHandlePass_StackMergedWaitGrowsWithMembers(t *testing.T) {
+	e, f, _, ctx := setup(t, 10)
+	stackFor(f, 10)
+	e.StackMergedPollInterval = 1
+	polls := 0
+	f.GetPRFn = func(_ context.Context, _, _ string, n int64) (*forge.PR, error) {
+		polls++
+		return &forge.PR{Number: n, Merged: polls >= 35, State: "open"}, nil
+	}
+
+	b, err := e.FormAndBuild(ctx, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.HandlePass(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	if polls != 35 {
+		t.Fatalf("polled %d times; want to keep polling a 3-member stack until it reports merged at 35", polls)
+	}
+}
+
+// A stack never shares a batch: [plain, stack, plain] lands as FF, merge-PR,
+// FF in queue order.
+func TestFormAndBuild_StackEntryIsNotBatched(t *testing.T) {
+	e, f, svc, ctx := setup(t, 10, 20, 30)
+	stackFor(f, 20)
+	for _, n := range []int64{10, 20, 30} {
+		f.merged[n] = true
+	}
+	e.StackMergedPollInterval, e.StackMergedPollAttempts = 1, 1
+
+	b, err := e.FormAndBuild(ctx, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ent10, _ := svc.GetEntry(ctx, e.RepoID, 10)
+	if len(b.CurrentIds) != 1 || b.CurrentIds[0] != ent10.ID {
+		t.Fatalf("first batch current = %v, want only #10", b.CurrentIds)
+	}
+	if err := e.HandlePass(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	ent20, _ := svc.GetEntry(ctx, e.RepoID, 20)
+	if b.State != pg.BatchStateTesting || len(b.CurrentIds) != 1 || b.CurrentIds[0] != ent20.ID {
+		t.Fatalf("after #10: %+v", b)
+	}
+	if n := len(f.CallsTo("MergePR")); n != 0 {
+		t.Fatalf("MergePR called before the stack's turn")
+	}
+	if err := e.HandlePass(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	ent30, _ := svc.GetEntry(ctx, e.RepoID, 30)
+	if len(b.CurrentIds) != 1 || b.CurrentIds[0] != ent30.ID {
+		t.Fatalf("after stack: %+v", b)
+	}
+	if err := e.HandlePass(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+
+	var seq []string
+	for _, c := range f.Calls {
+		switch c.Method {
+		case "FastForward":
+			seq = append(seq, "ff")
+		case "MergePR":
+			seq = append(seq, fmt.Sprintf("merge#%d", c.Args[2]))
+		}
+	}
+	if got := strings.Join(seq, ","); got != "ff,merge#20,ff" {
+		t.Fatalf("landing order = %s", got)
+	}
+	if b.State != pg.BatchStateDone || len(b.LandedIds) != 3 {
+		t.Fatalf("batch = %+v", b)
+	}
+}
+
+func TestHandlePass_StackMergeErrorEjects(t *testing.T) {
+	e, f, svc, ctx := setup(t, 10)
+	stackFor(f, 10)
+	e.MergeLabel = "merge-queue"
+	f.MergePRFn = func(context.Context, string, string, int64) error {
+		return errors.New("required check lint is failing on #9")
+	}
+
+	b, _ := e.FormAndBuild(ctx, "main")
+	if err := e.HandlePass(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(f.CallsTo("FastForward")); n != 0 {
+		t.Fatalf("FastForward called after MergePR failed")
+	}
+	comments := f.CallsTo("Comment")
+	if len(comments) != 1 || !strings.Contains(comments[0].Args[3].(string), "required check lint is failing on #9") {
+		t.Fatalf("comments = %+v", comments)
+	}
+	if ent, _ := svc.GetEntry(ctx, e.RepoID, 10); ent != nil {
+		t.Fatal("entry not ejected")
+	}
+	if len(f.CallsTo("RemoveLabel")) == 0 {
+		t.Fatal("merge intent not withdrawn")
+	}
+	if e.RecentlyLanded(10, "sha10") {
+		t.Fatal("failed merge must not be remembered as landed")
+	}
+	if b.State != pg.BatchStateDone || len(b.LandedIds) != 0 {
+		t.Fatalf("batch = %+v", b)
+	}
+}
+
+// If the target moved after the batch was built, the stack merge would land
+// untested content: rebuild instead of calling the forge.
+func TestHandlePass_StackTargetMovedRebuilds(t *testing.T) {
+	e, f, _, ctx := setup(t, 10)
+	stackFor(f, 10)
+	f.merged[10] = true
+	e.StackMergedPollInterval, e.StackMergedPollAttempts = 1, 1
+
+	b, _ := e.FormAndBuild(ctx, "main")
+	f.target = "main1"
+	if err := e.HandlePass(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(f.CallsTo("MergePR")); n != 0 {
+		t.Fatalf("MergePR called on a stale build")
+	}
+	if b.State != pg.BatchStateTesting || b.FfRetries != 1 || b.Builds != 2 || !strings.Contains(b.BranchSha.String, "main1") {
+		t.Fatalf("batch not rebuilt on the new tip: %+v", b)
+	}
+}
