@@ -26,6 +26,7 @@ type Config struct {
 	IdlePollInterval    time.Duration
 	CheckTimeout        time.Duration
 	RequiredChecks      []string
+	TargetBranches      []string
 	MergeLabel          string
 	PriorityLabel       string
 	LabelPrefix         string
@@ -146,12 +147,11 @@ func Load() (*Config, error) {
 		}
 	}
 
-	if checks := os.Getenv("GITEA_MQ_REQUIRED_CHECKS"); checks != "" {
-		for _, c := range strings.Split(checks, ",") {
-			if c = strings.TrimSpace(c); c != "" {
-				cfg.RequiredChecks = append(cfg.RequiredChecks, c)
-			}
-		}
+	cfg.RequiredChecks = parseList(os.Getenv("GITEA_MQ_REQUIRED_CHECKS"))
+	targetBranches := os.Getenv("GITEA_MQ_TARGET_BRANCHES")
+	cfg.TargetBranches = parseList(targetBranches)
+	if targetBranches != "" && len(cfg.TargetBranches) == 0 {
+		return nil, fmt.Errorf("GITEA_MQ_TARGET_BRANCHES: no branch names specified")
 	}
 
 	cfg.MergeLabel = envOrDefault("GITEA_MQ_MERGE_LABEL", "merge-queue")
@@ -333,6 +333,16 @@ func parseRepos(s string, kind forge.Kind) ([]forge.RepoRef, error) {
 		return nil, fmt.Errorf("no repos specified")
 	}
 	return repos, nil
+}
+
+func parseList(raw string) []string {
+	var items []string
+	for item := range strings.SplitSeq(raw, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			items = append(items, item)
+		}
+	}
+	return items
 }
 
 func parseInt(envKey string, defaultVal, minVal int) (int, error) {
