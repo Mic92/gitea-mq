@@ -3,8 +3,14 @@
   pkgs,
   gitea-mq,
   imageName ? "${gitea-mq.pname}:latest",
+  revision ? null,
+  lastModifiedDate ? null,
 }:
 let
+  d = lastModifiedDate;
+  created =
+    "${builtins.substring 0 4 d}-${builtins.substring 4 2 d}-${builtins.substring 6 2 d}"
+    + "T${builtins.substring 8 2 d}:${builtins.substring 10 2 d}:${builtins.substring 12 2 d}Z";
   allPlatforms = {
     "x86_64-linux" = {
       GOOS = "linux";
@@ -66,6 +72,19 @@ let
         };
         ExposedPorts = {
           "8080" = { };
+        };
+        Labels = {
+          "org.opencontainers.image.title" = gitea-mq.pname;
+          "org.opencontainers.image.description" = "Merge queue for Gitea and GitHub";
+          "org.opencontainers.image.version" = gitea-mq.version;
+          "org.opencontainers.image.licenses" = "MIT";
+        }
+        // lib.optionalAttrs (revision != null) {
+          "org.opencontainers.image.revision" = revision;
+        }
+        // lib.optionalAttrs (lastModifiedDate != null) {
+          # Use the flake's source timestamp so rebuilds are reproducible.
+          "org.opencontainers.image.created" = created;
         };
       };
     }
