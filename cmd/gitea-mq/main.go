@@ -16,6 +16,7 @@ import (
 	"github.com/Mic92/gitea-mq/internal/forge"
 	"github.com/Mic92/gitea-mq/internal/gitea"
 	"github.com/Mic92/gitea-mq/internal/github"
+	"github.com/Mic92/gitea-mq/internal/health"
 	"github.com/Mic92/gitea-mq/internal/queue"
 	"github.com/Mic92/gitea-mq/internal/registry"
 	"github.com/Mic92/gitea-mq/internal/store/pg"
@@ -80,9 +81,12 @@ func run() error {
 	forges := forge.NewSet()
 	var discSources []discovery.Source
 
+	readyChecks := []health.Check{{Name: "database", Probe: pool.Ping}}
+
 	var giteaWebhookSecret string
 	if cfg.Gitea != nil {
 		giteaClient := gitea.NewHTTPClient(cfg.Gitea.URL, cfg.Gitea.Token)
+		readyChecks = append(readyChecks, health.Check{Name: "gitea", Probe: giteaClient.Ping})
 		giteaClient.SetGitCacheDir(cfg.CacheDir)
 		giteaClient.CleanupGitCache(gitea.DefaultCacheMaxAge)
 		forges.Register(gitea.NewForge(giteaClient, cfg.Gitea.URL))
@@ -108,6 +112,7 @@ func run() error {
 		if err := app.SyncHookConfig(ctx, cfg.ExternalURL, cfg.Github.WebhookSecret); err != nil {
 			slog.Warn("github: sync app webhook config failed", "err", err)
 		}
+		readyChecks = append(readyChecks, health.Check{Name: "github", Probe: app.Ping})
 		forges.Register(github.NewForge(app, ""))
 		discSources = append(discSources, discovery.Source{
 			Kind: forge.KindGithub,
@@ -172,7 +177,13 @@ func run() error {
 		))
 	}
 
-	// Health check.
+	// Liveness: the process serves HTTP. Readiness: the database and every
+	// configured forge answer, so the queue can make progress.
+	mux.Handle("/readyz", &health.Readiness{
+		Checks:  readyChecks,
+		Timeout: 5 * time.Second,
+		TTL:     10 * time.Second,
+	})
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)

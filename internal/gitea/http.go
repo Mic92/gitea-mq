@@ -725,6 +725,12 @@ func (c *HTTPClient) CreateWebhook(ctx context.Context, owner, repo string, opts
 		fmt.Sprintf("create webhook in %s/%s", owner, repo))
 }
 
+// Ping verifies the server is reachable and the token is still accepted.
+// GET /repos/search?limit=1
+func (c *HTTPClient) Ping(ctx context.Context) error {
+	return c.doDiscard(ctx, http.MethodGet, "/repos/search?limit=1", nil, "check repository API")
+}
+
 // ServerVersion returns the Gitea/Forgejo server version string.
 // GET /version
 func (c *HTTPClient) GetCollaboratorPermission(ctx context.Context, owner, repo, user string) (string, error) {
