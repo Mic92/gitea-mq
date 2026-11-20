@@ -64,6 +64,16 @@ func TestForge_ListAndGetPR(t *testing.T) {
 	}
 }
 
+// A deleted PR cannot be read: the 404 has to surface as forge.ErrNotFound so
+// callers can tell it apart from a transient failure.
+func TestForge_GetPR_DeletedIsNotFound(t *testing.T) {
+	_, f := newTestForge(t)
+	_, err := f.GetPR(context.Background(), "org", "app", 404)
+	if !errors.Is(err, forge.ErrNotFound) {
+		t.Fatalf("GetPR of a missing PR = %v, want forge.ErrNotFound", err)
+	}
+}
+
 // Repeated SetMQStatus calls on the same SHA must result in exactly one
 // check run server-side, both with a warm cache (PATCH via cached ID) and
 // after a process restart (cold cache forces lookup-by-name then PATCH).
