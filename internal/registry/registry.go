@@ -37,6 +37,7 @@ type Deps struct {
 	IdlePollInterval    time.Duration
 	CheckTimeout        time.Duration
 	FallbackChecks      []string
+	TargetBranches      []string
 	MergeLabel          string
 	PriorityLabel       string
 	LabelPrefix         string
@@ -175,6 +176,7 @@ func (r *RepoRegistry) Add(ctx context.Context, ref forge.RepoRef) error {
 		ExternalURL:         r.deps.ExternalURL,
 		FallbackChecks:      r.deps.FallbackChecks,
 		MergeLabel:          r.deps.MergeLabel,
+		TargetBranches:      r.deps.TargetBranches,
 		PriorityLabel:       r.deps.PriorityLabel,
 		LabelPrefix:         r.deps.LabelPrefix,
 		SuccessTimeout:      r.deps.SuccessTimeout,

@@ -125,6 +125,7 @@ func run() error {
 		IdlePollInterval:    cfg.IdlePollInterval,
 		CheckTimeout:        cfg.CheckTimeout,
 		FallbackChecks:      cfg.RequiredChecks,
+		TargetBranches:      cfg.TargetBranches,
 		MergeLabel:          cfg.MergeLabel,
 		PriorityLabel:       cfg.PriorityLabel,
 		LabelPrefix:         cfg.LabelPrefix,

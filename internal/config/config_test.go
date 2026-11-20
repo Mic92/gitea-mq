@@ -4,6 +4,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -298,5 +299,23 @@ func TestLoad_SecretFromFile(t *testing.T) {
 	}
 	if cfg.Gitea.Token != "tok" {
 		t.Errorf("Token = %q, want tok", cfg.Gitea.Token)
+	}
+}
+
+func TestLoad_TargetBranches(t *testing.T) {
+	setEnv(t, giteaEnv)
+	t.Setenv("GITEA_MQ_TARGET_BRANCHES", "")
+	cfg, err := Load()
+	if err != nil || len(cfg.TargetBranches) != 0 {
+		t.Fatalf("default: %+v %v", cfg, err)
+	}
+	t.Setenv("GITEA_MQ_TARGET_BRANCHES", "main, release/stable")
+	cfg, err = Load()
+	if err != nil || !slices.Equal(cfg.TargetBranches, []string{"main", "release/stable"}) {
+		t.Fatalf("targets: %+v %v", cfg, err)
+	}
+	t.Setenv("GITEA_MQ_TARGET_BRANCHES", " , ")
+	if _, err := Load(); err == nil {
+		t.Fatal("a nonempty value without branch names must fail")
 	}
 }
