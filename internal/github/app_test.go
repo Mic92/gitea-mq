@@ -2,6 +2,8 @@ package github_test
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -78,5 +80,30 @@ func TestApp_SyncHookConfig(t *testing.T) {
 	}
 	if got := srv.HookConfig(); got != want {
 		t.Errorf("hook config = %+v, want %+v", got, want)
+	}
+}
+
+func TestApp_Ping(t *testing.T) {
+	for _, status := range []int{http.StatusOK, http.StatusUnauthorized} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				scheme, credential, _ := strings.Cut(req.Header.Get("Authorization"), " ")
+				if req.Method != http.MethodGet || req.URL.Path != "/api/v3/app" || !strings.EqualFold(scheme, "Bearer") || credential == "" {
+					t.Errorf("expected an authenticated GET /app")
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte("{}"))
+			}))
+			defer srv.Close()
+			app, err := githubpkg.NewApp(1, testutil.GithubAppKey(), srv.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := app.Ping(t.Context()); (err == nil) != (status == http.StatusOK) {
+				t.Errorf("Ping with status %d returned %v", status, err)
+			}
+		})
 	}
 }

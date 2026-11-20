@@ -268,16 +268,24 @@ func NewGiteaAPI(baseURL string) *GiteaAPI {
 }
 
 // CreateToken creates an API token for the admin user.
-func (a *GiteaAPI) CreateToken(t *testing.T) string {
+func (a *GiteaAPI) CreateToken(t *testing.T, scopes ...string) string {
 	t.Helper()
 
 	// Unique per call so multiple tests in one package can each obtain a
 	// token against the shared Gitea instance.
-	body := fmt.Sprintf(`{"name": "test-token-%d", "scopes": ["all"]}`, time.Now().UnixNano())
+	if len(scopes) == 0 {
+		scopes = []string{"all"}
+	}
+	body, err := json.Marshal(map[string]any{
+		"name": fmt.Sprintf("test-token-%d", time.Now().UnixNano()), "scopes": scopes,
+	})
+	if err != nil {
+		t.Fatalf("encode token request: %v", err)
+	}
 
 	req, err := http.NewRequest(http.MethodPost,
 		a.BaseURL+"/api/v1/users/testuser/tokens",
-		strings.NewReader(body))
+		strings.NewReader(string(body)))
 	if err != nil {
 		t.Fatalf("create token request: %v", err)
 	}
