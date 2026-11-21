@@ -34,6 +34,33 @@ func BranchName(id int64) string {
 	return fmt.Sprintf("%s%d", BranchPrefix, id)
 }
 
+// RunRefPrefix namespaces the refs that pin the commit of a batch build.
+const RunRefPrefix = "refs/gitea-mq/runs/"
+
+// RunRef returns the ref that pins sha, the commit of one build of the batch.
+// The CI run of a batch branch fetches it when the branch itself is already
+// gone: Build deletes the branch before rebuilding it and finish deletes it
+// once the batch is done, so without the ref the commit of a run that has not
+// started yet is unreachable and a forge gc may prune it — the run then fails
+// with "unable to read tree" before any stage.
+func RunRef(batchID int64, sha string) string {
+	return fmt.Sprintf("%s%d/%s", RunRefPrefix, batchID, sha)
+}
+
+// runRefBatchPrefix is the common prefix of every run ref of one batch.
+func runRefBatchPrefix(batchID int64) string {
+	return fmt.Sprintf("%s%d/", RunRefPrefix, batchID)
+}
+
+// batchIDFromRunRef returns the batch a run ref belongs to.
+func batchIDFromRunRef(ref string) (int64, bool) {
+	var id int64
+	if _, err := fmt.Sscanf(ref, RunRefPrefix+"%d/", &id); err != nil {
+		return 0, false
+	}
+	return id, true
+}
+
 // Engine drives the batch lifecycle for one repository. The pg.Batch row is
 // the source of truth; the mutex serialises every public entry point so the
 // webhook handler and poller cannot mutate the same batch concurrently.
@@ -203,6 +230,11 @@ func (e *Engine) Build(ctx context.Context, b *pg.Batch) error {
 	}
 
 	b.BranchSha = pgtype.Text{String: tip, Valid: true}
+	// Pin the build's commit while the batch branch still exists: the branch
+	// may be gone (rebuild deletes it first, finish deletes it at the end)
+	// before the runner of this run starts, and only the ref keeps the commit
+	// reachable for its clone.
+	e.pinRunRef(ctx, b, tip)
 	b.State = pg.BatchStateTesting
 	b.TestingStartedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
 	first := b.Builds == 0
@@ -463,6 +495,10 @@ func (e *Engine) ReconcileLive(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Run refs of batches a restart found no longer live belong to runs that
+	// are already over; dropping them here keeps the ref namespace from
+	// growing forever after a crash.
+	e.dropStaleRunRefs(ctx, bs)
 	for i := range bs {
 		b := &bs[i]
 		unlock := e.lock(b.TargetBranch)
@@ -482,6 +518,54 @@ func (e *Engine) ReconcileLive(ctx context.Context) error {
 		unlock()
 	}
 	return nil
+}
+
+// pinRunRef keeps a build's commit reachable for the run that tests it. A
+// forge without RefKeeper keeps the old behavior: the commit lives only as
+// long as the batch branch does.
+func (e *Engine) pinRunRef(ctx context.Context, b *pg.Batch, sha string) {
+	keeper, ok := e.Forge.(forge.RefKeeper)
+	if !ok {
+		return
+	}
+	logutil.WarnIfErr(keeper.SetRef(ctx, e.Owner, e.Repo, RunRef(b.ID, sha), sha),
+		"keep run ref failed", "batch", b.ID, "sha", sha)
+}
+
+// dropRunRefs removes every run ref of one batch.
+func (e *Engine) dropRunRefs(ctx context.Context, keeper forge.RefKeeper, batchID int64) {
+	refs, err := keeper.ListRefs(ctx, e.Owner, e.Repo, runRefBatchPrefix(batchID))
+	if err != nil {
+		logutil.WarnIfErr(err, "list run refs failed", "batch", batchID)
+		return
+	}
+	for ref := range refs {
+		logutil.WarnIfErr(keeper.DeleteRef(ctx, e.Owner, e.Repo, ref), "delete run ref failed", "ref", ref)
+	}
+}
+
+// dropStaleRunRefs removes run refs whose batch is not in the live list.
+func (e *Engine) dropStaleRunRefs(ctx context.Context, live []pg.Batch) {
+	keeper, ok := e.Forge.(forge.RefKeeper)
+	if !ok {
+		return
+	}
+	refs, err := keeper.ListRefs(ctx, e.Owner, e.Repo, RunRefPrefix)
+	if err != nil {
+		logutil.WarnIfErr(err, "list run refs failed", "repo", e.Repo)
+		return
+	}
+	liveIDs := make(map[int64]bool, len(live))
+	for i := range live {
+		liveIDs[live[i].ID] = true
+	}
+	for ref := range refs {
+		id, ok := batchIDFromRunRef(ref)
+		if !ok || liveIDs[id] {
+			continue
+		}
+		logutil.WarnIfErr(keeper.DeleteRef(ctx, e.Owner, e.Repo, ref), "delete stale run ref failed", "ref", ref)
+	}
 }
 
 // headIfUpToDate returns the lone head as tip when it already contains base;
@@ -565,6 +649,12 @@ func (e *Engine) finish(ctx context.Context, b *pg.Batch, build bool) error {
 		return e.Build(ctx, b)
 	}
 	logutil.WarnIfErr(e.Forge.DeleteBranch(ctx, e.Owner, e.Repo, b.BranchName.String), "delete batch branch failed", "branch", b.BranchName.String)
+	// The batch is over: every run of its builds has reported (that is what
+	// moved the batch here) or been cancelled. The pinned commits are no
+	// longer needed and are dropped with the branch.
+	if keeper, ok := e.Forge.(forge.RefKeeper); ok {
+		e.dropRunRefs(ctx, keeper, b.ID)
+	}
 	slog.Info("batch done", "batch", b.ID, "landed", len(b.LandedIds),
 		"ejected", len(b.EjectedIds), "builds", b.Builds, "flaky", b.Flaky)
 	if e.Advance != nil {

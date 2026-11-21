@@ -560,6 +560,63 @@ func (c *HTTPClient) FastForwardRef(ctx context.Context, owner, repo, branch, sh
 	})
 }
 
+// SetRef creates or moves a full ref name to sha with a force refspec. The
+// commit is fetched into the cache first so a pin of an existing build tip
+// also works after a restart emptied the cache.
+func (c *HTTPClient) SetRef(ctx context.Context, owner, repo, ref, sha string) error {
+	if !strings.HasPrefix(ref, "refs/") {
+		return fmt.Errorf("set ref %q: not a full ref name", ref)
+	}
+	return c.gitCache.withRepo(ctx, c.cloneURL(owner, repo), owner, repo, []string{sha}, func(run gitRunFunc) error {
+		if _, err := run("push", "--quiet", "--force", "origin", sha+":"+ref); err != nil {
+			return fmt.Errorf("push %s: %w", ref, err)
+		}
+		return nil
+	})
+}
+
+// DeleteRef deletes ref straight from the cached repo; a ref the server does
+// not have is treated as already deleted.
+func (c *HTTPClient) DeleteRef(ctx context.Context, owner, repo, ref string) error {
+	if !strings.HasPrefix(ref, "refs/") {
+		return fmt.Errorf("delete ref %q: not a full ref name", ref)
+	}
+	return c.gitCache.withRepo(ctx, c.cloneURL(owner, repo), owner, repo, nil, func(run gitRunFunc) error {
+		out, err := run("push", "--quiet", "origin", ":"+ref)
+		if err == nil || strings.Contains(c.redact(out), "remote ref does not exist") {
+			return nil
+		}
+		return fmt.Errorf("delete ref %s: %w", ref, err)
+	})
+}
+
+// ListRefs returns every ref under prefix with its SHA, read from the server
+// with ls-remote so refs never fetched into the cache are seen too.
+func (c *HTTPClient) ListRefs(ctx context.Context, owner, repo, prefix string) (map[string]string, error) {
+	if !strings.HasPrefix(prefix, "refs/") {
+		return nil, fmt.Errorf("list refs %q: prefix is not under refs/", prefix)
+	}
+	refs := make(map[string]string)
+	err := c.gitCache.withRepo(ctx, c.cloneURL(owner, repo), owner, repo, nil, func(run gitRunFunc) error {
+		out, err := run("ls-remote", "--refs", "origin", prefix+"*")
+		if err != nil {
+			return fmt.Errorf("ls-remote %s*: %w", prefix, err)
+		}
+		for line := range strings.Lines(out) {
+			sha, name, ok := strings.Cut(strings.TrimSpace(line), "\t")
+			if !ok || !strings.HasPrefix(name, prefix) {
+				continue
+			}
+			refs[name] = sha
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return refs, nil
+}
+
 // classifyPushFailure maps a failed `git push --porcelain` to a typed error
 // by parsing its rejection line: "! <from>:<to> <summary> (<reason>)".
 // Client-side ancestry rejections carry fixed reasons; "[remote rejected]"
