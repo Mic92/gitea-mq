@@ -367,16 +367,11 @@ func (e *Engine) HandleFail(ctx context.Context, b *pg.Batch, failedCheck, targe
 	}
 
 	if e.BisectMaxSteps > 0 && int(b.Builds) >= e.BisectMaxSteps {
-		// Cap is on builds, not splits: drain pending too so next() finishes
-		// instead of popping another slice and rebuilding past the cap.
-		for _, s := range loadPending(b.Pending) {
-			b.CurrentIds = append(b.CurrentIds, s...)
-		}
-		b.Pending = nil
-		e.ejectCurrent(ctx, b, pg.CheckStateError,
-			"Bisection limit reached",
-			fmt.Sprintf("⚠️ Removed from merge queue: batch bisection reached the configured limit of %d builds.", e.BisectMaxSteps))
-		return e.next(ctx, b)
+		// The budget for halving is spent, but nobody is proven guilty yet:
+		// pending members were never part of a failing build, and the current
+		// slice only fails as a group. Retest the leftover members one at a
+		// time instead of dropping them with the culprit.
+		return e.capBisection(ctx, b)
 	}
 
 	mid := len(b.CurrentIds) / 2
@@ -390,6 +385,33 @@ func (e *Engine) HandleFail(ctx context.Context, b *pg.Batch, failedCheck, targe
 	logutil.WarnIfErr(e.Queue.ClearMergeBranch(ctx, right), "clear merge branch failed", "batch", b.ID)
 	slog.Info("batch bisecting", "batch", b.ID, "build", b.Builds,
 		"failed_check", failedCheck, "left", len(left), "right", len(right))
+	return e.rebuild(ctx, b)
+}
+
+// capBisection stops halving once the build cap is reached and turns the
+// remaining members into one-member slices so they are retested individually.
+// Nobody is ejected here: a singleton that fails is ejected on the regular
+// singleton path with its own check attribution, and a singleton that passes
+// lands, so PRs that are not at fault are not removed together with the
+// culprit.
+func (e *Engine) capBisection(ctx context.Context, b *pg.Batch) error {
+	leftover := slices.Clone(b.CurrentIds)
+	for _, s := range loadPending(b.Pending) {
+		leftover = append(leftover, s...)
+	}
+	// popNext pops the last slice, so push the singletons in reverse to keep
+	// the queue order.
+	stack := make(pendingStack, 0, max(len(leftover)-1, 0))
+	for i := len(leftover) - 1; i >= 1; i-- {
+		stack = append(stack, []int64{leftover[i]})
+	}
+	b.CurrentIds = leftover[:1]
+	b.Pending = stack.bytes()
+	// The rest leave the branch; clear their routing so late events for this
+	// build's SHA cannot reach them.
+	logutil.WarnIfErr(e.Queue.ClearMergeBranch(ctx, leftover[1:]), "clear merge branch failed", "batch", b.ID)
+	slog.Info("batch bisection cap reached: retesting remaining members one by one",
+		"batch", b.ID, "build", b.Builds, "left", len(leftover))
 	return e.rebuild(ctx, b)
 }
 

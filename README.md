@@ -109,6 +109,10 @@ Trade-offs and prerequisites:
 - A semantic conflict between two PRs that bisection puts in different halves
   can land both (each half passes alone). This matches bors-ng; keep
   `BATCH_MAX` modest if it bothers you.
+- When `GITEA_MQ_BISECT_MAX_STEPS` is reached, bisection stops but nothing is
+  dropped: the remaining PRs are retested one at a time, so only a PR that
+  fails on its own is removed. This costs at most one extra build per
+  remaining PR.
 - If the forge does not detect a PR as merged within ~10s of the fast-forward,
   gitea-mq closes it with a "Merged as `<sha>`" comment.
 
