@@ -135,6 +135,14 @@ func (a *App) Refresh(ctx context.Context) error {
 	return nil
 }
 
+// Ping verifies GitHub is reachable and accepts the App's JWT (GET /app).
+func (a *App) Ping(ctx context.Context) error {
+	if _, _, err := a.appClient.Apps.Get(ctx, ""); err != nil {
+		return fmt.Errorf("get app: %w", err)
+	}
+	return nil
+}
+
 // SyncHookConfig points the App's single global webhook at this instance so
 // the secret never has to be entered in the GitHub UI by hand.
 func (a *App) SyncHookConfig(ctx context.Context, externalURL, secret string) error {
