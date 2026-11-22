@@ -52,6 +52,9 @@ type MockClient struct {
 	IsForgejoFn                 func(ctx context.Context) (bool, error)
 	ListIssueDependenciesFn     func(ctx context.Context, owner, repo string, index int64) ([]Issue, error)
 	GetCollaboratorPermissionFn func(ctx context.Context, owner, repo, user string) (string, error)
+	SetRefFn                    func(ctx context.Context, owner, repo, ref, sha string) error
+	DeleteRefFn                 func(ctx context.Context, owner, repo, ref string) error
+	ListRefsFn                  func(ctx context.Context, owner, repo, prefix string) (map[string]string, error)
 }
 
 // Ensure MockClient implements Client at compile time.
@@ -303,6 +306,36 @@ func (m *MockClient) FastForwardRef(ctx context.Context, owner, repo, branch, sh
 	}
 
 	return nil
+}
+
+func (m *MockClient) SetRef(ctx context.Context, owner, repo, ref, sha string) error {
+	m.record("SetRef", owner, repo, ref, sha)
+
+	if m.SetRefFn != nil {
+		return m.SetRefFn(ctx, owner, repo, ref, sha)
+	}
+
+	return nil
+}
+
+func (m *MockClient) DeleteRef(ctx context.Context, owner, repo, ref string) error {
+	m.record("DeleteRef", owner, repo, ref)
+
+	if m.DeleteRefFn != nil {
+		return m.DeleteRefFn(ctx, owner, repo, ref)
+	}
+
+	return nil
+}
+
+func (m *MockClient) ListRefs(ctx context.Context, owner, repo, prefix string) (map[string]string, error) {
+	m.record("ListRefs", owner, repo, prefix)
+
+	if m.ListRefsFn != nil {
+		return m.ListRefsFn(ctx, owner, repo, prefix)
+	}
+
+	return nil, nil
 }
 
 func (m *MockClient) EditIssueState(ctx context.Context, owner, repo string, index int64, state string) error {

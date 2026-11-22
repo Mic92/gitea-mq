@@ -39,6 +39,7 @@ var (
 	_ forge.Forge              = (*giteaForge)(nil)
 	_ forge.MergeStacker       = (*giteaForge)(nil)
 	_ forge.DependencyResolver = (*giteaForge)(nil)
+	_ forge.RefKeeper          = (*giteaForge)(nil)
 )
 
 // StackMerges builds the batch branch in one clone instead of one per member.
@@ -242,6 +243,20 @@ func (f *giteaForge) FastForward(ctx context.Context, owner, name, branch, sha s
 		return &forge.PushDeniedError{Branch: branch, Message: pbe.Message}
 	}
 	return err
+}
+
+// SetRef pins ref at sha so the commit of a batch build stays reachable for
+// its CI run after the batch branch moves or is deleted.
+func (f *giteaForge) SetRef(ctx context.Context, owner, name, ref, sha string) error {
+	return f.client.SetRef(ctx, owner, name, ref, sha)
+}
+
+func (f *giteaForge) DeleteRef(ctx context.Context, owner, name, ref string) error {
+	return f.client.DeleteRef(ctx, owner, name, ref)
+}
+
+func (f *giteaForge) ListRefs(ctx context.Context, owner, name, prefix string) (map[string]string, error) {
+	return f.client.ListRefs(ctx, owner, name, prefix)
 }
 
 func (f *giteaForge) ClosePR(ctx context.Context, owner, name string, number int64) error {

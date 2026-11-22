@@ -259,6 +259,18 @@ type Client interface {
 	// when branch protection denies the push.
 	FastForwardRef(ctx context.Context, owner, repo, branch, sha string) error
 
+	// SetRef creates or moves ref (a full ref name, e.g.
+	// refs/gitea-mq/runs/7/<sha>) to sha via git smart-HTTP. Used to keep a
+	// batch build's commit reachable for its CI run after the batch branch
+	// moves or is deleted.
+	SetRef(ctx context.Context, owner, repo, ref, sha string) error
+
+	// DeleteRef deletes ref; a missing ref is not an error.
+	DeleteRef(ctx context.Context, owner, repo, ref string) error
+
+	// ListRefs returns every ref under prefix with its SHA.
+	ListRefs(ctx context.Context, owner, repo, prefix string) (map[string]string, error)
+
 	// EditIssueState sets the state ("open"/"closed") of an issue or PR.
 	// PATCH /repos/{owner}/{repo}/issues/{index}
 	EditIssueState(ctx context.Context, owner, repo string, index int64, state string) error

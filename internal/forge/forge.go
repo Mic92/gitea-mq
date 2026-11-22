@@ -181,6 +181,21 @@ func ResolveStack(ctx context.Context, f Forge, owner, name string, number int64
 	return sr.ResolveStack(ctx, owner, name, number)
 }
 
+// RefKeeper is optionally implemented by forges that can keep an arbitrary
+// ref at a commit. gitea-mq uses it to pin the commit of a batch build under
+// refs/gitea-mq/runs/<batch>/<sha>: the batch branch is deleted (Build starts
+// by deleting it, finish deletes it once the batch is done), and a runner that
+// starts after that would otherwise find the commit unreachable and fail with
+// "unable to read tree" before any stage.
+type RefKeeper interface {
+	// SetRef creates or moves ref to sha. ref must be a full ref name.
+	SetRef(ctx context.Context, owner, name, ref, sha string) error
+	// DeleteRef deletes ref; a missing ref is not an error.
+	DeleteRef(ctx context.Context, owner, name, ref string) error
+	// ListRefs returns every ref under prefix with its SHA.
+	ListRefs(ctx context.Context, owner, name, prefix string) (map[string]string, error)
+}
+
 // CancelMergeIntent withdraws whatever signal put the PR into the queue:
 // forge-native automerge and, when configured, the merge label.
 func CancelMergeIntent(ctx context.Context, f Forge, owner, name string, number int64, mergeLabel string) error {

@@ -573,3 +573,118 @@ func TestPendingDrop(t *testing.T) {
 		t.Fatalf("expected done, got %+v", b)
 	}
 }
+
+// refKeeper wires a MockForge to an in-memory ref map so the run-ref
+// bookkeeping is observable.
+func refKeeper(f *fakeForge) map[string]string {
+	refs := map[string]string{}
+	f.SetRefFn = func(_ context.Context, _, _, ref, sha string) error {
+		refs[ref] = sha
+		return nil
+	}
+	f.DeleteRefFn = func(_ context.Context, _, _, ref string) error {
+		delete(refs, ref)
+		return nil
+	}
+	f.ListRefsFn = func(_ context.Context, _, _, prefix string) (map[string]string, error) {
+		out := map[string]string{}
+		for ref, sha := range refs {
+			if strings.HasPrefix(ref, prefix) {
+				out[ref] = sha
+			}
+		}
+		return out, nil
+	}
+	return refs
+}
+
+// TestRunRef_KeptUntilBatchDone proves that every build's commit stays
+// reachable through refs/gitea-mq/runs/<batch>/<sha> until the batch is over:
+// a rebuild adds a pin instead of dropping the old one, and only finish drops
+// them. That ref is the one a CI run fetches when its batch branch is already
+// gone — Build deletes the branch before rebuilding and finish deletes it at
+// the end, so without the pin a queued run finds "unable to read tree".
+func TestRunRef_KeptUntilBatchDone(t *testing.T) {
+	e, f, _, ctx := setup(t, 10, 20)
+	refs := refKeeper(f)
+
+	b, err := e.FormAndBuild(ctx, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := b.BranchSha.String
+	if refs[batch.RunRef(b.ID, first)] != first {
+		t.Fatalf("build did not pin %q: %v", first, refs)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("build pinned %d refs, want 1: %v", len(refs), refs)
+	}
+
+	// A bisection rebuilds the branch; the commit of the failed build must
+	// stay reachable — its run may not have started yet.
+	if err := e.HandleFail(ctx, b, "ci", ""); err != nil {
+		t.Fatal(err)
+	}
+	second := b.BranchSha.String
+	if second == first {
+		t.Fatal("rebuild produced the same tip")
+	}
+	if refs[batch.RunRef(b.ID, first)] != first {
+		t.Fatalf("rebuild dropped the previous pin: %v", refs)
+	}
+	if refs[batch.RunRef(b.ID, second)] != second {
+		t.Fatalf("rebuild did not pin %q: %v", second, refs)
+	}
+
+	// Landing the first half builds the second half: pins accumulate, and
+	// every earlier build stays pinned until the batch is over.
+	if err := e.HandlePass(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	third := b.BranchSha.String
+	if _, ok := refs[batch.RunRef(b.ID, third)]; !ok {
+		t.Fatalf("next build did not pin %q: %v", third, refs)
+	}
+	if _, ok := refs[batch.RunRef(b.ID, first)]; !ok {
+		t.Fatalf("previous pin dropped before the batch ended: %v", refs)
+	}
+	if _, ok := refs[batch.RunRef(b.ID, second)]; !ok {
+		t.Fatalf("previous pin dropped before the batch ended: %v", refs)
+	}
+
+	// The batch is done: every run of it has reported, so its pins go.
+	if err := e.HandlePass(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	if b.State != pg.BatchStateDone {
+		t.Fatalf("expected done, got %+v", b)
+	}
+	if len(refs) != 0 {
+		t.Fatalf("pins left after the batch ended: %v", refs)
+	}
+}
+
+// TestRunRef_StartupDropsOnlyFinished proves a restart drops the pins of
+// batches that are no longer live and keeps the pins of live ones.
+func TestRunRef_StartupDropsOnlyFinished(t *testing.T) {
+	e, f, _, ctx := setup(t, 10)
+	refs := refKeeper(f)
+
+	b, err := e.FormAndBuild(ctx, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := batch.RunRef(b.ID, b.BranchSha.String)
+	dead := batch.RunRef(b.ID+100, "0123456789abcdef0123456789abcdef01234567")
+	refs[dead] = "0123456789abcdef0123456789abcdef01234567"
+
+	if err := e.ReconcileLive(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := refs[live]; !ok {
+		t.Fatalf("live batch's pin dropped: %v", refs)
+	}
+	if _, ok := refs[dead]; ok {
+		t.Fatalf("stale pin kept across restart: %v", refs)
+	}
+}

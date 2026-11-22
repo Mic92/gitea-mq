@@ -46,6 +46,9 @@ type MockForge struct {
 	ApplyLabelsFn       func(ctx context.Context, owner, name string, number int64, add, remove []string) error
 	DeleteLabelFn       func(ctx context.Context, owner, name, label string) error
 	MergeLabelAdderFn   func(ctx context.Context, owner, name string, number int64, label string) (string, bool, error)
+	SetRefFn            func(ctx context.Context, owner, name, ref, sha string) error
+	DeleteRefFn         func(ctx context.Context, owner, name, ref string) error
+	ListRefsFn          func(ctx context.Context, owner, name, prefix string) (map[string]string, error)
 }
 
 var (
@@ -53,7 +56,32 @@ var (
 	_ StackResolver      = (*MockForge)(nil)
 	_ DependencyResolver = (*MockForge)(nil)
 	_ Labeler            = (*MockForge)(nil)
+	_ RefKeeper          = (*MockForge)(nil)
 )
+
+func (m *MockForge) SetRef(ctx context.Context, owner, name, ref, sha string) error {
+	m.record("SetRef", owner, name, ref, sha)
+	if m.SetRefFn != nil {
+		return m.SetRefFn(ctx, owner, name, ref, sha)
+	}
+	return nil
+}
+
+func (m *MockForge) DeleteRef(ctx context.Context, owner, name, ref string) error {
+	m.record("DeleteRef", owner, name, ref)
+	if m.DeleteRefFn != nil {
+		return m.DeleteRefFn(ctx, owner, name, ref)
+	}
+	return nil
+}
+
+func (m *MockForge) ListRefs(ctx context.Context, owner, name, prefix string) (map[string]string, error) {
+	m.record("ListRefs", owner, name, prefix)
+	if m.ListRefsFn != nil {
+		return m.ListRefsFn(ctx, owner, name, prefix)
+	}
+	return nil, nil
+}
 
 func (m *MockForge) RemoveLabel(ctx context.Context, owner, name string, number int64, label string) error {
 	m.record("RemoveLabel", owner, name, number, label)
