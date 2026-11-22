@@ -97,6 +97,19 @@ func mustLive(t *testing.T, svc *queue.Service, ctx context.Context, repoID int6
 	return b
 }
 
+// prOf returns the PR number of the single entry in ids.
+func prOf(t *testing.T, svc *queue.Service, ctx context.Context, ids []int64) int64 {
+	t.Helper()
+	ents, err := svc.GetEntriesByIDs(ctx, ids)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ents) != 1 {
+		t.Fatalf("expected one entry, got %d", len(ents))
+	}
+	return ents[0].PrNumber
+}
+
 func TestFormAndBuild_Green(t *testing.T) {
 	e, f, svc, ctx := setup(t, 10, 20, 30)
 	f.merged[10], f.merged[20], f.merged[30] = true, true, true
@@ -456,9 +469,17 @@ func TestOnMemberRemoved(t *testing.T) {
 	}
 }
 
+// TestBisectMaxSteps: when the build cap is reached the engine stops halving
+// but must not drop the members it has not proven guilty. The leftover members
+// are retested one at a time, so only a PR that fails on its own is ejected and
+// the rest still land.
 func TestBisectMaxSteps(t *testing.T) {
-	e, _, _, ctx := setup(t, 10, 20, 30, 40)
+	e, f, svc, ctx := setup(t, 10, 20, 30, 40)
 	e.BisectMaxSteps = 2
+	for _, n := range []int64{10, 30, 40} {
+		f.merged[n] = true
+	}
+	ent20, _ := svc.GetEntry(ctx, e.RepoID, 20)
 
 	b, _ := e.FormAndBuild(ctx, "main")
 	if err := e.HandleFail(ctx, b, "ci", ""); err != nil { // build 1 → split, build 2
@@ -467,10 +488,102 @@ func TestBisectMaxSteps(t *testing.T) {
 	if err := e.HandleFail(ctx, b, "ci", ""); err != nil { // build 2 fail → cap
 		t.Fatal(err)
 	}
-	// Cap must drain pending too: exactly 2 builds, all 4 ejected, done.
-	if b.State != pg.BatchStateDone || len(b.EjectedIds) != 4 || b.Builds != 2 {
-		t.Fatalf("cap leaked builds or members: builds=%d ejected=%d state=%s",
-			b.Builds, len(b.EjectedIds), b.State)
+	if b.State == pg.BatchStateDone || len(b.EjectedIds) != 0 {
+		t.Fatalf("cap dropped unproven members: state=%s current=%v ejected=%v",
+			b.State, b.CurrentIds, b.EjectedIds)
+	}
+	b = mustLive(t, svc, ctx, e.RepoID)
+	if b.State != pg.BatchStateTesting || len(b.CurrentIds) != 1 {
+		t.Fatalf("cap did not retest the leftover alone: state=%s current=%v",
+			b.State, b.CurrentIds)
+	}
+	for _, n := range []int64{10, 20, 30, 40} {
+		if ent, _ := svc.GetEntry(ctx, e.RepoID, n); ent == nil {
+			t.Fatalf("PR #%d left the queue before being tested alone", n)
+		}
+	}
+
+	// Everything is retested alone; only #20 goes red.
+	for range 4 {
+		b = mustLive(t, svc, ctx, e.RepoID)
+		if len(b.CurrentIds) != 1 {
+			t.Fatalf("residual batch tests %d members together, want one", len(b.CurrentIds))
+		}
+		var err error
+		if prOf(t, svc, ctx, b.CurrentIds) == 20 {
+			err = e.HandleFail(ctx, b, "ci/test", "")
+		} else {
+			err = e.HandlePass(ctx, b)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	final, err := svc.GetBatch(ctx, b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if final.State != pg.BatchStateDone || len(final.LandedIds) != 3 ||
+		len(final.EjectedIds) != 1 || final.EjectedIds[0] != ent20.ID {
+		t.Fatalf("cap outcome: state=%s landed=%v ejected=%v",
+			final.State, final.LandedIds, final.EjectedIds)
+	}
+	for _, n := range []int64{10, 30, 40} {
+		if ent, _ := svc.GetEntry(ctx, e.RepoID, n); ent != nil {
+			t.Fatalf("innocent PR #%d still queued after the cap", n)
+		}
+	}
+}
+
+// TestBisectCapKeepsInnocents covers the reported case: a batch of three where
+// the cap is reached while #20 (the culprit) and #30 (innocent) are still
+// tested together. The old behaviour ejected both; #30 must survive, be
+// retested alone and land.
+func TestBisectCapKeepsInnocents(t *testing.T) {
+	e, f, svc, ctx := setup(t, 10, 20, 30)
+	e.BisectMaxSteps = 2
+	f.merged[10], f.merged[30] = true, true
+
+	b, _ := e.FormAndBuild(ctx, "main") // build 1: [10,20,30]
+	if err := e.HandleFail(ctx, b, "ci", ""); err != nil {
+		t.Fatal(err) // build 2: [10]
+	}
+	if err := e.HandlePass(ctx, b); err != nil { // land #10, build 3: [20,30]
+		t.Fatal(err)
+	}
+	if err := e.HandleFail(ctx, b, "ci", ""); err != nil { // cap
+		t.Fatal(err)
+	}
+	if b.State == pg.BatchStateDone || len(b.EjectedIds) != 0 {
+		t.Fatalf("cap ejected unproven members: state=%s current=%v ejected=%v",
+			b.State, b.CurrentIds, b.EjectedIds)
+	}
+	b = mustLive(t, svc, ctx, e.RepoID)
+	if ent, _ := svc.GetEntry(ctx, e.RepoID, 30); ent == nil {
+		t.Fatal("innocent #30 was removed together with the culprit")
+	}
+
+	if pr := prOf(t, svc, ctx, b.CurrentIds); pr != 20 {
+		t.Fatalf("first residual member = #%d, want #20", pr)
+	}
+	if err := e.HandleFail(ctx, b, "ci/test", ""); err != nil { // #20 alone fails
+		t.Fatal(err)
+	}
+	b = mustLive(t, svc, ctx, e.RepoID)
+	if err := e.HandlePass(ctx, b); err != nil { // #30 alone passes
+		t.Fatal(err)
+	}
+	final, err := svc.GetBatch(ctx, b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if final.State != pg.BatchStateDone || len(final.LandedIds) != 2 || len(final.EjectedIds) != 1 {
+		t.Fatalf("final: state=%s landed=%v ejected=%v",
+			final.State, final.LandedIds, final.EjectedIds)
+	}
+	if ent, _ := svc.GetEntry(ctx, e.RepoID, 30); ent != nil {
+		t.Fatal("innocent #30 not landed")
 	}
 }
 
