@@ -26,6 +26,7 @@ type Config struct {
 	IdlePollInterval    time.Duration
 	CheckTimeout        time.Duration
 	RequiredChecks      []string
+	RequiredHeadChecks  []string
 	MergeLabel          string
 	PriorityLabel       string
 	LabelPrefix         string
@@ -150,6 +151,14 @@ func Load() (*Config, error) {
 		for _, c := range strings.Split(checks, ",") {
 			if c = strings.TrimSpace(c); c != "" {
 				cfg.RequiredChecks = append(cfg.RequiredChecks, c)
+			}
+		}
+	}
+
+	if checks := os.Getenv("GITEA_MQ_REQUIRED_HEAD_CHECKS"); checks != "" {
+		for _, c := range strings.Split(checks, ",") {
+			if c = strings.TrimSpace(c); c != "" {
+				cfg.RequiredHeadChecks = append(cfg.RequiredHeadChecks, c)
 			}
 		}
 	}
