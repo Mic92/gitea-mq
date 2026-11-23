@@ -32,6 +32,12 @@ type Deps struct {
 	ExternalURL string
 	// FallbackChecks gates enqueue when branch protection lists none.
 	FallbackChecks []string
+	// RequiredHeadChecks are check contexts that must be green on the PR's
+	// head commit before it may enter the queue, independently of the branch
+	// protection list. They close two holes: a PR with no check statuses at
+	// all (otherwise treated as "no CI configured") and a context branch
+	// protection does not list. Empty disables the extra gate.
+	RequiredHeadChecks []string
 	// MergeLabel enqueues labeled PRs (stack-aware on GitHub); empty disables.
 	MergeLabel string
 	// PriorityLabel sorts queued PRs carrying it ahead of others; empty disables.
@@ -151,6 +157,16 @@ func prCheckResult(ctx context.Context, deps *Deps, pr *forge.PR, targetBranch s
 			continue
 		}
 		externalStatuses = append(externalStatuses, pg.CheckStatus{Context: ctxName, State: c.State})
+	}
+
+	// Required head contexts are enforced on their own, separately from the
+	// branch protection list: the PR must show each of them green before it
+	// earns a queue slot. This keeps a PR with no statuses at all, or with a
+	// failing gate that branch protection does not name, out of the queue.
+	if len(deps.RequiredHeadChecks) > 0 {
+		if res, _, _ := monitor.EvaluateChecks(externalStatuses, deps.RequiredHeadChecks); res != monitor.CheckSuccess {
+			return res, nil
+		}
 	}
 
 	if len(requiredChecks) == 0 && len(externalStatuses) == 0 {
