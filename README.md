@@ -282,6 +282,40 @@ Repo and PR pages live under `/repo/{forge}/{owner}/{name}` (e.g.
 `/repo/github/org/app/pr/42`). Paths without the forge segment resolve as Gitea
 for compatibility with links posted by older versions.
 
+## Metrics
+
+`/metrics` serves Prometheus metrics on the same listener as the dashboard.
+Repo-scoped series carry `forge`, `owner` and `repo` labels; the queue and
+batch gauges additionally carry the target `branch`.
+
+| Metric | Type | Description |
+|---|---|---|
+| `gitea_mq_managed_repos` | gauge | Repositories currently managed |
+| `gitea_mq_queue_entries{branch,state}` | gauge | Queue entries per target branch and `queued`/`testing`/`success` state |
+| `gitea_mq_queue_oldest_entry_timestamp_seconds{branch}` | gauge | Enqueue time of the oldest entry (only while the branch queue is non-empty) |
+| `gitea_mq_live_batches{branch,state}` | gauge | Live batches per target branch and `forming`/`testing` state |
+| `gitea_mq_prs_enqueued_total` | counter | PRs added to the queue |
+| `gitea_mq_prs_dequeued_total{reason}` | counter | PRs that left the queue: `merged`, `closed`, `retargeted`, `pushed`, `cancelled`, `draft`, `blocked`, `check_failed`, `timeout`, `success_timeout`, `conflict`, `error` |
+| `gitea_mq_merged_pr_queue_duration_seconds` | histogram | Enqueue-to-merge time for merged PRs |
+| `gitea_mq_batch_builds_total` | counter | Batch branches built, including bisection rebuilds |
+
+Gauges are read from the database on each scrape. A branch appears once it has
+had an entry since startup and then reports 0 when drained. Counters and the
+histogram are per process and reset on restart. Standard Go runtime and process
+metrics are included.
+
+Queue length per branch:
+
+```promql
+sum by (forge, owner, repo, branch) (gitea_mq_queue_entries)
+```
+
+Example alert for a stuck queue:
+
+```promql
+time() - gitea_mq_queue_oldest_entry_timestamp_seconds > 4 * 3600
+```
+
 ## Container
 
 A multi-arch (amd64/arm64) image is published to

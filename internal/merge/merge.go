@@ -10,6 +10,7 @@ import (
 
 	"github.com/Mic92/gitea-mq/internal/forge"
 	"github.com/Mic92/gitea-mq/internal/logutil"
+	"github.com/Mic92/gitea-mq/internal/metrics"
 	"github.com/Mic92/gitea-mq/internal/queue"
 	"github.com/Mic92/gitea-mq/internal/store/pg"
 )
@@ -54,6 +55,7 @@ func StartTesting(ctx context.Context, f forge.Forge, svc *queue.Service, owner,
 		if err := svc.Dequeue(ctx, repoID, entry.PrNumber); err != nil {
 			return nil, fmt.Errorf("dequeue conflicting PR #%d: %w", entry.PrNumber, err)
 		}
+		metrics.Dequeued(f.Kind(), owner, repo, entry, metrics.ReasonConflict)
 		SkipPendingMirroredChecks(ctx, f, owner, repo, entry.PrHeadSha)
 		return &StartTestingResult{Removed: true}, nil
 	}
@@ -73,6 +75,7 @@ func StartTesting(ctx context.Context, f forge.Forge, svc *queue.Service, owner,
 		if err := svc.Dequeue(ctx, repoID, entry.PrNumber); err != nil {
 			return nil, fmt.Errorf("dequeue PR #%d after merge error: %w", entry.PrNumber, err)
 		}
+		metrics.Dequeued(f.Kind(), owner, repo, entry, metrics.ReasonError)
 		SkipPendingMirroredChecks(ctx, f, owner, repo, entry.PrHeadSha)
 		return &StartTestingResult{Removed: true}, nil
 	}
