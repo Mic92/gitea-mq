@@ -14,11 +14,11 @@ import (
 func TestEnqueueDuplicateIsNoop(t *testing.T) {
 	svc, ctx, repoID := testutil.TestQueueService(t)
 
-	if _, err := svc.Enqueue(ctx, repoID, 42, "sha", "main", false); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 42, "sha", "main", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
-	dup, err := svc.Enqueue(ctx, repoID, 42, "sha", "main", false)
+	dup, err := svc.Enqueue(ctx, repoID, 42, "sha", "main", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,16 +44,16 @@ func TestQueueIsolation(t *testing.T) {
 	repoB, _ := svc.GetOrCreateRepo(ctx, "gitea", "org", "app-b")
 
 	// Different repos.
-	if _, err := svc.Enqueue(ctx, repoA.ID, 1, "sha", "main", false); err != nil {
+	if _, err := svc.Enqueue(ctx, repoA.ID, 1, "sha", "main", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := svc.Enqueue(ctx, repoB.ID, 2, "sha", "main", false); err != nil {
+	if _, err := svc.Enqueue(ctx, repoB.ID, 2, "sha", "main", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
 	// Different branches in same repo.
-	if _, err := svc.Enqueue(ctx, repoA.ID, 3, "sha", "release", false); err != nil {
+	if _, err := svc.Enqueue(ctx, repoA.ID, 3, "sha", "release", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -78,7 +78,7 @@ func TestQueueIsolation(t *testing.T) {
 func TestStateLifecycleAndChecks(t *testing.T) {
 	svc, ctx, repoID := testutil.TestQueueService(t)
 
-	enq, err := svc.Enqueue(ctx, repoID, 42, "abc123", "main", false)
+	enq, err := svc.Enqueue(ctx, repoID, 42, "abc123", "main", false, "")
 	if err != nil {
 		t.Fatal(err)
 	}

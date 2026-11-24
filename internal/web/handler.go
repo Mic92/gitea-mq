@@ -111,6 +111,7 @@ type OverviewData struct {
 // RepoDetailEntry holds one queue entry for the repo detail page.
 type RepoDetailEntry struct {
 	PrNumber     int64
+	Author       string
 	TargetBranch string
 	State        string
 	BatchBucket  string // current/pending/landed when in a live batch
@@ -349,6 +350,7 @@ func serveRepoDetail(w http.ResponseWriter, r *http.Request, deps *Deps, ref for
 	for _, e := range entries {
 		de := RepoDetailEntry{
 			PrNumber:     e.PrNumber,
+			Author:       e.PrAuthor,
 			TargetBranch: e.TargetBranch,
 			State:        string(e.State),
 			Priority:     e.Priority,

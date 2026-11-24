@@ -27,6 +27,7 @@
                 <tr>
                     <th>#</th>
                     <th>PR</th>
+                    <th>Author</th>
                     <th>Target</th>
                     <th>State</th>
                 </tr>
@@ -36,6 +37,7 @@
                 <tr>
                     <td>{{inc $i}}</td>
                     <td><a href="{{$.BasePath}}/repo/{{$.Forge}}/{{$.Owner}}/{{$.Name}}/pr/{{$e.PrNumber}}">PR #{{$e.PrNumber}}</a></td>
+                    <td>{{if $e.Author}}{{$e.Author}}{{else}}—{{end}}</td>
                     <td>{{$e.TargetBranch}}</td>
                     <td><span class="state state-{{$e.State}}">{{$e.State}}</span>{{if $e.BatchBucket}} <span class="bucket bucket-{{$e.BatchBucket}}">{{$e.BatchBucket}}</span>{{end}}{{if $e.Priority}} <span class="bucket bucket-priority">priority</span>{{end}}</td>
                 </tr>

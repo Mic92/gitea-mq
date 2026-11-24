@@ -83,7 +83,7 @@ func TestLabeledStackPRUsesStackBase(t *testing.T) {
 
 func TestLabelRemovalDequeues(t *testing.T) {
 	deps, mock, svc, ctx, repoID := setupLabelTest(t)
-	if _, err := svc.Enqueue(ctx, repoID, 7, "h7", "main", false); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 7, "h7", "main", false, ""); err != nil {
 		t.Fatal(err)
 	}
 	mock.ListOpenPRsFn = func(context.Context, string, string) ([]forge.PR, error) {
@@ -101,7 +101,7 @@ func TestLabelRemovalDequeues(t *testing.T) {
 
 func TestFinalizeLabeledStackMerge(t *testing.T) {
 	deps, mock, svc, ctx, repoID := setupLabelTest(t)
-	if _, err := svc.Enqueue(ctx, repoID, 2, "sha2", "main", false); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 2, "sha2", "main", false, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.UpdateState(ctx, repoID, 2, pg.EntryStateSuccess); err != nil {

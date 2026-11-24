@@ -201,7 +201,7 @@ type reconcileCase struct {
 func (tc reconcileCase) run(t *testing.T) {
 	deps, mock, svc, ctx, repoID := setupPollerTest(t)
 
-	if _, err := svc.Enqueue(ctx, repoID, 42, "sha42", "main", false); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 42, "sha42", "main", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -287,12 +287,12 @@ func TestPollOnce_Reconcile(t *testing.T) {
 func TestPollOnce_RemoveHead_CleansUpMergeBranch(t *testing.T) {
 	deps, mock, svc, ctx, repoID := setupPollerTest(t)
 
-	if _, err := svc.Enqueue(ctx, repoID, 42, "sha42", "main", false); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 42, "sha42", "main", false, ""); err != nil {
 		t.Fatal(err)
 	}
 	_ = svc.UpdateState(ctx, repoID, 42, pg.EntryStateTesting)
 	_ = svc.SetMergeBranch(ctx, repoID, 42, merge.BranchName(42), "mergesha")
-	if _, err := svc.Enqueue(ctx, repoID, 43, "sha43", "main", false); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 43, "sha43", "main", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -324,7 +324,7 @@ func TestPollOnce_MergeBranchChecksPolled_Success(t *testing.T) {
 	deps, mock, svc, ctx, repoID := setupPollerTest(t)
 	deps.FallbackChecks = []string{"ci/build"}
 
-	if _, err := svc.Enqueue(ctx, repoID, 42, "sha42", "main", false); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 42, "sha42", "main", false, ""); err != nil {
 		t.Fatal(err)
 	}
 	_ = svc.UpdateState(ctx, repoID, 42, pg.EntryStateTesting)
@@ -386,7 +386,7 @@ func TestPollOnce_Timeouts(t *testing.T) {
 			deps, mock, svc, ctx, repoID := setupPollerTest(t)
 			tc.configure(deps)
 
-			if _, err := svc.Enqueue(ctx, repoID, 42, "sha42", "main", false); err != nil {
+			if _, err := svc.Enqueue(ctx, repoID, 42, "sha42", "main", false, ""); err != nil {
 				t.Fatal(err)
 			}
 			_ = svc.UpdateState(ctx, repoID, 42, tc.state)
@@ -433,7 +433,7 @@ func TestPollOnce_SuccessTimeoutWaitsForPendingPRChecks(t *testing.T) {
 			deps.CheckTimeout = 1 * time.Hour
 			deps.FallbackChecks = []string{"ci/build"}
 
-			if _, err := svc.Enqueue(ctx, repoID, 42, "sha42", "main", false); err != nil {
+			if _, err := svc.Enqueue(ctx, repoID, 42, "sha42", "main", false, ""); err != nil {
 				t.Fatal(err)
 			}
 			_ = svc.UpdateState(ctx, repoID, 42, pg.EntryStateSuccess)
@@ -535,7 +535,7 @@ func TestPollOnce_CIGating(t *testing.T) {
 func TestPollOnce_MergeBranchError_NotifiesUser(t *testing.T) {
 	deps, mock, svc, ctx, repoID := setupPollerTest(t)
 
-	if _, err := svc.Enqueue(ctx, repoID, 42, "sha42", "main", false); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 42, "sha42", "main", false, ""); err != nil {
 		t.Fatal(err)
 	}
 

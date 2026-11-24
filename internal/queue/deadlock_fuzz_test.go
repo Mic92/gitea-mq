@@ -85,7 +85,7 @@ func TestDeadlockFuzz(t *testing.T) {
 
 	ops := []fuzzOp{
 		{"Enqueue", func(ctx context.Context, r *rand.Rand) error {
-			_, err := svc.Enqueue(ctx, repo(r), pr(r), "sha", branch(r), r.IntN(3) == 0)
+			_, err := svc.Enqueue(ctx, repo(r), pr(r), "sha", branch(r), r.IntN(3) == 0, "")
 			return err
 		}},
 		{"Dequeue", func(ctx context.Context, r *rand.Rand) error {
