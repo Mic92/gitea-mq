@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/Mic92/gitea-mq/internal/batch"
@@ -33,6 +34,8 @@ type Deps struct {
 	ExternalURL string
 	// FallbackChecks gates enqueue when branch protection lists none.
 	FallbackChecks []string
+	// TargetBranches limits new admission to exact PR base and queue target names.
+	TargetBranches []string
 	// MergeLabel enqueues labeled PRs (stack-aware on GitHub); empty disables.
 	MergeLabel string
 	// PriorityLabel sorts queued PRs carrying it ahead of others; empty disables.
@@ -321,6 +324,10 @@ const draftStatus = "Draft PR: mark it ready for review to enter the queue"
 
 // enqueuePR adds a PR to the queue for targetBranch once its own CI is green.
 func enqueuePR(ctx context.Context, deps *Deps, result *PollResult, pr *forge.PR, targetBranch, source string) {
+	if len(deps.TargetBranches) > 0 && (!slices.Contains(deps.TargetBranches, pr.BaseBranch) || !slices.Contains(deps.TargetBranches, targetBranch)) {
+		markWaiting(ctx, deps, pr.Number, pr.HeadSHA, "Target branch is not admitted by this queue")
+		return
+	}
 	if pr.Draft {
 		markWaiting(ctx, deps, pr.Number, pr.HeadSHA, draftStatus)
 		return

@@ -76,6 +76,7 @@ Variables marked `/ _FILE` can instead be read from the file named by
 | `GITEA_MQ_POLL_INTERVAL` | no | `30s` | Reconcile poll interval for repos with active queue work |
 | `GITEA_MQ_IDLE_POLL_INTERVAL` | no | `15m` | Reconcile poll interval for idle repos (no active queue entries). Only used on forges that deliver CI status via webhooks (GitHub, Gitea >= 1.24); there idle repos are driven by webhooks and this periodic poll is just a safety net for deliveries missed while the service was down. Keeping it long bounds forge API usage to the number of repos with live queues rather than all managed repos |
 | `GITEA_MQ_CHECK_TIMEOUT` | no | `1h` | Timeout for required checks |
+| `GITEA_MQ_TARGET_BRANCHES` | no | empty (all) | Comma-separated exact branch names eligible for new queue admission. |
 | `GITEA_MQ_SKIP_QUEUE_IF_UP_TO_DATE` | no | `true` | Skip the merge-branch CI run when a PR is already rebased onto the target branch tip (its own green CI already covers the merged tree) |
 | `GITEA_MQ_REQUIRED_CHECKS` | no | - | Fallback required CI contexts when branch protection has none (comma-separated) |
 | `GITEA_MQ_MERGE_LABEL` | no | `merge-queue` | Label that enqueues a PR (stack-aware on GitHub); set to `none` to disable |
@@ -87,6 +88,18 @@ Variables marked `/ _FILE` can instead be read from the file named by
 | `GITEA_MQ_DISCOVERY_INTERVAL` | no | `5m` | How often to re-scan Gitea topics and GitHub installations |
 | `GITEA_MQ_CACHE_DIR` | no | `$XDG_CACHE_HOME/gitea-mq` | Directory for persistent bare git clones used for merge operations; unused repos are removed after 30 days |
 | `GITEA_MQ_LOG_LEVEL` | no | `info` | Log level: debug, info, warn, error |
+
+### Restricting admission targets
+
+Set `GITEA_MQ_TARGET_BRANCHES=main,release/stable` to admit new PRs only
+when both their base branch and their resolved queue target are listed.
+For stacked PRs the queue target is the base of the stack, so the immediate
+base branch must also be listed. An excluded PR keeps its merge intent and
+receives a waiting status. An empty or unset value allows any branch.
+Branch names containing commas cannot be represented in this list.
+
+The filter applies when PRs enter the queue. Drain affected entries before
+tightening the list if they should no longer land.
 
 ## Batching (bors-style)
 
@@ -409,6 +422,7 @@ Real-world deployments:
 | `checkTimeout` | string | `1h` | Check timeout |
 | `skipQueueIfUpToDate` | bool | `true` | Skip merge-branch CI for PRs already rebased onto the target tip |
 | `requiredChecks` | list of strings | `[]` | Fallback required CI contexts when branch protection has none |
+| `targetBranches` | list of strings | `[]` | Exact branch names eligible for new queue admission |
 | `refreshInterval` | string | `10s` | Dashboard refresh interval |
 | `discoveryInterval` | string | `5m` | How often to re-discover repos by topic |
 | `logLevel` | enum | `info` | Log level |
