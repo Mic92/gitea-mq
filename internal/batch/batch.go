@@ -59,12 +59,63 @@ type Engine struct {
 	MergedPollInterval time.Duration
 	MergedPollAttempts int
 
+	// StackMergedPoll controls the wait after a stack merge, which GitHub
+	// finishes in the background. Defaults: 1s × (30 + 3 per member).
+	StackMergedPollInterval time.Duration
+	StackMergedPollAttempts int
+
 	// Advance is called whenever a batch finishes so the next root can be
 	// formed without waiting for the poll tick. Optional.
 	Advance func()
 
-	mu    sync.Mutex // guards locks
+	mu    sync.Mutex // guards locks and landedStacks
 	locks map[string]*sync.Mutex
+	// landedStacks holds stack tops handed to the forge's async stack merge,
+	// which stay open and labeled until it finishes.
+	landedStacks map[int64]landedStack
+}
+
+type landedStack struct {
+	headSHA string
+	at      time.Time
+}
+
+const (
+	// GitHub merges a stack member by member: 40 members took about 90s.
+	stackMergedBaseAttempts      = 30
+	stackMergedAttemptsPerMember = 3
+
+	// After this long an unfinished stack merge has most likely failed, so
+	// the PR may be enqueued again.
+	landedStackTTL = 10 * time.Minute
+)
+
+// RecentlyLanded reports whether the PR's head was handed to the forge's
+// stack merge within landedStackTTL.
+func (e *Engine) RecentlyLanded(prNumber int64, headSHA string) bool {
+	if e == nil {
+		return false
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	l, ok := e.landedStacks[prNumber]
+	if !ok {
+		return false
+	}
+	if l.headSHA != headSHA || time.Since(l.at) > landedStackTTL {
+		delete(e.landedStacks, prNumber)
+		return false
+	}
+	return true
+}
+
+func (e *Engine) rememberLanded(prNumber int64, headSHA string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.landedStacks == nil {
+		e.landedStacks = make(map[int64]landedStack)
+	}
+	e.landedStacks[prNumber] = landedStack{headSHA: headSHA, at: time.Now()}
 }
 
 // lock returns the per-target-branch unlock func. Batches for different
@@ -160,6 +211,10 @@ func (e *Engine) Build(ctx context.Context, b *pg.Batch) error {
 	if err != nil {
 		return fmt.Errorf("load batch members: %w", err)
 	}
+	entries, err = e.deferStackTops(ctx, b, entries)
+	if err != nil {
+		return fmt.Errorf("resolve stacks: %w", err)
+	}
 
 	heads := make([]string, len(entries))
 	for i := range entries {
@@ -232,6 +287,58 @@ func (e *Engine) Build(ctx context.Context, b *pg.Batch) error {
 	return nil
 }
 
+// isStackTop reports whether ent tops a stack with at least two unmerged
+// members. A lone bottom PR targets the branch itself, so the forge marks it
+// merged after a fast-forward.
+func (e *Engine) isStackTop(ctx context.Context, ent *pg.QueueEntry) (bool, error) {
+	stack, err := forge.ResolveStack(ctx, e.Forge, e.Owner, e.Repo, ent.PrNumber)
+	if err != nil || stack == nil {
+		return false, err
+	}
+	members, ok := stack.MembersUpTo(ent.PrNumber)
+	if !ok {
+		return false, nil
+	}
+	unmerged := 0
+	for _, m := range members {
+		if !m.Merged {
+			unmerged++
+		}
+	}
+	return unmerged >= 2, nil
+}
+
+// deferStackTops keeps stack tops out of shared batches, since a stack lands
+// through the forge's merge and not by fast-forward to a batch SHA. Entries
+// before the first stack top stay current, or the stack top alone when it
+// comes first; the rest is pushed onto Pending in queue order.
+func (e *Engine) deferStackTops(ctx context.Context, b *pg.Batch, entries []pg.QueueEntry) ([]pg.QueueEntry, error) {
+	if len(entries) < 2 {
+		return entries, nil
+	}
+	cut := len(entries)
+	for i := range entries {
+		top, err := e.isStackTop(ctx, &entries[i])
+		if err != nil {
+			return nil, err
+		}
+		if top {
+			cut = max(i, 1)
+			break
+		}
+	}
+	if cut == len(entries) {
+		return entries, nil
+	}
+	rest := ids(entries[cut:])
+	b.Pending = append(loadPending(b.Pending), rest).bytes()
+	b.CurrentIds = ids(entries[:cut])
+	// Late check events for this build's SHA must not reach deferred entries.
+	logutil.WarnIfErr(e.Queue.ClearMergeBranch(ctx, rest), "clear merge branch failed", "batch", b.ID)
+	slog.Info("batch deferred stack tops", "batch", b.ID, "current", cut, "deferred", len(rest))
+	return entries[:cut], nil
+}
+
 type landedStatusHead struct {
 	sha      string
 	prNumber int64
@@ -289,6 +396,15 @@ func (e *Engine) HandlePass(ctx context.Context, b *pg.Batch) error {
 		}
 		return e.rebuild(ctx, b)
 	}
+	if len(entries) == 1 {
+		top, err := e.isStackTop(ctx, &entries[0])
+		if err != nil {
+			return err
+		}
+		if top {
+			return e.landStack(ctx, b, &entries[0])
+		}
+	}
 	statusHeads, err := e.landedStatusHeads(ctx, entries)
 	if err != nil {
 		return err
@@ -299,14 +415,9 @@ func (e *Engine) HandlePass(ctx context.Context, b *pg.Batch) error {
 		var denied *forge.PushDeniedError
 		switch {
 		case errors.Is(err, forge.ErrNotFastForward):
-			b.FfRetries++
-			if b.FfRetries < MaxFFRetries {
-				slog.Info("batch fast-forward raced; rebuilding", "batch", b.ID, "retry", b.FfRetries)
+			if e.retryMoved(ctx, b, "during fast-forward") {
 				return e.rebuild(ctx, b)
 			}
-			e.ejectCurrent(ctx, b, metrics.ReasonError, pg.CheckStateError, "Target branch moved repeatedly",
-				fmt.Sprintf("⚠️ Removed from merge queue: the target branch moved during fast-forward "+
-					"%d times in a row — is something else pushing to `%s`?", MaxFFRetries, b.TargetBranch))
 		case errors.As(err, &denied):
 			e.ejectCurrent(ctx, b, metrics.ReasonError, pg.CheckStateError, "gitea-mq cannot push to "+b.TargetBranch,
 				fmt.Sprintf("⚠️ Removed from merge queue: gitea-mq is not allowed to push to `%s`.\n\n"+
@@ -347,6 +458,82 @@ func (e *Engine) HandlePass(ctx context.Context, b *pg.Batch) error {
 	}
 	wg.Wait()
 
+	return e.finish(ctx, b, build)
+}
+
+// retryMoved counts a landing that found the target moved. It reports
+// whether to rebuild; once retries run out the current members are ejected.
+func (e *Engine) retryMoved(ctx context.Context, b *pg.Batch, when string) bool {
+	b.FfRetries++
+	if b.FfRetries < MaxFFRetries {
+		slog.Info("batch landing raced; rebuilding", "batch", b.ID, "retry", b.FfRetries)
+		return true
+	}
+	e.ejectCurrent(ctx, b, metrics.ReasonError, pg.CheckStateError, "Target branch moved repeatedly",
+		fmt.Sprintf("⚠️ Removed from merge queue: the target branch moved %s "+
+			"%d times in a row — is something else pushing to `%s`?", when, MaxFFRetries, b.TargetBranch))
+	return false
+}
+
+// landStack lands a stack top through the forge's stack merge (GitHub
+// merge-async). A fast-forward would land the commits but leave every member
+// above the bottom open: their bases are stack branches, which never move.
+// The forge re-checks gitea-mq on every member, so all are set first.
+func (e *Engine) landStack(ctx context.Context, b *pg.Batch, ent *pg.QueueEntry) error {
+	// The forge merges onto the current target tip, which must be the tested one.
+	up, err := e.Forge.IsUpToDate(ctx, e.Owner, e.Repo, b.TargetBranch, b.BranchSha.String)
+	if err != nil {
+		return fmt.Errorf("check target tip of %s: %w", b.TargetBranch, err)
+	}
+	if !up {
+		if e.retryMoved(ctx, b, "before the stack merge") {
+			return e.rebuild(ctx, b)
+		}
+		return e.next(ctx, b)
+	}
+
+	statusHeads, err := e.landedStatusHeads(ctx, []pg.QueueEntry{*ent})
+	if err != nil {
+		return err
+	}
+	setAll := func(st forge.MQStatus) {
+		for _, head := range statusHeads {
+			st.TargetURL = e.prURL(head.prNumber)
+			logutil.WarnIfErr(e.Forge.SetMQStatus(ctx, e.Owner, e.Repo, head.sha, st),
+				"set mq status failed", "pr", head.prNumber)
+		}
+	}
+	setAll(forge.MQStatus{State: pg.CheckStateSuccess, Description: fmt.Sprintf("Merging stack via batch #%d", b.ID)})
+	// Lower members were never queued, so only the top has mirrored checks.
+	merge.SkipPendingMirroredChecks(ctx, e.Forge, e.Owner, e.Repo, ent.PrHeadSha)
+
+	if err := e.Forge.MergePR(ctx, e.Owner, e.Repo, ent.PrNumber); err != nil {
+		setAll(forge.MQStatus{State: pg.CheckStateError, Description: "Stack merge failed"})
+		e.eject(ctx, b, ent, metrics.ReasonError, pg.CheckStateError, "Stack merge failed",
+			fmt.Sprintf("❌ Removed from merge queue: the forge refused to merge the stack.\n\n```\n%v\n```\n\n"+
+				"Check the required checks and rules of every PR in the stack, then re-schedule.", err))
+		b.CurrentIds = nil
+		return e.next(ctx, b)
+	}
+	b.FfRetries = 0
+	e.rememberLanded(ent.PrNumber, ent.PrHeadSha)
+
+	landed := b.CurrentIds
+	b.LandedIds = append(b.LandedIds, landed...)
+	b.CurrentIds = nil
+	build := popNext(b)
+	if err := e.Queue.SaveBatch(ctx, b, slices.Concat(landed, b.EjectedIds)...); err != nil {
+		return err
+	}
+	slog.Info("batch landed", "batch", b.ID, "sha", b.BranchSha.String, "prs", 1, "via", "stack merge", "pr", ent.PrNumber)
+	metrics.Dequeued(e.Forge.Kind(), e.Owner, e.Repo, ent, metrics.ReasonMerged)
+
+	// The next batch would race GitHub's merge on the target, so wait for it;
+	// unlike ensureMergedOrClose, never close, which would race it too.
+	attempts := cmp.Or(e.StackMergedPollAttempts, stackMergedBaseAttempts+stackMergedAttemptsPerMember*len(statusHeads))
+	if !e.waitMerged(ctx, ent.PrNumber, cmp.Or(e.StackMergedPollInterval, time.Second), attempts) {
+		slog.Warn("stack merge not reported by forge yet", "batch", b.ID, "pr", ent.PrNumber)
+	}
 	return e.finish(ctx, b, build)
 }
 
@@ -613,21 +800,31 @@ func (e *Engine) ejectCurrent(ctx context.Context, b *pg.Batch, reason metrics.R
 // comment carrying the landing SHA. The forge's merge endpoint is never
 // called: that could mint a second merge commit on top of the tested SHA.
 func (e *Engine) ensureMergedOrClose(ctx context.Context, ent *pg.QueueEntry, sha string, batchID int64) {
-	interval := cmp.Or(e.MergedPollInterval, 200*time.Millisecond)
-	for range cmp.Or(e.MergedPollAttempts, 50) {
-		pr, err := e.Forge.GetPR(ctx, e.Owner, e.Repo, ent.PrNumber)
-		if err == nil && pr != nil && (pr.Merged || pr.State == "closed") {
-			return
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(interval):
-		}
+	if e.waitMerged(ctx, ent.PrNumber, cmp.Or(e.MergedPollInterval, 200*time.Millisecond), cmp.Or(e.MergedPollAttempts, 50)) {
+		return
+	}
+	if ctx.Err() != nil {
+		return
 	}
 	logutil.WarnIfErr(e.Forge.Comment(ctx, e.Owner, e.Repo, ent.PrNumber,
 		fmt.Sprintf("✅ Merged as `%s` via batch #%d.", sha, batchID)), "post comment failed", "pr", ent.PrNumber)
 	logutil.WarnIfErr(e.Forge.ClosePR(ctx, e.Owner, e.Repo, ent.PrNumber), "close pr failed", "pr", ent.PrNumber)
+}
+
+// waitMerged polls until the PR is merged or closed, and reports whether it was.
+func (e *Engine) waitMerged(ctx context.Context, number int64, interval time.Duration, attempts int) bool {
+	for range attempts {
+		pr, err := e.Forge.GetPR(ctx, e.Owner, e.Repo, number)
+		if err == nil && pr != nil && (pr.Merged || pr.State == "closed") {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(interval):
+		}
+	}
+	return false
 }
 
 func (e *Engine) prURL(n int64) string {
