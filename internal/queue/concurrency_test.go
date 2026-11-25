@@ -47,7 +47,7 @@ func jitterPool(t *testing.T, conns int32, max time.Duration, params map[string]
 func TestEnqueueSurfacesInsertError(t *testing.T) {
 	svc, ctx, _ := testutil.TestQueueService(t)
 
-	_, err := svc.Enqueue(ctx, 999999, 1, "sha", "main", false)
+	_, err := svc.Enqueue(ctx, 999999, 1, "sha", "main", false, "")
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || pgErr.Code != "23503" {
 		t.Fatalf("want foreign key violation, got %v", err)
@@ -72,7 +72,7 @@ func TestConcurrentFormBatchOnSeparateBranches(t *testing.T) {
 		wg.Go(func() {
 			branch := fmt.Sprintf("b%d", w)
 			for i := range perBranch {
-				if _, err := svc.Enqueue(ctx, repo.ID, int64(w*perBranch+i), "sha", branch, false); err != nil {
+				if _, err := svc.Enqueue(ctx, repo.ID, int64(w*perBranch+i), "sha", branch, false, ""); err != nil {
 					errs <- err
 					return
 				}
@@ -96,7 +96,7 @@ func TestConcurrentFormBatchOnSeparateBranches(t *testing.T) {
 // Repo removal cancels batches outside the engine lock.
 func TestSaveBatchDoesNotReviveCancelled(t *testing.T) {
 	svc, ctx, repoID := testutil.TestQueueService(t)
-	if _, err := svc.Enqueue(ctx, repoID, 1, "sha", "main", false); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 1, "sha", "main", false, ""); err != nil {
 		t.Fatal(err)
 	}
 	b, err := svc.FormBatch(ctx, repoID, "main", 0)

@@ -56,7 +56,7 @@ func (s *Service) withTx(ctx context.Context, fn func(q *pg.Queries) error) erro
 
 // Enqueue adds a PR to its repo+branch queue, ahead of normal PRs if priority.
 // If the PR is already queued, it is a no-op and returns the existing entry.
-func (s *Service) Enqueue(ctx context.Context, repoID, prNumber int64, prHeadSHA, targetBranch string, priority bool) (*EnqueueResult, error) {
+func (s *Service) Enqueue(ctx context.Context, repoID, prNumber int64, prHeadSHA, targetBranch string, priority bool, author string) (*EnqueueResult, error) {
 	q := s.queries()
 	var (
 		entry pg.QueueEntry
@@ -71,6 +71,7 @@ func (s *Service) Enqueue(ctx context.Context, repoID, prNumber int64, prHeadSHA
 			PrHeadSha:    prHeadSHA,
 			TargetBranch: targetBranch,
 			Priority:     priority,
+			PrAuthor:     author,
 		})
 		isNew = err == nil
 		if errors.Is(err, pgx.ErrNoRows) {

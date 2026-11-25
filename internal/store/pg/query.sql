@@ -5,8 +5,8 @@ ON CONFLICT (forge, owner, name) DO UPDATE SET owner = EXCLUDED.owner
 RETURNING *;
 
 -- name: EnqueuePR :one
-INSERT INTO queue_entries (repo_id, pr_number, pr_head_sha, target_branch, priority)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO queue_entries (repo_id, pr_number, pr_head_sha, target_branch, priority, pr_author)
+VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT (repo_id, pr_number) DO NOTHING
 RETURNING *;
 

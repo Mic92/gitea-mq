@@ -67,10 +67,10 @@ func getPage(t *testing.T, deps *web.Deps, path string) string {
 
 func TestOverviewShowsRepoAndQueueData(t *testing.T) {
 	svc, ctx, repoID := testutil.TestQueueService(t)
-	if _, err := svc.Enqueue(ctx, repoID, 42, "abc123", "main", false); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 42, "abc123", "main", false, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Enqueue(ctx, repoID, 43, "def456", "main", false); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 43, "def456", "main", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -126,10 +126,10 @@ func TestOverviewNoReposShowsHelpMessage(t *testing.T) {
 func TestRepoDetailShowsPRs(t *testing.T) {
 	svc, ctx, repoID := testutil.TestQueueService(t)
 
-	if _, err := svc.Enqueue(ctx, repoID, 42, "abc123", "main", false); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 42, "abc123", "main", false, "alice"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Enqueue(ctx, repoID, 43, "def456", "main", false); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 43, "def456", "main", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -146,6 +146,9 @@ func TestRepoDetailShowsPRs(t *testing.T) {
 	}
 	if !strings.Contains(body, `href="/repo/gitea/org/app/pr/43"`) {
 		t.Errorf("expected link to PR #43 detail page, body:\n%s", body)
+	}
+	if !strings.Contains(body, "<td>alice</td>") {
+		t.Errorf("expected author alice for PR #42, body:\n%s", body)
 	}
 
 	// Check statuses should NOT be on this page.
@@ -239,10 +242,10 @@ func TestPRDetailHeadOfQueueTesting(t *testing.T) {
 func TestPRDetailNonHeadQueued(t *testing.T) {
 	svc, ctx, repoID := testutil.TestQueueService(t)
 
-	if _, err := svc.Enqueue(ctx, repoID, 42, "abc123", "main", false); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 42, "abc123", "main", false, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Enqueue(ctx, repoID, 43, "def456", "main", false); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 43, "def456", "main", false, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -267,7 +270,7 @@ func TestPRDetailNonHeadQueued(t *testing.T) {
 func TestPRDetailGiteaAPIFailure(t *testing.T) {
 	svc, ctx, repoID := testutil.TestQueueService(t)
 
-	if _, err := svc.Enqueue(ctx, repoID, 42, "abc123", "main", false); err != nil {
+	if _, err := svc.Enqueue(ctx, repoID, 42, "abc123", "main", false, ""); err != nil {
 		t.Fatal(err)
 	}
 

@@ -187,6 +187,7 @@ type QueueEntry struct {
 	ErrorMessage     pgtype.Text        `json:"error_message"`
 	ActiveBatchID    pgtype.Int8        `json:"active_batch_id"`
 	Priority         bool               `json:"priority"`
+	PrAuthor         string             `json:"pr_author"`
 }
 
 type Repo struct {

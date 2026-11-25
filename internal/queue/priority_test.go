@@ -12,7 +12,7 @@ import (
 func enqueue(t *testing.T, svc *queue.Service, repoID int64, priority bool, prs ...int64) {
 	t.Helper()
 	for _, pr := range prs {
-		if _, err := svc.Enqueue(t.Context(), repoID, pr, "sha", "main", priority); err != nil {
+		if _, err := svc.Enqueue(t.Context(), repoID, pr, "sha", "main", priority, ""); err != nil {
 			t.Fatal(err)
 		}
 	}
