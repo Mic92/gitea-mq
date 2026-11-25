@@ -16,6 +16,10 @@ import (
 // of the branch's current tip. Callers treat it as "target moved, rebuild".
 var ErrNotFastForward = errors.New("forge: not a fast-forward")
 
+// ErrNotFound wraps a forge read that answered 404: the entity no longer
+// exists. Callers treat it as "already gone" and never retry it.
+var ErrNotFound = errors.New("forge: not found")
+
 // PushDeniedError is returned by FastForward when the push is rejected by
 // branch protection / ruleset. Carries the forge's message so the user gets
 // an actionable hint (e.g. which whitelist to add the token user to).

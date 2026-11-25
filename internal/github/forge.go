@@ -121,8 +121,12 @@ func (f *githubForge) GetPR(ctx context.Context, owner, name string, number int6
 	if err != nil {
 		return nil, err
 	}
-	p, _, err := c.PullRequests.Get(ctx, owner, name, int(number))
+	p, resp, err := c.PullRequests.Get(ctx, owner, name, int(number))
 	if err != nil {
+		// A deleted PR answers 404; other failures are worth retrying.
+		if resp != nil && resp.StatusCode == http.StatusNotFound {
+			return nil, fmt.Errorf("%w: %w", forge.ErrNotFound, err)
+		}
 		return nil, err
 	}
 	fp := toForgePR(p)
