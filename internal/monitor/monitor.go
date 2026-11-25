@@ -12,6 +12,7 @@ import (
 
 	"github.com/Mic92/gitea-mq/internal/forge"
 	"github.com/Mic92/gitea-mq/internal/merge"
+	"github.com/Mic92/gitea-mq/internal/metrics"
 	"github.com/Mic92/gitea-mq/internal/queue"
 	"github.com/Mic92/gitea-mq/internal/store/pg"
 )
@@ -178,18 +179,18 @@ func HandleFailure(ctx context.Context, deps *Deps, entry *pg.QueueEntry, failed
 		checkRef = fmt.Sprintf("[%s](%s)", failedCheck, targetURL)
 	}
 
-	return removeFromQueue(ctx, deps, entry, pg.CheckStateFailure, desc,
+	return removeFromQueue(ctx, deps, entry, metrics.ReasonCheckFailed, pg.CheckStateFailure, desc,
 		fmt.Sprintf("❌ Removed from merge queue: Check failed: %s", checkRef))
 }
 
 func HandleTimeout(ctx context.Context, deps *Deps, entry *pg.QueueEntry) error {
 	slog.Info("check timeout exceeded", "pr", entry.PrNumber)
 
-	return removeFromQueue(ctx, deps, entry, pg.CheckStateError, "Check timeout exceeded",
+	return removeFromQueue(ctx, deps, entry, metrics.ReasonTimeout, pg.CheckStateError, "Check timeout exceeded",
 		"⏰ Removed from merge queue: check timeout exceeded. Required checks did not complete in time.")
 }
 
-func removeFromQueue(ctx context.Context, deps *Deps, entry *pg.QueueEntry, statusState pg.CheckState, statusDesc, comment string) error {
+func removeFromQueue(ctx context.Context, deps *Deps, entry *pg.QueueEntry, reason metrics.Reason, statusState pg.CheckState, statusDesc, comment string) error {
 	targetURL := forge.DashboardPRURL(deps.ExternalURL, deps.Forge.Kind(), deps.Owner, deps.Repo, entry.PrNumber)
 	if err := deps.Forge.SetMQStatus(ctx, deps.Owner, deps.Repo, entry.PrHeadSha, forge.MQStatus{
 		State: statusState, Description: statusDesc, TargetURL: targetURL,
@@ -210,6 +211,7 @@ func removeFromQueue(ctx context.Context, deps *Deps, entry *pg.QueueEntry, stat
 	if err := deps.Queue.Dequeue(ctx, deps.RepoID, entry.PrNumber); err != nil {
 		return err
 	}
+	metrics.Dequeued(deps.Forge.Kind(), deps.Owner, deps.Repo, entry, reason)
 	merge.SkipPendingMirroredChecks(ctx, deps.Forge, deps.Owner, deps.Repo, entry.PrHeadSha)
 
 	return nil

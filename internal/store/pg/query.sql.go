@@ -491,6 +491,97 @@ func (q *Queries) ListLiveBatchesByRepo(ctx context.Context, repoID int64) ([]Ba
 	return items, nil
 }
 
+const liveBatchStats = `-- name: LiveBatchStats :many
+SELECT r.forge, r.owner, r.name, b.target_branch, b.state, COUNT(*)::bigint AS batches
+FROM batches b
+JOIN repos r ON r.id = b.repo_id
+WHERE b.state IN ('forming', 'testing')
+GROUP BY r.forge, r.owner, r.name, b.target_branch, b.state
+`
+
+type LiveBatchStatsRow struct {
+	Forge        string     `json:"forge"`
+	Owner        string     `json:"owner"`
+	Name         string     `json:"name"`
+	TargetBranch string     `json:"target_branch"`
+	State        BatchState `json:"state"`
+	Batches      int64      `json:"batches"`
+}
+
+func (q *Queries) LiveBatchStats(ctx context.Context) ([]LiveBatchStatsRow, error) {
+	rows, err := q.db.Query(ctx, liveBatchStats)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LiveBatchStatsRow
+	for rows.Next() {
+		var i LiveBatchStatsRow
+		if err := rows.Scan(
+			&i.Forge,
+			&i.Owner,
+			&i.Name,
+			&i.TargetBranch,
+			&i.State,
+			&i.Batches,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const queueEntryStats = `-- name: QueueEntryStats :many
+SELECT r.forge, r.owner, r.name, e.target_branch, e.state,
+       COUNT(*)::bigint AS entries,
+       MIN(e.enqueued_at)::timestamptz AS oldest_enqueued_at
+FROM queue_entries e
+JOIN repos r ON r.id = e.repo_id
+GROUP BY r.forge, r.owner, r.name, e.target_branch, e.state
+`
+
+type QueueEntryStatsRow struct {
+	Forge            string             `json:"forge"`
+	Owner            string             `json:"owner"`
+	Name             string             `json:"name"`
+	TargetBranch     string             `json:"target_branch"`
+	State            EntryState         `json:"state"`
+	Entries          int64              `json:"entries"`
+	OldestEnqueuedAt pgtype.Timestamptz `json:"oldest_enqueued_at"`
+}
+
+func (q *Queries) QueueEntryStats(ctx context.Context) ([]QueueEntryStatsRow, error) {
+	rows, err := q.db.Query(ctx, queueEntryStats)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []QueueEntryStatsRow
+	for rows.Next() {
+		var i QueueEntryStatsRow
+		if err := rows.Scan(
+			&i.Forge,
+			&i.Owner,
+			&i.Name,
+			&i.TargetBranch,
+			&i.State,
+			&i.Entries,
+			&i.OldestEnqueuedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const saveBatch = `-- name: SaveBatch :one
 UPDATE batches SET
     state = $2,

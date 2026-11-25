@@ -213,3 +213,13 @@ func (s *Service) GetOrCreateRepo(ctx context.Context, forge, owner, name string
 func (s *Service) DequeueAll(ctx context.Context, repoID int64) error {
 	return s.queries().DequeueAllByRepo(ctx, repoID)
 }
+
+// EntryStats returns entry counts and oldest enqueue time per repo and state.
+func (s *Service) EntryStats(ctx context.Context) ([]pg.QueueEntryStatsRow, error) {
+	return s.queries().QueueEntryStats(ctx)
+}
+
+// LiveBatchStats returns live (forming/testing) batch counts per repo and state.
+func (s *Service) LiveBatchStats(ctx context.Context) ([]pg.LiveBatchStatsRow, error) {
+	return s.queries().LiveBatchStats(ctx)
+}

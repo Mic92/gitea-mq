@@ -146,3 +146,18 @@ RETURNING *;
 -- name: CancelBatchesByRepo :exec
 UPDATE batches SET state = 'cancelled'
 WHERE id IN (SELECT l.id FROM batches l WHERE l.repo_id = $1 AND l.state IN ('forming', 'testing') ORDER BY l.id FOR UPDATE);
+
+-- name: QueueEntryStats :many
+SELECT r.forge, r.owner, r.name, e.target_branch, e.state,
+       COUNT(*)::bigint AS entries,
+       MIN(e.enqueued_at)::timestamptz AS oldest_enqueued_at
+FROM queue_entries e
+JOIN repos r ON r.id = e.repo_id
+GROUP BY r.forge, r.owner, r.name, e.target_branch, e.state;
+
+-- name: LiveBatchStats :many
+SELECT r.forge, r.owner, r.name, b.target_branch, b.state, COUNT(*)::bigint AS batches
+FROM batches b
+JOIN repos r ON r.id = b.repo_id
+WHERE b.state IN ('forming', 'testing')
+GROUP BY r.forge, r.owner, r.name, b.target_branch, b.state;

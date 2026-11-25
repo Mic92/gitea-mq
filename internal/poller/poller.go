@@ -13,6 +13,7 @@ import (
 	"github.com/Mic92/gitea-mq/internal/forge"
 	"github.com/Mic92/gitea-mq/internal/logutil"
 	"github.com/Mic92/gitea-mq/internal/merge"
+	"github.com/Mic92/gitea-mq/internal/metrics"
 	"github.com/Mic92/gitea-mq/internal/monitor"
 	"github.com/Mic92/gitea-mq/internal/queue"
 	"github.com/Mic92/gitea-mq/internal/store/pg"
@@ -93,6 +94,7 @@ type PollResult struct {
 }
 
 type removeOpts struct {
+	reason       metrics.Reason
 	cancelIntent bool
 	comment      string
 	advance      bool
@@ -104,6 +106,7 @@ func removePR(ctx context.Context, deps *Deps, result *PollResult, entry *pg.Que
 	if err := deps.Queue.Dequeue(ctx, deps.RepoID, entry.PrNumber); err != nil {
 		return err
 	}
+	metrics.Dequeued(deps.Forge.Kind(), deps.Owner, deps.Repo, entry, opts.reason)
 	merge.SkipPendingMirroredChecks(ctx, deps.Forge, deps.Owner, deps.Repo, entry.PrHeadSha)
 
 	if opts.cancelIntent {
@@ -357,6 +360,7 @@ func enqueuePR(ctx context.Context, deps *Deps, result *PollResult, pr *forge.PR
 		}
 
 		result.Enqueued = append(result.Enqueued, pr.Number)
+		metrics.Enqueued(deps.Forge.Kind(), deps.Owner, deps.Repo)
 		slog.Info("enqueued PR from "+source, "pr", pr.Number, "position", enqResult.Position)
 	}
 }
@@ -540,24 +544,21 @@ func reconcileEntries(ctx context.Context, deps *Deps, result *PollResult, openP
 		}
 
 		checks := []struct {
-			when  bool
-			label string
-			opts  removeOpts
+			when bool
+			opts removeOpts
 		}{
 			{
-				when:  !isOpen && pr.Merged,
-				label: "merged",
-				opts:  removeOpts{advance: true, logMsg: "removed merged PR from queue"},
+				when: !isOpen && pr.Merged,
+				opts: removeOpts{reason: metrics.ReasonMerged, advance: true, logMsg: "removed merged PR from queue"},
 			},
 			{
-				when:  !isOpen,
-				label: "closed",
-				opts:  removeOpts{logMsg: "removed closed PR from queue"},
+				when: !isOpen,
+				opts: removeOpts{reason: metrics.ReasonClosed, logMsg: "removed closed PR from queue"},
 			},
 			{
-				when:  retargeted,
-				label: "retargeted",
+				when: retargeted,
 				opts: removeOpts{
+					reason:       metrics.ReasonRetargeted,
 					cancelIntent: true,
 					comment:      fmt.Sprintf("⚠️ Removed from merge queue: target branch changed from `%s` to `%s`. Please re-schedule the merge.", entry.TargetBranch, pr.BaseBranch),
 					logMsg:       "removed retargeted PR from queue",
@@ -565,9 +566,9 @@ func reconcileEntries(ctx context.Context, deps *Deps, result *PollResult, openP
 				},
 			},
 			{
-				when:  pr.HeadSHA != "" && pr.HeadSHA != entry.PrHeadSha,
-				label: "pushed",
+				when: pr.HeadSHA != "" && pr.HeadSHA != entry.PrHeadSha,
 				opts: removeOpts{
+					reason:       metrics.ReasonPushed,
 					cancelIntent: true,
 					comment:      "⚠️ Removed from merge queue: new commits were pushed. Please re-schedule the merge.",
 					advance:      true,
@@ -575,14 +576,13 @@ func reconcileEntries(ctx context.Context, deps *Deps, result *PollResult, openP
 				},
 			},
 			{
-				when:  !pr.AutoMergeEnabled && !labeled,
-				label: "cancelled",
-				opts:  removeOpts{logMsg: "removed PR due to merge intent cancellation"},
+				when: !pr.AutoMergeEnabled && !labeled,
+				opts: removeOpts{reason: metrics.ReasonCancelled, logMsg: "removed PR due to merge intent cancellation"},
 			},
 			{
-				when:  isOpen && pr.Draft,
-				label: "draft",
+				when: isOpen && pr.Draft,
 				opts: removeOpts{
+					reason:  metrics.ReasonDraft,
 					comment: "⏸️ Removed from merge queue: PR was converted to a draft. It re-enters once marked ready.",
 					advance: true,
 					logMsg:  "removed PR converted to draft",
@@ -596,7 +596,7 @@ func reconcileEntries(ctx context.Context, deps *Deps, result *PollResult, openP
 				continue
 			}
 			if err := removePR(ctx, deps, result, &entry, c.opts); err != nil {
-				result.Errors = append(result.Errors, fmt.Errorf("dequeue %s PR #%d: %w", c.label, entry.PrNumber, err))
+				result.Errors = append(result.Errors, fmt.Errorf("dequeue %s PR #%d: %w", c.opts.reason, entry.PrNumber, err))
 			}
 			matched = true
 			break
@@ -644,6 +644,7 @@ func handleSuccessTimeout(ctx context.Context, deps *Deps, result *PollResult, e
 	}
 
 	removeTimedOut(ctx, deps, result, entry, timedOutRemoval{
+		reason:            metrics.ReasonSuccessTimeout,
 		statusDescription: "Merge did not complete in time",
 		errorMessage:      "merge did not complete in time",
 		comment:           "⚠️ Removed from merge queue: PR was marked as ready to merge but the forge did not merge it in time. This may indicate a branch protection issue.",
@@ -667,6 +668,7 @@ func handleTestingTimeout(ctx context.Context, deps *Deps, result *PollResult, e
 
 	merge.CleanupMergeBranch(ctx, deps.Forge, deps.Owner, deps.Repo, entry)
 	removeTimedOut(ctx, deps, result, entry, timedOutRemoval{
+		reason:            metrics.ReasonTimeout,
 		statusDescription: "CI did not report within timeout",
 		errorMessage:      "CI did not report within timeout",
 		comment:           "⚠️ Removed from merge queue: CI did not report a status within the timeout. The CI server may have lost the build.",
@@ -682,6 +684,7 @@ func timedOut(now time.Time, ts pgtype.Timestamptz, timeout time.Duration) bool 
 
 // timedOutRemoval describes how a timed-out entry is reported before removal.
 type timedOutRemoval struct {
+	reason            metrics.Reason
 	statusDescription string // MQ commit status shown on the PR head
 	errorMessage      string // stored on the queue entry
 	comment           string // posted on the PR
@@ -698,6 +701,7 @@ func removeTimedOut(ctx context.Context, deps *Deps, result *PollResult, entry *
 	logutil.WarnIfErr(deps.Queue.SetError(ctx, deps.RepoID, entry.PrNumber, opts.errorMessage), "set queue error failed", "pr", entry.PrNumber)
 
 	if err := removePR(ctx, deps, result, entry, removeOpts{
+		reason:       opts.reason,
 		cancelIntent: true,
 		comment:      opts.comment,
 		advance:      true,
@@ -899,6 +903,7 @@ func holdIfBlocked(ctx context.Context, deps *Deps, result *PollResult, entry *p
 	}
 
 	if err := removePR(ctx, deps, result, entry, removeOpts{
+		reason:   metrics.ReasonBlocked,
 		comment:  forge.BlockedComment(blockers, deps.Owner, deps.Repo),
 		advance:  true,
 		logMsg:   "removed PR blocked by an open dependency",

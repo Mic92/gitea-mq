@@ -16,6 +16,7 @@ import (
 	"github.com/Mic92/gitea-mq/internal/forge"
 	"github.com/Mic92/gitea-mq/internal/gitea"
 	"github.com/Mic92/gitea-mq/internal/github"
+	"github.com/Mic92/gitea-mq/internal/metrics"
 	"github.com/Mic92/gitea-mq/internal/queue"
 	"github.com/Mic92/gitea-mq/internal/registry"
 	"github.com/Mic92/gitea-mq/internal/store/pg"
@@ -178,6 +179,8 @@ func run() error {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
 	})
+
+	mux.Handle("/metrics", metrics.Handler(queueSvc, reg))
 
 	// Dashboard — uses registry for dynamic repo listing.
 	webDeps := &web.Deps{
