@@ -52,6 +52,7 @@ type MockClient struct {
 	IsForgejoFn                 func(ctx context.Context) (bool, error)
 	ListIssueDependenciesFn     func(ctx context.Context, owner, repo string, index int64) ([]Issue, error)
 	GetCollaboratorPermissionFn func(ctx context.Context, owner, repo, user string) (string, error)
+	ListPRReviewsFn             func(ctx context.Context, owner, repo string, index int64) ([]Review, error)
 }
 
 // Ensure MockClient implements Client at compile time.
@@ -393,4 +394,14 @@ func (m *MockClient) GetCollaboratorPermission(ctx context.Context, owner, repo,
 	}
 
 	return "", nil
+}
+
+func (m *MockClient) ListPRReviews(ctx context.Context, owner, repo string, index int64) ([]Review, error) {
+	m.record("ListPRReviews", owner, repo, index)
+
+	if m.ListPRReviewsFn != nil {
+		return m.ListPRReviewsFn(ctx, owner, repo, index)
+	}
+
+	return nil, nil
 }

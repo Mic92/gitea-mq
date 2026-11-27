@@ -87,10 +87,24 @@ type Branch struct {
 // BranchProtection holds the relevant fields from a branch protection rule.
 // Matches Gitea's BranchProtection API response.
 type BranchProtection struct {
-	BranchName          string   `json:"branch_name"`
-	RuleName            string   `json:"rule_name"`
-	EnableStatusCheck   bool     `json:"enable_status_check"`
-	StatusCheckContexts []string `json:"status_check_contexts"`
+	BranchName                    string   `json:"branch_name"`
+	RuleName                      string   `json:"rule_name"`
+	EnableStatusCheck             bool     `json:"enable_status_check"`
+	StatusCheckContexts           []string `json:"status_check_contexts"`
+	RequiredApprovals             int64    `json:"required_approvals"`
+	BlockOnRejectedReviews        bool     `json:"block_on_rejected_reviews"`
+	BlockOnOfficialReviewRequests bool     `json:"block_on_official_review_requests"`
+	DismissStaleApprovals         bool     `json:"dismiss_stale_approvals"`
+}
+
+// Review is a pull request review (subset of fields). Gitea marks only a
+// reviewer's latest review official, and only reviews by users allowed to
+// approve, so official reviews are what branch protection counts.
+type Review struct {
+	State     string `json:"state"` // "APPROVED", "REQUEST_CHANGES", "REQUEST_REVIEW", "COMMENT", "PENDING"
+	Official  bool   `json:"official"`
+	Stale     bool   `json:"stale"`
+	Dismissed bool   `json:"dismissed"`
 }
 
 // Compare is the response from GET /repos/{owner}/{repo}/compare/{base}...{head}.
@@ -284,6 +298,10 @@ type Client interface {
 	// disabled for the repository.
 	// GET /repos/{owner}/{repo}/issues/{index}/dependencies
 	ListIssueDependencies(ctx context.Context, owner, repo string, index int64) ([]Issue, error)
+
+	// ListPRReviews returns all reviews of a pull request.
+	// GET /repos/{owner}/{repo}/pulls/{index}/reviews
+	ListPRReviews(ctx context.Context, owner, repo string, index int64) ([]Review, error)
 
 	// GET /repos/{owner}/{repo}/collaborators/{user}/permission
 	GetCollaboratorPermission(ctx context.Context, owner, repo, user string) (string, error)

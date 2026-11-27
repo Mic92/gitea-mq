@@ -347,6 +347,61 @@ func OpenDependencies(ctx context.Context, f Forge, owner, name string, number i
 	return dr.OpenDependencies(ctx, owner, name, number)
 }
 
+// ReviewChecker is optionally implemented by forges that can tell whether
+// their review rules (required approvals, requested changes) block merging a
+// PR into base. Batches fast-forward the target, which bypasses these rules,
+// and without the check an unapproved PR blocks the queue head in success
+// until the success timeout.
+type ReviewChecker interface {
+	// ReviewBlocker returns why reviews block the merge, e.g. "Waiting for
+	// approvals (1/2)", or "" when they allow it.
+	ReviewBlocker(ctx context.Context, owner, name string, number int64, base string) (string, error)
+}
+
+// ReviewBlocker returns "" for forges without review support.
+func ReviewBlocker(ctx context.Context, f Forge, owner, name string, number int64, base string) (string, error) {
+	rc, ok := f.(ReviewChecker)
+	if !ok {
+		return "", nil
+	}
+	return rc.ReviewBlocker(ctx, owner, name, number, base)
+}
+
+// Hold is why the forge would refuse to merge a PR for a reason the queue
+// cannot fix. Batches fast-forward the target, bypassing the forge's own
+// dependency and review checks, so the queue enforces them. Merge intent
+// stays, so the PR (re-)enters once the hold clears.
+type Hold struct {
+	Status  string // MQ status description while held
+	Comment string // posted when a queued PR is removed
+	Review  bool   // unmet review rules rather than open dependencies
+}
+
+// MergeHold reports open dependencies first, then unmet review rules on base;
+// nil when neither blocks the merge.
+func MergeHold(ctx context.Context, f Forge, owner, name string, number int64, base string) (*Hold, error) {
+	deps, err := OpenDependencies(ctx, f, owner, name, number)
+	if err != nil {
+		return nil, fmt.Errorf("check dependencies of PR #%d: %w", number, err)
+	}
+	if len(deps) > 0 {
+		return &Hold{Status: BlockedStatus(deps, owner, name), Comment: BlockedComment(deps, owner, name)}, nil
+	}
+	why, err := ReviewBlocker(ctx, f, owner, name, number, base)
+	if err != nil {
+		return nil, fmt.Errorf("check reviews of PR #%d: %w", number, err)
+	}
+	if why != "" {
+		return &Hold{
+			Status: why,
+			Comment: fmt.Sprintf("⏸️ Removed from merge queue: %s. "+
+				"The merge stays scheduled: the PR re-enters the queue on its own once its reviews allow merging.", why),
+			Review: true,
+		}, nil
+	}
+	return nil, nil
+}
+
 // BlockedStatus is the MQ status description of a PR held back by open
 // dependencies.
 func BlockedStatus(deps []Dependency, owner, name string) string {

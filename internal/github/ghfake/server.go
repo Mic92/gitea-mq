@@ -37,6 +37,9 @@ type PR struct {
 	AutoMerge bool
 	HTMLURL   string
 	Labels    []string
+	// ReviewDecision feeds GraphQL reviewDecision; "" answers null (no
+	// review required).
+	ReviewDecision string
 }
 
 type CheckRun struct {
@@ -1091,7 +1094,7 @@ func (s *Server) hUpdateRuleset(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, rs)
 }
 
-// --- GraphQL: only disablePullRequestAutoMerge ---
+// --- GraphQL: disablePullRequestAutoMerge and reviewDecision ---
 
 func (s *Server) hGraphQL(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -1099,6 +1102,10 @@ func (s *Server) hGraphQL(w http.ResponseWriter, r *http.Request) {
 		Variables map[string]any `json:"variables"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
+	if strings.Contains(body.Query, "reviewDecision") {
+		s.gqlReviewDecision(w, body.Variables)
+		return
+	}
 	if !strings.Contains(body.Query, "disablePullRequestAutoMerge") {
 		writeJSON(w, 200, map[string]any{"errors": []any{map[string]any{"message": "ghfake: unsupported query"}}})
 		return
@@ -1124,6 +1131,26 @@ func (s *Server) hGraphQL(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	writeJSON(w, 200, map[string]any{"data": map[string]any{
 		"disablePullRequestAutoMerge": map[string]any{"clientMutationId": nil},
+	}})
+}
+
+func (s *Server) gqlReviewDecision(w http.ResponseWriter, vars map[string]any) {
+	owner, _ := vars["owner"].(string)
+	name, _ := vars["name"].(string)
+	number, _ := vars["number"].(float64)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rp := s.repos[owner+"/"+name]
+	if rp == nil || rp.PRs[int64(number)] == nil {
+		writeJSON(w, 200, map[string]any{"errors": []any{map[string]any{"message": "Could not resolve to a PullRequest"}}})
+		return
+	}
+	var decision any
+	if d := rp.PRs[int64(number)].ReviewDecision; d != "" {
+		decision = d
+	}
+	writeJSON(w, 200, map[string]any{"data": map[string]any{
+		"repository": map[string]any{"pullRequest": map[string]any{"reviewDecision": decision}},
 	}})
 }
 
