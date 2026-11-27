@@ -281,6 +281,13 @@ func (c *HTTPClient) ListIssueDependencies(ctx context.Context, owner, repo stri
 		fmt.Sprintf("list dependencies of #%d in %s/%s", index, owner, repo))
 }
 
+// ListPRReviews returns all reviews of a pull request. Handles pagination.
+func (c *HTTPClient) ListPRReviews(ctx context.Context, owner, repo string, index int64) ([]Review, error) {
+	return paginateUntilEmpty[Review](ctx, c,
+		fmt.Sprintf("/repos/%s/%s/pulls/%d/reviews?page=%%d&limit=50", owner, repo, index),
+		fmt.Sprintf("list reviews of PR #%d in %s/%s", index, owner, repo))
+}
+
 // GetCombinedCommitStatus returns the latest status per context for a commit
 // ref by paginating GET /repos/{owner}/{repo}/commits/{ref}/status.
 func (c *HTTPClient) GetCombinedCommitStatus(ctx context.Context, owner, repo, ref string) (*CombinedStatus, error) {

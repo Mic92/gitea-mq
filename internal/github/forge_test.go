@@ -350,3 +350,20 @@ func TestForge_MergeLabelAdder(t *testing.T) {
 		}
 	}
 }
+
+func TestForge_ReviewBlocker_MapsReviewDecision(t *testing.T) {
+	srv, f := newTestForge(t)
+	for n, d := range map[int64]string{1: "", 2: "APPROVED", 3: "REVIEW_REQUIRED", 4: "CHANGES_REQUESTED"} {
+		srv.AddPR("org", "app", ghfake.PR{Number: n, HeadSHA: "sha", BaseRef: "main", ReviewDecision: d})
+	}
+	want := map[int64]string{1: "", 2: "", 3: "Waiting for approval", 4: "Changes requested"}
+	for n, w := range want {
+		got, err := forge.ReviewBlocker(context.Background(), f, "org", "app", n, "main")
+		if err != nil {
+			t.Fatalf("PR #%d: %v", n, err)
+		}
+		if got != w {
+			t.Errorf("PR #%d: got %q, want %q", n, got, w)
+		}
+	}
+}

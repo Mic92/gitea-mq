@@ -53,6 +53,12 @@ func GithubHandler(secret []byte, repos RepoLookup, queueSvc *queue.Service, tri
 				rm.TriggerPoll()
 			}
 
+		case *gh.PullRequestReviewEvent:
+			// Approvals and dismissals change whether a PR may enter the queue.
+			if rm, ok := lookupGithubRepo(repos, e.GetRepo()); ok && rm.TriggerPoll != nil {
+				rm.TriggerPoll()
+			}
+
 		case *gh.CheckRunEvent:
 			cr := e.GetCheckRun()
 			if e.GetAction() != "completed" || cr.GetStatus() != "completed" {

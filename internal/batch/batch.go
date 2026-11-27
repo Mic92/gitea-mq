@@ -385,7 +385,7 @@ func (e *Engine) HandlePass(ctx context.Context, b *pg.Batch) error {
 	if err != nil {
 		return err
 	}
-	// The fast-forward below skips the forge's dependency check.
+	// The fast-forward below skips the forge's dependency and review checks.
 	held, err := e.holdBlocked(ctx, b, entries)
 	if err != nil {
 		return err
@@ -868,18 +868,19 @@ func ids(entries []pg.QueueEntry) []int64 {
 	return out
 }
 
-// holdBlocked drops members with an open dependency but keeps their merge
-// intent; the poller re-enqueues them once it closes. All lookups happen before
-// any change, so a forge error leaves the batch untouched.
+// holdBlocked drops members the forge would not merge yet (open dependency,
+// unmet review rules) but keeps their merge intent; the poller re-enqueues
+// them once the hold clears. All lookups happen before any change, so a forge
+// error leaves the batch untouched.
 func (e *Engine) holdBlocked(ctx context.Context, b *pg.Batch, entries []pg.QueueEntry) (bool, error) {
-	blocked := make(map[int64][]forge.Dependency)
+	blocked := make(map[int64]*forge.Hold)
 	for i := range entries {
-		deps, err := forge.OpenDependencies(ctx, e.Forge, e.Owner, e.Repo, entries[i].PrNumber)
+		hold, err := forge.MergeHold(ctx, e.Forge, e.Owner, e.Repo, entries[i].PrNumber, entries[i].TargetBranch)
 		if err != nil {
-			return false, fmt.Errorf("check dependencies of PR #%d: %w", entries[i].PrNumber, err)
+			return false, err
 		}
-		if len(deps) > 0 {
-			blocked[entries[i].ID] = deps
+		if hold != nil {
+			blocked[entries[i].ID] = hold
 		}
 	}
 	if len(blocked) == 0 {
@@ -888,15 +889,15 @@ func (e *Engine) holdBlocked(ctx context.Context, b *pg.Batch, entries []pg.Queu
 
 	for i := range entries {
 		ent := &entries[i]
-		deps, ok := blocked[ent.ID]
+		hold, ok := blocked[ent.ID]
 		if !ok {
 			continue
 		}
 		logutil.WarnIfErr(e.Forge.SetMQStatus(ctx, e.Owner, e.Repo, ent.PrHeadSha, forge.MQStatus{
-			State: pg.CheckStatePending, Description: forge.BlockedStatus(deps, e.Owner, e.Repo), TargetURL: e.prURL(ent.PrNumber),
+			State: pg.CheckStatePending, Description: hold.Status, TargetURL: e.prURL(ent.PrNumber),
 		}), "set mq status failed", "pr", ent.PrNumber)
 		merge.SkipPendingMirroredChecks(ctx, e.Forge, e.Owner, e.Repo, ent.PrHeadSha)
-		logutil.WarnIfErr(e.Forge.Comment(ctx, e.Owner, e.Repo, ent.PrNumber, forge.BlockedComment(deps, e.Owner, e.Repo)),
+		logutil.WarnIfErr(e.Forge.Comment(ctx, e.Owner, e.Repo, ent.PrNumber, hold.Comment),
 			"post comment failed", "pr", ent.PrNumber)
 		// The next SaveBatch deletes EjectedIds from the queue.
 		b.EjectedIds = append(b.EjectedIds, ent.ID)
@@ -905,6 +906,6 @@ func (e *Engine) holdBlocked(ctx context.Context, b *pg.Batch, entries []pg.Queu
 		_, ok := blocked[id]
 		return ok
 	})
-	slog.Info("batch members held back by open dependencies", "batch", b.ID, "held", len(blocked), "current", len(b.CurrentIds))
+	slog.Info("batch members held back: forge would not merge them yet", "batch", b.ID, "held", len(blocked), "current", len(b.CurrentIds))
 	return true, nil
 }

@@ -335,15 +335,13 @@ func enqueuePR(ctx context.Context, deps *Deps, result *PollResult, pr *forge.PR
 		return
 	}
 
-	// Batches fast-forward the target, which skips the forge's dependency
-	// check. Merge intent stays, so the PR is picked up once they close.
-	blockers, err := forge.OpenDependencies(ctx, deps.Forge, deps.Owner, deps.Repo, pr.Number)
+	hold, err := forge.MergeHold(ctx, deps.Forge, deps.Owner, deps.Repo, pr.Number, targetBranch)
 	if err != nil {
-		result.Errors = append(result.Errors, fmt.Errorf("check dependencies of PR #%d: %w", pr.Number, err))
+		result.Errors = append(result.Errors, err)
 		return
 	}
-	if len(blockers) > 0 {
-		markBlocked(ctx, deps, pr.Number, pr.HeadSHA, blockers)
+	if hold != nil {
+		markWaiting(ctx, deps, pr.Number, pr.HeadSHA, hold.Status)
 		return
 	}
 
@@ -736,7 +734,7 @@ func handleSuccessTimeout(ctx context.Context, deps *Deps, result *PollResult, e
 		reason:            metrics.ReasonSuccessTimeout,
 		statusDescription: "Merge did not complete in time",
 		errorMessage:      "merge did not complete in time",
-		comment:           "⚠️ Removed from merge queue: PR was marked as ready to merge but the forge did not merge it in time. This may indicate a branch protection issue.",
+		comment:           "⚠️ Removed from merge queue: PR was marked as ready to merge but the forge did not merge it in time. This may indicate a branch protection issue, such as missing approvals.",
 		logMsg:            "removed PR due to success-but-not-merged timeout",
 	})
 }
@@ -956,11 +954,6 @@ func Run(ctx context.Context, deps *Deps, interval, idleInterval time.Duration) 
 	}
 }
 
-// markBlocked posts the blocked status once per head SHA and description.
-func markBlocked(ctx context.Context, deps *Deps, number int64, sha string, blockers []forge.Dependency) {
-	markWaiting(ctx, deps, number, sha, forge.BlockedStatus(blockers, deps.Owner, deps.Repo))
-}
-
 // markWaiting posts a pending status once per head SHA and description.
 func markWaiting(ctx context.Context, deps *Deps, number int64, sha, desc string) {
 	if deps.blockedStatus[sha] == desc {
@@ -979,30 +972,35 @@ func markWaiting(ctx context.Context, deps *Deps, number int64, sha, desc string
 	deps.blockedStatus[sha] = desc
 }
 
-// holdIfBlocked dequeues an entry whose PR gained an open dependency, keeping
-// its merge intent so enqueuePR re-adds it once the dependency closes.
+// holdIfBlocked dequeues an entry whose PR gained a merge hold (open
+// dependency, lost approval, requested changes), keeping its merge intent so
+// enqueuePR re-adds it once the hold clears.
 func holdIfBlocked(ctx context.Context, deps *Deps, result *PollResult, entry *pg.QueueEntry) bool {
-	blockers, err := forge.OpenDependencies(ctx, deps.Forge, deps.Owner, deps.Repo, entry.PrNumber)
+	hold, err := forge.MergeHold(ctx, deps.Forge, deps.Owner, deps.Repo, entry.PrNumber, entry.TargetBranch)
 	if err != nil {
-		result.Errors = append(result.Errors, fmt.Errorf("check dependencies of PR #%d: %w", entry.PrNumber, err))
+		result.Errors = append(result.Errors, err)
 		return false
 	}
-	if len(blockers) == 0 {
+	if hold == nil {
 		return false
 	}
 
-	if err := removePR(ctx, deps, result, entry, removeOpts{
-		reason:   metrics.ReasonBlocked,
-		comment:  forge.BlockedComment(blockers, deps.Owner, deps.Repo),
-		advance:  true,
-		logMsg:   "removed PR blocked by an open dependency",
-		logAttrs: []any{"dependencies", forge.DependencyRefs(blockers, deps.Owner, deps.Repo)},
-	}); err != nil {
-		result.Errors = append(result.Errors, fmt.Errorf("dequeue blocked PR #%d: %w", entry.PrNumber, err))
+	reason := metrics.ReasonBlocked
+	if hold.Review {
+		reason = metrics.ReasonUnreviewed
 	}
-	// removePR overwrote the earlier blocked status.
+	if err := removePR(ctx, deps, result, entry, removeOpts{
+		reason:   reason,
+		comment:  hold.Comment,
+		advance:  true,
+		logMsg:   "removed PR the forge would not merge yet",
+		logAttrs: []any{"hold", hold.Status},
+	}); err != nil {
+		result.Errors = append(result.Errors, fmt.Errorf("dequeue held PR #%d: %w", entry.PrNumber, err))
+	}
+	// removePR overwrote the earlier waiting status.
 	delete(deps.blockedStatus, entry.PrHeadSha)
-	markBlocked(ctx, deps, entry.PrNumber, entry.PrHeadSha, blockers)
+	markWaiting(ctx, deps, entry.PrNumber, entry.PrHeadSha, hold.Status)
 
 	if entry.ActiveBatchID.Valid && deps.Batch != nil {
 		if err := deps.Batch.OnMemberRemoved(ctx, entry.TargetBranch, entry.ActiveBatchID.Int64, entry.ID); err != nil {

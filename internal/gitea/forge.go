@@ -39,6 +39,7 @@ var (
 	_ forge.Forge              = (*giteaForge)(nil)
 	_ forge.MergeStacker       = (*giteaForge)(nil)
 	_ forge.DependencyResolver = (*giteaForge)(nil)
+	_ forge.ReviewChecker      = (*giteaForge)(nil)
 )
 
 // StackMerges builds the batch branch in one clone instead of one per member.
@@ -347,6 +348,50 @@ func (f *giteaForge) EnsureRepoSetup(ctx context.Context, owner, name string, cf
 	}
 	webhookURL := strings.TrimRight(cfg.ExternalURL, "/") + "/webhook/gitea"
 	return EnsureWebhook(ctx, f.client, owner, name, webhookURL, cfg.WebhookSecret)
+}
+
+// ReviewBlocker mirrors the review part of Gitea's merge check
+// (CheckPullBranchProtections): official, non-dismissed reviews count, stale
+// approvals only when the rule keeps them. Reviews are not fetched when the
+// branch's rule has no review requirement.
+func (f *giteaForge) ReviewBlocker(ctx context.Context, owner, name string, number int64, base string) (string, error) {
+	bp, err := f.client.GetBranchProtection(ctx, owner, name, base)
+	if err != nil || bp == nil {
+		return "", err
+	}
+	if bp.RequiredApprovals <= 0 && !bp.BlockOnRejectedReviews && !bp.BlockOnOfficialReviewRequests {
+		return "", nil
+	}
+	reviews, err := f.client.ListPRReviews(ctx, owner, name, number)
+	if err != nil {
+		return "", err
+	}
+	var approvals int64
+	var rejected, requested bool
+	for _, r := range reviews {
+		if !r.Official || r.Dismissed {
+			continue
+		}
+		switch r.State {
+		case "APPROVED":
+			if !bp.DismissStaleApprovals || !r.Stale {
+				approvals++
+			}
+		case "REQUEST_CHANGES":
+			rejected = true
+		case "REQUEST_REVIEW":
+			requested = true
+		}
+	}
+	switch {
+	case bp.BlockOnRejectedReviews && rejected:
+		return "Changes requested", nil
+	case bp.BlockOnOfficialReviewRequests && requested:
+		return "Waiting for requested reviews", nil
+	case approvals < bp.RequiredApprovals:
+		return fmt.Sprintf("Waiting for approvals (%d/%d)", approvals, bp.RequiredApprovals), nil
+	}
+	return "", nil
 }
 
 // OpenDependencies returns the PR's open dependencies. 404 means the repository

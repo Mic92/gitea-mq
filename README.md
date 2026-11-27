@@ -138,6 +138,25 @@ fast-forwarding the target, which bypasses that check. gitea-mq enforces it:
 The token must be able to read every repository a dependency may point to, as
 Gitea omits unreadable ones.
 
+## Required reviews
+
+A PR whose reviews don't allow merging yet is not tested: it would pass the
+queue, then the forge would refuse the merge and block the queue until the
+success timeout. Batches would even land it, as fast-forwarding bypasses review
+rules. Review holds work like dependencies above: the PR waits outside the
+queue with a `gitea-mq` status such as `Waiting for approvals (1/2)` or
+`Changes requested`, a queued PR whose reviews regress is removed, and batch
+members are checked again before landing. The merge intent is kept, and an
+approval re-triggers the queue.
+
+- Gitea/Forgejo: the target branch's protection rule (`required_approvals`,
+  `block_on_rejected_reviews`, `block_on_official_review_requests`,
+  `dismiss_stale_approvals`) against the PR's official reviews. Like required
+  checks, the rule is looked up by the branch name, so wildcard rules are not
+  seen.
+- GitHub: the PR's `reviewDecision`, which covers branch protection and
+  rulesets.
+
 ## Repo selection
 
 There are three ways to tell gitea-mq which repos to manage.
@@ -175,8 +194,8 @@ the registration form, or register one manually with:
 - Repository permissions: Checks read & write, Commit statuses read, Contents
   read & write, Pull requests read & write, Administration read & write,
   Metadata read
-- Subscribed events: `pull_request`, `check_run`, `status`, `installation`,
-  `installation_repositories`
+- Subscribed events: `pull_request`, `pull_request_review`, `check_run`,
+  `status`, `installation`, `installation_repositories`
 
 Generate a private key, then set `GITEA_MQ_GITHUB_APP_ID` and
 `GITEA_MQ_GITHUB_PRIVATE_KEY_FILE`. On startup gitea-mq patches the App's
@@ -194,7 +213,7 @@ the merge label), so queue state is visible and filterable in the PR list:
 
 | Label | Meaning |
 |---|---|
-| `mq/waiting` | Merge intent, but not queued yet: own CI not green or blocked by an open dependency |
+| `mq/waiting` | Merge intent, but not queued yet: own CI not green, reviews missing, or blocked by an open dependency |
 | `mq/queued` | In the queue, waiting for its turn |
 | `mq/testing` | Being tested on a merge branch (`GITEA_MQ_BATCH_MAX=1`) |
 | `mq/batch-N` | Member of batch N; the label is deleted when the batch ends |

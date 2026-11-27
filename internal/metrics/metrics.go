@@ -31,6 +31,7 @@ const (
 	ReasonCancelled      Reason = "cancelled"
 	ReasonDraft          Reason = "draft"
 	ReasonBlocked        Reason = "blocked"
+	ReasonUnreviewed     Reason = "unreviewed"
 	ReasonCheckFailed    Reason = "check_failed"
 	ReasonTimeout        Reason = "timeout"
 	ReasonSuccessTimeout Reason = "success_timeout"

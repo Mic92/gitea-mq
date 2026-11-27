@@ -20,6 +20,7 @@ import (
 var (
 	_ forge.Forge         = (*githubForge)(nil)
 	_ forge.StackResolver = (*githubForge)(nil)
+	_ forge.ReviewChecker = (*githubForge)(nil)
 )
 
 type githubForge struct {
@@ -408,10 +409,58 @@ func (f *githubForge) CancelAutoMerge(ctx context.Context, owner, name string, n
 		return err
 	}
 
-	payload, _ := json.Marshal(map[string]any{
-		"query":     disableAutoMergeMutation,
-		"variables": map[string]any{"id": pr.GetNodeID()},
-	})
+	err = f.graphql(ctx, c, disableAutoMergeMutation, map[string]any{"id": pr.GetNodeID()}, nil)
+	var gqlErr *graphqlError
+	// Already disabled is success for the queue's purposes.
+	if errors.As(err, &gqlErr) && strings.Contains(strings.ToLower(gqlErr.Message), "not enabled") {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("disablePullRequestAutoMerge: %w", err)
+	}
+	return nil
+}
+
+const reviewDecisionQuery = `query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewDecision}}}`
+
+// ReviewBlocker reads reviewDecision, which folds classic branch protection
+// and rulesets into one verdict; null means no review is required. base is
+// implied by the PR.
+func (f *githubForge) ReviewBlocker(ctx context.Context, owner, name string, number int64, _ string) (string, error) {
+	c, err := f.app.ClientForRepo(owner, name)
+	if err != nil {
+		return "", err
+	}
+	var data struct {
+		Repository struct {
+			PullRequest struct {
+				ReviewDecision *string `json:"reviewDecision"`
+			} `json:"pullRequest"`
+		} `json:"repository"`
+	}
+	vars := map[string]any{"owner": owner, "name": name, "number": number}
+	if err := f.graphql(ctx, c, reviewDecisionQuery, vars, &data); err != nil {
+		return "", fmt.Errorf("reviewDecision of PR #%d: %w", number, err)
+	}
+	switch d := data.Repository.PullRequest.ReviewDecision; {
+	case d == nil, *d == "APPROVED":
+		return "", nil
+	case *d == "CHANGES_REQUESTED":
+		return "Changes requested", nil
+	default: // REVIEW_REQUIRED
+		return "Waiting for approval", nil
+	}
+}
+
+// graphqlError is the first error of a GraphQL response.
+type graphqlError struct{ Message string }
+
+func (e *graphqlError) Error() string { return "graphql: " + e.Message }
+
+// graphql posts query with vars and decodes the response's data into out
+// (skipped when nil).
+func (f *githubForge) graphql(ctx context.Context, c *gh.Client, query string, vars map[string]any, out any) error {
+	payload, _ := json.Marshal(map[string]any{"query": query, "variables": vars})
 	req, err := http.NewRequestWithContext(ctx, "POST", f.app.graphqlURL(), bytes.NewReader(payload))
 	if err != nil {
 		return err
@@ -425,20 +474,19 @@ func (f *githubForge) CancelAutoMerge(ctx context.Context, owner, name string, n
 	defer func() { _ = resp.Body.Close() }()
 
 	var body struct {
+		Data   json.RawMessage            `json:"data"`
 		Errors []struct{ Message string } `json:"errors"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return fmt.Errorf("decode graphql response: %w", err)
+		return fmt.Errorf("decode graphql response (HTTP %d): %w", resp.StatusCode, err)
 	}
 	if len(body.Errors) > 0 {
-		msg := body.Errors[0].Message
-		// Already disabled is success for the queue's purposes.
-		if strings.Contains(strings.ToLower(msg), "not enabled") {
-			return nil
-		}
-		return fmt.Errorf("disablePullRequestAutoMerge: %s", msg)
+		return &graphqlError{Message: body.Errors[0].Message}
 	}
-	return nil
+	if out == nil {
+		return nil
+	}
+	return json.Unmarshal(body.Data, out)
 }
 
 func (f *githubForge) RemoveLabel(ctx context.Context, owner, name string, number int64, label string) error {
